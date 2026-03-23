@@ -75,7 +75,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   skippedIds: [],
 
   // Actions
-  setActiveProject: (id) => set({ activeProjectId: id }),
+  setActiveProject: (id) => {
+    set({ activeProjectId: id })
+    window.api.project.setActive({ projectId: id }).catch((err: unknown) => {
+      console.error('[store] setActiveProject IPC error:', err)
+    })
+  },
   setActiveRundown: (id) => {
     set({ activeRundownId: id })
     window.api.rundowns.setActive({ rundownId: id }).catch((err: unknown) => {

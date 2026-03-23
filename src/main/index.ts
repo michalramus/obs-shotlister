@@ -16,7 +16,8 @@ import type { CameraUpsertInput } from './ipc/projects'
 import { listRundowns, createRundown, renameRundown, deleteRundown } from './ipc/rundowns'
 import { listShots, createShot, updateShot, deleteShot, reorderShots } from './ipc/shots'
 import type { CreateShotInput, UpdateShotInput } from './ipc/shots'
-import { getLiveState, startLive, stopLive, nextShot, skipNext, restartLive, setActiveRundown } from './ipc/live'
+import { getLiveState, startLive, stopLive, nextShot, skipNext, restartLive, setActiveRundown, setActiveProject } from './ipc/live'
+import { getCameraById } from './ipc/projects'
 import { parseResolveCSV, confirmResolveImport } from './ipc/resolve-import'
 import type { ConfirmImportInput } from './ipc/resolve-import'
 
@@ -109,6 +110,11 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('rundowns:setActive', (_event, payload: { rundownId: string | null }) => {
     setActiveRundown(db, payload.rundownId)
+    broadcastRundown()
+  })
+
+  ipcMain.handle('project:setActive', (_event, payload: { projectId: string | null }) => {
+    setActiveProject(db, payload.projectId)
     broadcastRundown()
   })
 

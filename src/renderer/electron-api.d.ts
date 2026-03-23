@@ -86,6 +86,9 @@ export interface ElectronApi {
     skipNext: () => Promise<LiveState>
     restart: () => Promise<LiveState>
   }
+  project: {
+    setActive: (payload: { projectId: string | null }) => Promise<void>
+  }
 }
 
 declare global {

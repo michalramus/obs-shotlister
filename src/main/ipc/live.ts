@@ -17,6 +17,7 @@ import type { Shot } from '../../shared/types'
 
 export interface LiveState {
   rundownId: string | null
+  projectId: string | null
   liveIndex: number | null
   startedAt: number | null
   running: boolean
@@ -25,6 +26,7 @@ export interface LiveState {
 
 interface LiveStateRow {
   rundown_id: string | null
+  project_id: string | null
   live_shot_id: string | null
   started_at: number | null
   running: number
@@ -43,6 +45,7 @@ interface ShotRow {
 function rowToLiveState(row: LiveStateRow, liveIndex: number | null): LiveState {
   return {
     rundownId: row.rundown_id,
+    projectId: row.project_id,
     liveIndex,
     startedAt: row.started_at,
     running: row.running === 1,
@@ -62,7 +65,7 @@ function liveShotIdToIndex(shots: ShotRow[], liveShotId: string | null): number 
   return idx === -1 ? null : idx
 }
 
-function findNextNonSkipped(shots: ShotRow[], fromIndex: number, skippedIds: string[]): number | null {
+export function findNextNonSkipped(shots: ShotRow[], fromIndex: number, skippedIds: string[]): number | null {
   for (let i = fromIndex + 1; i < shots.length; i++) {
     if (!skippedIds.includes(shots[i].id)) {
       return i
@@ -95,6 +98,10 @@ export function setActiveRundown(db: Database.Database, rundownId: string | null
   db.prepare('UPDATE live_state SET rundown_id = ? WHERE id = 1').run(rundownId)
 }
 
+export function setActiveProject(db: Database.Database, projectId: string | null): void {
+  db.prepare('UPDATE live_state SET project_id = ? WHERE id = 1').run(projectId)
+}
+
 export function startLive(db: Database.Database, rundownId: string): LiveState {
   const shots = getShotsForRundown(db, rundownId)
 
@@ -102,6 +109,7 @@ export function startLive(db: Database.Database, rundownId: string): LiveState {
     throw new Error('Cannot start: rundown has no shots')
   }
 
+  const stateRow = db.prepare('SELECT project_id FROM live_state WHERE id = 1').get() as Pick<LiveStateRow, 'project_id'>
   const liveShotId = shots[0].id
   const startedAt = Date.now()
 
@@ -111,6 +119,7 @@ export function startLive(db: Database.Database, rundownId: string): LiveState {
 
   return {
     rundownId,
+    projectId: stateRow.project_id,
     liveIndex: 0,
     startedAt,
     running: true,
@@ -127,6 +136,7 @@ export function stopLive(db: Database.Database): LiveState {
 
   return {
     rundownId: row.rundown_id,
+    projectId: row.project_id,
     liveIndex: null,
     startedAt: null,
     running: false,
@@ -154,6 +164,7 @@ export function nextShot(db: Database.Database): LiveState {
     ).run()
     return {
       rundownId: row.rundown_id,
+      projectId: row.project_id,
       liveIndex: null,
       startedAt: null,
       running: false,
@@ -170,6 +181,7 @@ export function nextShot(db: Database.Database): LiveState {
 
   return {
     rundownId: row.rundown_id,
+    projectId: row.project_id,
     liveIndex: nextIndex,
     startedAt,
     running: true,
@@ -213,6 +225,7 @@ export function skipNext(db: Database.Database): LiveState {
 
   return {
     rundownId: row.rundown_id,
+    projectId: row.project_id,
     liveIndex: currentIndex,
     startedAt: row.started_at,
     running: true,
@@ -241,6 +254,7 @@ export function restartLive(db: Database.Database): LiveState {
 
   return {
     rundownId: row.rundown_id,
+    projectId: row.project_id,
     liveIndex: 0,
     startedAt,
     running: true,

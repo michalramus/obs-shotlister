@@ -45,6 +45,9 @@ export interface ElectronApi {
     skipNext: () => Promise<LiveState>
     restart: () => Promise<LiveState>
   }
+  project: {
+    setActive: (payload: { projectId: string | null }) => Promise<void>
+  }
 }
 
 const api: ElectronApi = {
@@ -83,6 +86,9 @@ const api: ElectronApi = {
     next: () => ipcRenderer.invoke('live:next'),
     skipNext: () => ipcRenderer.invoke('live:skip-next'),
     restart: () => ipcRenderer.invoke('live:restart'),
+  },
+  project: {
+    setActive: (payload) => ipcRenderer.invoke('project:setActive', payload),
   },
 }
 

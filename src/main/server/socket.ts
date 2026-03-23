@@ -16,7 +16,13 @@ export interface RundownStatePayload {
 function buildRundownState(db: Database): RundownStatePayload {
   const liveState = getLiveState(db)
   const rundownId = liveState.rundownId
-  if (!rundownId) return { rundown: null, shots: [], cameras: [] }
+  if (!rundownId) {
+    if (liveState.projectId) {
+      const cameras = listCameras(db, liveState.projectId)
+      return { rundown: null, shots: [], cameras }
+    }
+    return { rundown: null, shots: [], cameras: [] }
+  }
 
   const rundown = getRundown(db, rundownId)
   if (!rundown) return { rundown: null, shots: [], cameras: [] }
