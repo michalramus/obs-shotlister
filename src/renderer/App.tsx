@@ -7,6 +7,7 @@ import { ShotListPanel } from './components/ShotListPanel'
 import { LiveControls } from './components/LiveControls'
 import { ShotlistWidget } from '../shared/components/ShotlistWidget'
 import { ResolveImportDialog } from './components/ResolveImportDialog'
+import { OBSSettingsPanel } from './components/OBSSettingsPanel'
 
 const styles = {
   root: {
@@ -52,6 +53,25 @@ const styles = {
     fontSize: '12px',
     cursor: 'pointer',
   } satisfies React.CSSProperties,
+
+  obsBtn: {
+    padding: '5px 12px',
+    background: 'none',
+    border: '1px solid #444',
+    borderRadius: '4px',
+    color: '#888',
+    fontSize: '12px',
+    cursor: 'pointer',
+  } satisfies React.CSSProperties,
+
+  obsDot: (status: string): React.CSSProperties => ({
+    width: '8px',
+    height: '8px',
+    borderRadius: '50%',
+    display: 'inline-block',
+    background: status === 'connected' ? '#27ae60' : status === 'connecting' ? '#f39c12' : '#555',
+    marginRight: '4px',
+  }),
 
   body: {
     flex: 1,
@@ -103,9 +123,12 @@ export default function App(): React.JSX.Element {
   const liveNext = useAppStore((s) => s.liveNext)
   const liveStart = useAppStore((s) => s.liveStart)
   const liveSkipNext = useAppStore((s) => s.liveSkipNext)
+  const obsStatus = useAppStore((s) => s.obsStatus)
+  const setObsStatus = useAppStore((s) => s.setObsStatus)
 
   const [showCameraConfig, setShowCameraConfig] = useState(false)
   const [showResolveImport, setShowResolveImport] = useState(false)
+  const [showObsPanel, setShowObsPanel] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   // Load projects + live state on mount
@@ -113,7 +136,9 @@ export default function App(): React.JSX.Element {
     Promise.all([loadProjects(), loadLiveState()]).catch((err: unknown) => {
       setLoadError(err instanceof Error ? err.message : 'Failed to load.')
     })
-  }, [loadProjects, loadLiveState])
+    window.api.obs.getStatus().then((r) => setObsStatus(r.status)).catch(() => {})
+    window.api.obs.onStatusChange(setObsStatus)
+  }, [loadProjects, loadLiveState, setObsStatus])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -164,6 +189,14 @@ export default function App(): React.JSX.Element {
               Import from Resolve
             </button>
           )}
+          <button
+            style={styles.obsBtn}
+            onClick={() => setShowObsPanel(true)}
+            title="OBS Connection"
+          >
+            <span style={styles.obsDot(obsStatus)} />
+            OBS
+          </button>
         </div>
       </header>
 
@@ -205,6 +238,7 @@ export default function App(): React.JSX.Element {
 
       {showCameraConfig && <CameraConfigPanel onClose={() => setShowCameraConfig(false)} />}
       {showResolveImport && <ResolveImportDialog onClose={() => setShowResolveImport(false)} />}
+      {showObsPanel && <OBSSettingsPanel onClose={() => setShowObsPanel(false)} />}
     </div>
   )
 }

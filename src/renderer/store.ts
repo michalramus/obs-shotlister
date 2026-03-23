@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { Project, Camera, Rundown, Shot } from '../shared/types'
-import type { LiveState, CreateShotInput, UpdateShotInput } from './electron-api.d'
+import type { LiveState, CreateShotInput, UpdateShotInput, OBSConnectionStatus } from './electron-api.d'
 
 interface AppStore {
   // Data
@@ -19,10 +19,14 @@ interface AppStore {
   running: boolean // whether rundown is started
   skippedIds: string[] // shot IDs skipped this run
 
+  // OBS state
+  obsStatus: OBSConnectionStatus
+
   // Actions (call IPC, then update store)
   setActiveProject: (id: string | null) => void
   setActiveRundown: (id: string | null) => void
   setLiveState: (state: LiveState) => void
+  setObsStatus: (status: OBSConnectionStatus) => void
 
   // Project CRUD actions
   loadProjects: () => Promise<void>
@@ -74,6 +78,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   running: false,
   skippedIds: [],
 
+  // OBS state
+  obsStatus: 'disconnected',
+
   // Actions
   setActiveProject: (id) => {
     set({ activeProjectId: id })
@@ -94,6 +101,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       running: state.running,
       skippedIds: state.skippedIds,
     }),
+
+  setObsStatus: (status) => set({ obsStatus: status }),
 
   // Project CRUD
   loadProjects: async () => {

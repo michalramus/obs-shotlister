@@ -5,7 +5,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { Project, Camera, Rundown, Shot } from '../shared/types'
 import type { CameraUpsertInput } from '../main/ipc/projects'
 import type { CreateShotInput, UpdateShotInput } from '../main/ipc/shots'
-import type { LiveState, } from '../main/ipc/live'
+import type { LiveState } from '../main/ipc/live'
+import type { OBSConnectionStatus } from '../main/obs/client'
 import type { ParseResult, ConfirmImportInput } from '../main/ipc/resolve-import'
 
 export interface ElectronApi {
@@ -48,6 +49,15 @@ export interface ElectronApi {
   project: {
     setActive: (payload: { projectId: string | null }) => Promise<void>
   }
+  obs: {
+    getSettings: () => Promise<{ url: string; password: string }>
+    saveSettings: (payload: { url: string; password: string }) => Promise<void>
+    connect: () => Promise<void>
+    disconnect: () => Promise<void>
+    getStatus: () => Promise<{ status: OBSConnectionStatus }>
+    checkScenes: () => Promise<{ allMapped: boolean; missing: string[] }>
+    onStatusChange: (cb: (status: OBSConnectionStatus) => void) => void
+  }
 }
 
 const api: ElectronApi = {
@@ -89,6 +99,15 @@ const api: ElectronApi = {
   },
   project: {
     setActive: (payload) => ipcRenderer.invoke('project:setActive', payload),
+  },
+  obs: {
+    getSettings: () => ipcRenderer.invoke('obs:settings:get'),
+    saveSettings: (payload) => ipcRenderer.invoke('obs:settings:save', payload),
+    connect: () => ipcRenderer.invoke('obs:connect'),
+    disconnect: () => ipcRenderer.invoke('obs:disconnect'),
+    getStatus: () => ipcRenderer.invoke('obs:status'),
+    checkScenes: () => ipcRenderer.invoke('obs:checkScenes'),
+    onStatusChange: (cb) => { ipcRenderer.on('obs:status', (_event, d: { status: OBSConnectionStatus }) => cb(d.status)) },
   },
 }
 

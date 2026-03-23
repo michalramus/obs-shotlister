@@ -4,6 +4,8 @@
 
 import type { Project, Camera, Rundown, Shot } from '../shared/types'
 
+export type OBSConnectionStatus = 'disconnected' | 'connecting' | 'connected'
+
 export interface CameraUpsertInput extends Omit<Camera, 'id'> {
   id?: string
 }
@@ -88,6 +90,15 @@ export interface ElectronApi {
   }
   project: {
     setActive: (payload: { projectId: string | null }) => Promise<void>
+  }
+  obs: {
+    getSettings: () => Promise<{ url: string; password: string }>
+    saveSettings: (payload: { url: string; password: string }) => Promise<void>
+    connect: () => Promise<void>
+    disconnect: () => Promise<void>
+    getStatus: () => Promise<{ status: OBSConnectionStatus }>
+    checkScenes: () => Promise<{ allMapped: boolean; missing: string[] }>
+    onStatusChange: (cb: (status: OBSConnectionStatus) => void) => void
   }
 }
 
