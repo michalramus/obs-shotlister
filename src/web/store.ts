@@ -1,6 +1,17 @@
 import { create } from 'zustand'
 import type { Rundown, Shot, Camera } from '../shared/types'
 
+function initialCameraFilter(): number[] {
+  try {
+    const saved = localStorage.getItem('obs-queuer-camera-filter')
+    if (!saved || saved === 'all') return []
+    const num = parseInt(saved, 10)
+    return isNaN(num) ? [] : [num]
+  } catch {
+    return []
+  }
+}
+
 export interface WebStore {
   rundown: Rundown | null
   shots: Shot[]
@@ -17,7 +28,7 @@ export interface WebStore {
   setLiveState: (data: { liveIndex: number | null; startedAt: number | null; skippedIds: string[] }) => void
   setPlayback: (data: { running: boolean }) => void
   setConnected: (connected: boolean) => void
-  toggleCameraFilter: (cameraNumber: number) => void
+  setCameraFilter: (num: number | null) => void
 }
 
 export const useWebStore = create<WebStore>((set) => ({
@@ -28,15 +39,19 @@ export const useWebStore = create<WebStore>((set) => ({
   startedAt: null,
   skippedIds: [],
   running: false,
-  cameraFilter: [],
+  cameraFilter: initialCameraFilter(),
   connected: false,
 
-  setRundownState: (data) =>
+  setRundownState: (data) => {
+    try {
+      localStorage.setItem('obs-queuer-cameras', JSON.stringify(data.cameras))
+    } catch {}
     set({
       rundown: data.rundown,
       shots: data.shots,
       cameras: data.cameras,
-    }),
+    })
+  },
 
   setLiveState: (data) =>
     set({
@@ -49,13 +64,10 @@ export const useWebStore = create<WebStore>((set) => ({
 
   setConnected: (connected) => set({ connected }),
 
-  toggleCameraFilter: (cameraNumber) =>
-    set((state) => {
-      const current = state.cameraFilter
-      if (current.includes(cameraNumber)) {
-        return { cameraFilter: current.filter((n) => n !== cameraNumber) }
-      } else {
-        return { cameraFilter: [...current, cameraNumber] }
-      }
-    }),
+  setCameraFilter: (num) => {
+    set({ cameraFilter: num === null ? [] : [num] })
+    try {
+      localStorage.setItem('obs-queuer-camera-filter', num === null ? 'all' : num.toString())
+    } catch {}
+  },
 }))

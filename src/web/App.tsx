@@ -29,6 +29,7 @@ const s = {
     background: '#1a1a1a',
     borderBottom: '1px solid #2a2a2a',
     flexShrink: 0,
+    gap: '12px',
   } satisfies React.CSSProperties,
 
   title: {
@@ -51,32 +52,6 @@ const s = {
     color: '#888',
   } satisfies React.CSSProperties,
 
-  filterBar: {
-    padding: '10px 16px',
-    borderBottom: '1px solid #2a2a2a',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    flexWrap: 'wrap' as const,
-  } satisfies React.CSSProperties,
-
-  filterLabel: {
-    fontSize: '12px',
-    color: '#666',
-  } satisfies React.CSSProperties,
-
-  pill: (active: boolean, color: string): React.CSSProperties => ({
-    padding: '4px 10px',
-    borderRadius: '12px',
-    fontSize: '12px',
-    fontWeight: 700,
-    cursor: 'pointer',
-    border: 'none',
-    background: active ? color : '#2a2a2a',
-    color: active ? '#fff' : '#666',
-    userSelect: 'none',
-  }),
-
   content: {
     flex: 1,
     padding: '12px',
@@ -89,6 +64,15 @@ const s = {
     marginTop: '60px',
     fontSize: '14px',
   } satisfies React.CSSProperties,
+
+  select: {
+    background: '#2a2a2a',
+    border: '1px solid #444',
+    borderRadius: '4px',
+    color: '#fff',
+    fontSize: '12px',
+    padding: '4px 8px',
+  } satisfies React.CSSProperties,
 }
 
 export default function App(): React.JSX.Element {
@@ -96,7 +80,7 @@ export default function App(): React.JSX.Element {
   const setLiveState = useWebStore((s) => s.setLiveState)
   const setPlayback = useWebStore((s) => s.setPlayback)
   const setConnected = useWebStore((s) => s.setConnected)
-  const toggleCameraFilter = useWebStore((s) => s.toggleCameraFilter)
+  const setCameraFilter = useWebStore((s) => s.setCameraFilter)
 
   const connected = useWebStore((s) => s.connected)
   const rundown = useWebStore((s) => s.rundown)
@@ -139,6 +123,18 @@ export default function App(): React.JSX.Element {
     }
   }, [setRundownState, setLiveState, setPlayback, setConnected])
 
+  function getCamerasToShow(): Camera[] {
+    if (cameras.length > 0) return cameras
+    try {
+      const saved = localStorage.getItem('obs-queuer-cameras')
+      if (saved) return JSON.parse(saved) as Camera[]
+    } catch {}
+    return []
+  }
+
+  const camerasToShow = getCamerasToShow()
+  const selectedCam = cameraFilter.length === 0 ? 'all' : cameraFilter[0].toString()
+
   // "All cameras" when filter is empty = show all
   const effectiveFilter = cameraFilter.length === 0 ? undefined : cameraFilter
 
@@ -146,37 +142,33 @@ export default function App(): React.JSX.Element {
     <div style={s.root}>
       <header style={s.header}>
         <span style={s.title}>OBS Queuer</span>
+
+        {camerasToShow.length > 0 && (
+          <select
+            style={s.select}
+            value={selectedCam}
+            onChange={(e) => setCameraFilter(e.target.value === 'all' ? null : parseInt(e.target.value, 10))}
+            aria-label="Camera filter"
+          >
+            <option value="all">All cameras</option>
+            {camerasToShow.map((cam) => (
+              <option key={cam.id} value={cam.number}>
+                CAM{cam.number} - {cam.name}
+              </option>
+            ))}
+          </select>
+        )}
+
         <span style={s.statusText}>
           <span style={s.statusDot(connected)} />
           {connected ? 'Connected' : 'Disconnected'}
         </span>
       </header>
 
-      {cameras.length > 0 && (
-        <div style={s.filterBar}>
-          <span style={s.filterLabel}>Camera filter:</span>
-          {cameras.map((cam) => {
-            const isActive =
-              cameraFilter.length === 0 || cameraFilter.includes(cam.number)
-            return (
-              <button
-                key={cam.id}
-                style={s.pill(isActive, cam.color)}
-                onClick={() => toggleCameraFilter(cam.number)}
-                aria-label={`Toggle CAM${cam.number}`}
-                aria-pressed={isActive}
-              >
-                CAM{cam.number}
-              </button>
-            )
-          })}
-        </div>
-      )}
-
       <div style={s.content}>
         {rundown === null ? (
           <div style={s.noRundown}>
-            {connected ? 'Waiting for rundown…' : 'Connecting…'}
+            {connected ? 'Waiting for rundown...' : 'Connecting...'}
           </div>
         ) : (
           <ShotlistWidget
