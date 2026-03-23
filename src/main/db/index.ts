@@ -48,6 +48,18 @@ export function applyMigrations(database: Database.Database): void {
       label        TEXT,
       order_index  INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS live_state (
+      id           INTEGER PRIMARY KEY CHECK (id = 1),
+      rundown_id   TEXT,
+      live_shot_id TEXT,
+      started_at   INTEGER,
+      running      INTEGER NOT NULL DEFAULT 0,
+      skipped_ids  TEXT NOT NULL DEFAULT '[]'
+    );
+
+    -- Ensure singleton row exists
+    INSERT OR IGNORE INTO live_state (id, running, skipped_ids) VALUES (1, 0, '[]');
   `)
 }
 

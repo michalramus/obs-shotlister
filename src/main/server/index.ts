@@ -1,32 +1,39 @@
 import express from 'express'
 import { createServer } from 'http'
 import { join } from 'path'
+import { existsSync } from 'fs'
 import routes from './routes'
-import { attachWebSocketServer } from './ws'
+import { attachSocketServer } from './socket'
+import type { Server as SocketServer } from 'socket.io'
+import type { Database } from 'better-sqlite3'
 
 const PORT = process.env['PORT'] ? parseInt(process.env['PORT'], 10) : 3000
 
-export function startServer(): void {
+export function startServer(db?: Database): SocketServer {
   const app = express()
 
   app.use(express.json())
   app.use(routes)
 
-  // Serve the compiled web UI bundle (out/web/) in production.
-  // In dev the Vite dev server for src/web/ runs separately on its own port.
-  if (process.env['NODE_ENV'] !== 'development') {
-    app.use(express.static(join(__dirname, '../../web')))
-  } else {
-    // In dev, proxy or redirect to the Vite web dev server if needed.
-    // For now the web UI Vite dev server runs on its own port (see vite.config.web.ts).
+  // Serve the compiled web UI bundle (out/web/).
+  // Run `yarn build:web` once to generate it; the bundle then works in both dev and prod.
+  const webDir = join(__dirname, '../web')
+  if (existsSync(webDir)) {
+    app.use(express.static(webDir))
+    // SPA fallback: serve index.html for any route not matched by static files or API
+    app.get('*', (_req, res) => {
+      res.sendFile(join(webDir, 'index.html'))
+    })
   }
 
   const httpServer = createServer(app)
 
-  attachWebSocketServer(httpServer)
+  const io = attachSocketServer(httpServer, db)
 
   httpServer.listen(PORT, () => {
     // eslint-disable-next-line no-console
     console.info(`[server] listening on http://localhost:${PORT}`)
   })
+
+  return io
 }
