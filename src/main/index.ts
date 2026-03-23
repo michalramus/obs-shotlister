@@ -20,6 +20,11 @@ import { getLiveState, startLive, stopLive, nextShot, skipNext, restartLive, set
 import { getCameraById } from './ipc/projects'
 import { parseResolveCSV, confirmResolveImport } from './ipc/resolve-import'
 import type { ConfirmImportInput } from './ipc/resolve-import'
+import { createOBSClient } from './obs/client'
+import type { OBSConnectionStatus } from './obs/client'
+import { getObsSettings, saveObsSettings } from './ipc/settings'
+
+const obsClient = createOBSClient()
 
 // --- Global error handlers ---------------------------------------------------
 // These must never crash the process — log and continue.
@@ -152,6 +157,7 @@ function registerIpcHandlers(): void {
     const state = startLive(db, payload.rundownId)
     broadcastLiveState(state)
     broadcastRundown()
+    switchOBSScenes(state, db).catch(console.error)
     return state
   })
 
@@ -164,18 +170,21 @@ function registerIpcHandlers(): void {
   ipcMain.handle('live:next', () => {
     const state = nextShot(db)
     broadcastLiveState(state)
+    switchOBSScenes(state, db).catch(console.error)
     return state
   })
 
   ipcMain.handle('live:skip-next', () => {
     const state = skipNext(db)
     broadcastLiveState(state)
+    switchOBSPreview(state, db).catch(console.error)
     return state
   })
 
   ipcMain.handle('live:restart', () => {
     const state = restartLive(db)
     broadcastLiveState(state)
+    switchOBSScenes(state, db).catch(console.error)
     return state
   })
 
@@ -199,13 +208,87 @@ function registerIpcHandlers(): void {
   ipcMain.handle('shots:import-csv:confirm', (_event, payload: ConfirmImportInput) =>
     confirmResolveImport(db, payload),
   )
+
+  // OBS
+  ipcMain.handle('obs:settings:get', () => getObsSettings(db))
+
+  ipcMain.handle('obs:settings:save', (_event, payload: { url: string; password: string }) => {
+    saveObsSettings(db, payload.url, payload.password)
+  })
+
+  ipcMain.handle('obs:connect', async () => {
+    const settings = getObsSettings(db)
+    await obsClient.connect(settings.url, settings.password)
+  })
+
+  ipcMain.handle('obs:disconnect', () => { obsClient.disconnect() })
+
+  ipcMain.handle('obs:status', () => ({ status: obsClient.status }))
+
+  ipcMain.handle('obs:checkScenes', async () => {
+    const liveState = getLiveState(db)
+    if (!liveState.projectId) return { allMapped: false, missing: [] }
+    const cameras = listCameras(db, liveState.projectId)
+    const camerasWithScene = cameras.filter((c) => c.obsScene)
+    if (obsClient.status !== 'connected') {
+      return { allMapped: camerasWithScene.length === cameras.length, missing: [] }
+    }
+    const scenes = await obsClient.getSceneList()
+    const missing = camerasWithScene
+      .filter((c) => !scenes.includes(c.obsScene!))
+      .map((c) => c.obsScene!)
+    return {
+      allMapped: camerasWithScene.length === cameras.length && missing.length === 0,
+      missing,
+    }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// OBS scene switching helpers
+// ---------------------------------------------------------------------------
+
+function findNextNonSkippedIdx(shots: Array<{ id: string }>, fromIndex: number, skippedIds: string[]): number | null {
+  for (let i = fromIndex + 1; i < shots.length; i++) {
+    if (!skippedIds.includes(shots[i].id)) return i
+  }
+  return null
+}
+
+import type { LiveState } from './ipc/live'
+
+async function switchOBSScenes(state: LiveState, database: ReturnType<typeof getDatabase>): Promise<void> {
+  if (obsClient.status !== 'connected' || !state.running || state.liveIndex === null || !state.rundownId) return
+  const shots = listShots(database, state.rundownId)
+  const liveCamera = getCameraById(database, shots[state.liveIndex].cameraId)
+  if (liveCamera?.obsScene) {
+    obsClient.setCurrentProgramScene(liveCamera.obsScene).catch((e: unknown) => console.error('[OBS] program:', e))
+  }
+  const nextIdx = findNextNonSkippedIdx(shots, state.liveIndex, state.skippedIds)
+  if (nextIdx !== null) {
+    const nextCamera = getCameraById(database, shots[nextIdx].cameraId)
+    if (nextCamera?.obsScene) {
+      obsClient.setCurrentPreviewScene(nextCamera.obsScene).catch((e: unknown) => console.error('[OBS] preview:', e))
+    }
+  }
+}
+
+async function switchOBSPreview(state: LiveState, database: ReturnType<typeof getDatabase>): Promise<void> {
+  if (obsClient.status !== 'connected' || !state.running || state.liveIndex === null || !state.rundownId) return
+  const shots = listShots(database, state.rundownId)
+  const nextIdx = findNextNonSkippedIdx(shots, state.liveIndex, state.skippedIds)
+  if (nextIdx !== null) {
+    const nextCamera = getCameraById(database, shots[nextIdx].cameraId)
+    if (nextCamera?.obsScene) {
+      obsClient.setCurrentPreviewScene(nextCamera.obsScene).catch((e: unknown) => console.error('[OBS] preview:', e))
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Socket.io broadcast helpers
 // ---------------------------------------------------------------------------
 
-import type { LiveState } from './ipc/live'
 import type { Server as SocketServer } from 'socket.io'
 import { broadcastRundownState } from './server/socket'
 
@@ -236,6 +319,10 @@ app.whenReady().then(() => {
   const io = startServer(_db)
   if (io) setSocketServer(io)
   createWindow()
+
+  obsClient.onStatusChange((status: OBSConnectionStatus) => {
+    BrowserWindow.getAllWindows()[0]?.webContents.send('obs:status', { status })
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
