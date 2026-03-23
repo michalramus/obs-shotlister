@@ -100,6 +100,9 @@ export default function App(): React.JSX.Element {
   const startedAt = useAppStore((s) => s.startedAt)
   const running = useAppStore((s) => s.running)
   const skippedIds = useAppStore((s) => s.skippedIds)
+  const liveNext = useAppStore((s) => s.liveNext)
+  const liveStart = useAppStore((s) => s.liveStart)
+  const liveSkipNext = useAppStore((s) => s.liveSkipNext)
 
   const [showCameraConfig, setShowCameraConfig] = useState(false)
   const [showResolveImport, setShowResolveImport] = useState(false)
@@ -111,6 +114,25 @@ export default function App(): React.JSX.Element {
       setLoadError(err instanceof Error ? err.message : 'Failed to load.')
     })
   }, [loadProjects, loadLiveState])
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent): void {
+      const tag = (document.activeElement as HTMLElement)?.tagName
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return
+      if (e.code === 'Space') {
+        e.preventDefault()
+        if (running) liveNext().catch((err: unknown) => console.error('[App] liveNext:', err))
+        else if (shots.length > 0 && activeRundownId) liveStart(activeRundownId).catch((err: unknown) => console.error('[App] liveStart:', err))
+      }
+      if (e.code === 'ArrowRight' && running) {
+        e.preventDefault()
+        liveSkipNext().catch((err: unknown) => console.error('[App] liveSkipNext:', err))
+      }
+    }
+    window.addEventListener('keydown', handleKey)
+    return () => window.removeEventListener('keydown', handleKey)
+  }, [running, shots, activeRundownId, liveNext, liveStart, liveSkipNext])
 
   // When the active project changes, load its cameras + rundowns
   useEffect(() => {

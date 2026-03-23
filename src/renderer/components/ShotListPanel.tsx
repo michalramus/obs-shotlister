@@ -292,6 +292,7 @@ interface SortableShotRowProps {
   cameras: Camera[]
   isLocked: boolean
   isSkipped: boolean
+  isLive: boolean
   onEdit: (shot: Shot) => void
   onDelete: (shot: Shot) => void
 }
@@ -301,6 +302,7 @@ function SortableShotRow({
   cameras,
   isLocked,
   isSkipped,
+  isLive,
   onEdit,
   onDelete,
 }: SortableShotRowProps): React.JSX.Element {
@@ -310,10 +312,12 @@ function SortableShotRow({
   })
 
   const camera = cameras.find((c) => c.id === shot.cameraId)
+  const liveBg = isLive ? (camera?.color ? camera.color + '22' : '#ffffff22') : undefined
 
   const style: React.CSSProperties = {
     ...s.row,
     ...(isSkipped ? s.skipped : {}),
+    ...(isLive ? { background: liveBg } : {}),
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
@@ -368,6 +372,7 @@ export function ShotListPanel(): React.JSX.Element {
   const running = useAppStore((s) => s.running)
   const activeRundownId = useAppStore((s) => s.activeRundownId)
   const skippedIds = useAppStore((s) => s.skippedIds)
+  const liveIndex = useAppStore((s) => s.liveIndex)
   const addShot = useAppStore((s) => s.addShot)
   const editShot = useAppStore((s) => s.editShot)
   const removeShot = useAppStore((s) => s.removeShot)
@@ -496,6 +501,7 @@ export function ShotListPanel(): React.JSX.Element {
                   cameras={cameras}
                   isLocked={running}
                   isSkipped={skippedIds.includes(shot.id)}
+                  isLive={liveIndex === shots.indexOf(shot)}
                   onEdit={(s) => { setEditingShot(s); setShowAddForm(false) }}
                   onDelete={(s) => void handleDelete(s)}
                 />
