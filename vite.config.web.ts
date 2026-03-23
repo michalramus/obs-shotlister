@@ -8,6 +8,11 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   root: resolve(__dirname, 'src/web'),
+  resolve: {
+    alias: {
+      '@shared': resolve(__dirname, 'src/shared'),
+    },
+  },
   build: {
     outDir: resolve(__dirname, 'out/web'),
     emptyOutDir: true,

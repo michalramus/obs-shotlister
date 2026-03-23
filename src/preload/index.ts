@@ -1,8 +1,89 @@
 // Preload script — runs in the renderer before page content loads.
 // Exposes a typed API surface to the renderer via contextBridge.
-// Kept empty until IPC channels are defined.
 
-import { contextBridge } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
+import type { Project, Camera, Rundown, Shot } from '../shared/types'
+import type { CameraUpsertInput } from '../main/ipc/projects'
+import type { CreateShotInput, UpdateShotInput } from '../main/ipc/shots'
+import type { LiveState, } from '../main/ipc/live'
+import type { ParseResult, ConfirmImportInput } from '../main/ipc/resolve-import'
 
-// Placeholder — expand when IPC channels are defined
-contextBridge.exposeInMainWorld('api', {})
+export interface ElectronApi {
+  projects: {
+    list: () => Promise<Project[]>
+    create: (payload: { name: string }) => Promise<Project>
+    rename: (payload: { id: string; name: string }) => Promise<Project>
+    delete: (payload: { id: string }) => Promise<void>
+  }
+  cameras: {
+    list: (payload: { projectId: string }) => Promise<Camera[]>
+    upsert: (payload: CameraUpsertInput) => Promise<Camera>
+    delete: (payload: { id: string }) => Promise<void>
+  }
+  rundowns: {
+    list: (payload: { projectId: string }) => Promise<Rundown[]>
+    create: (payload: { projectId: string; name: string }) => Promise<Rundown>
+    rename: (payload: { id: string; name: string }) => Promise<Rundown>
+    delete: (payload: { id: string }) => Promise<void>
+    setActive: (payload: { rundownId: string | null }) => Promise<void>
+  }
+  shots: {
+    list: (payload: { rundownId: string }) => Promise<Shot[]>
+    create: (payload: CreateShotInput) => Promise<Shot>
+    update: (payload: UpdateShotInput) => Promise<Shot>
+    delete: (payload: { id: string }) => Promise<void>
+    reorder: (payload: { ids: string[] }) => Promise<void>
+    importCsvOpenDialog: () => Promise<Electron.OpenDialogReturnValue>
+    importCsvParse: (payload: { filePath: string }) => Promise<ParseResult>
+    importCsvConfirm: (payload: ConfirmImportInput) => Promise<Shot[]>
+  }
+  live: {
+    get: () => Promise<LiveState>
+    start: (payload: { rundownId: string }) => Promise<LiveState>
+    stop: () => Promise<LiveState>
+    next: () => Promise<LiveState>
+    skipNext: () => Promise<LiveState>
+    restart: () => Promise<LiveState>
+  }
+}
+
+const api: ElectronApi = {
+  projects: {
+    list: () => ipcRenderer.invoke('projects:list'),
+    create: (payload) => ipcRenderer.invoke('projects:create', payload),
+    rename: (payload) => ipcRenderer.invoke('projects:rename', payload),
+    delete: (payload) => ipcRenderer.invoke('projects:delete', payload),
+  },
+  cameras: {
+    list: (payload) => ipcRenderer.invoke('cameras:list', payload),
+    upsert: (payload) => ipcRenderer.invoke('cameras:upsert', payload),
+    delete: (payload) => ipcRenderer.invoke('cameras:delete', payload),
+  },
+  rundowns: {
+    list: (payload) => ipcRenderer.invoke('rundowns:list', payload),
+    create: (payload) => ipcRenderer.invoke('rundowns:create', payload),
+    rename: (payload) => ipcRenderer.invoke('rundowns:rename', payload),
+    delete: (payload) => ipcRenderer.invoke('rundowns:delete', payload),
+    setActive: (payload) => ipcRenderer.invoke('rundowns:setActive', payload),
+  },
+  shots: {
+    list: (payload) => ipcRenderer.invoke('shots:list', payload),
+    create: (payload) => ipcRenderer.invoke('shots:create', payload),
+    update: (payload) => ipcRenderer.invoke('shots:update', payload),
+    delete: (payload) => ipcRenderer.invoke('shots:delete', payload),
+    reorder: (payload) => ipcRenderer.invoke('shots:reorder', payload),
+    importCsvOpenDialog: () => ipcRenderer.invoke('shots:import-csv:open-dialog'),
+    importCsvParse: (payload) => ipcRenderer.invoke('shots:import-csv:parse', payload),
+    importCsvConfirm: (payload) => ipcRenderer.invoke('shots:import-csv:confirm', payload),
+  },
+  live: {
+    get: () => ipcRenderer.invoke('live:get'),
+    start: (payload) => ipcRenderer.invoke('live:start', payload),
+    stop: () => ipcRenderer.invoke('live:stop'),
+    next: () => ipcRenderer.invoke('live:next'),
+    skipNext: () => ipcRenderer.invoke('live:skip-next'),
+    restart: () => ipcRenderer.invoke('live:restart'),
+  },
+}
+
+contextBridge.exposeInMainWorld('api', api)

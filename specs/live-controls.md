@@ -7,51 +7,73 @@
 
 ## Goal
 
-Operator controls to start a rundown and advance through shots. Every state change is broadcast to phone browsers via Socket.io.
+Five live operations on a rundown: start, stop, next, skip, restart. When a rundown is live (`running === true`), editing it is forbidden. State is broadcast to phone browsers (camera operators) and is the foundation for future video mixer (OBS) control.
 
 ## UI layout
 
-Controls rendered in the renderer, below or above the shotlist.
+Controls rendered in the renderer, above the shotlist.
 
 ```
-┌─────────────────────────────────────┐
-│  [▶ Start rundown]                  │  ← before start
-│                                     │
-│  [⏭ Skip next]   [→ Go next live]   │  ← after start
-└─────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│  [▶ Start]                                      │  ← idle
+│                                                 │
+│  [■ Stop]  [↺ Restart]  [⏭ Skip next]  [→ Next]│  ← running
+└─────────────────────────────────────────────────┘
 ```
+
+When `running === true`, the shotlist and shot editor are **read-only** (add/edit/delete/reorder disabled, visually locked).
 
 ## State machine
 
 ```
-idle ──[Start rundown]──▶ running (liveIndex=0)
-running ──[Go next live]──▶ running (liveIndex++)
-running ──[Skip next]──▶ running (skippedIds + liveIndex unchanged — next live will jump over)
-running, last shot ──[Go next live]──▶ idle (liveIndex=null)
+idle ──[Start]──▶ running (liveIndex=0, startedAt=now)
+running ──[Next]──▶ running (liveIndex++, startedAt=now)
+running ──[Skip next]──▶ running (skippedIds += nextId, liveIndex unchanged)
+running ──[Stop]──▶ idle (liveIndex=null, startedAt=null, running=false, skippedIds preserved)
+running ──[Restart]──▶ running (liveIndex=0, startedAt=now, skippedIds cleared)
+running, last shot ──[Next]──▶ idle (liveIndex=null, running=false)
 ```
 
 ## Actions
 
-### Start rundown
-- Only available when `running === false` and `shots.length > 0`
+### Start
+- Available when `running === false` and `shots.length > 0`
 - Sets `liveIndex = 0`, `startedAt = Date.now()`, `running = true`
-- IPC: `live:start` → persists to DB, broadcasts Socket.io `state:live` + `state:playback`
+- Locks rundown editing
+- IPC: `live:start`
 
-### Go next shot on live
-- Only available when `running === true`
+### Stop
+- Available when `running === true`
+- Sets `running = false`, `liveIndex = null`, `startedAt = null`
+- Skipped IDs preserved (resume context kept)
+- Unlocks rundown editing
+- IPC: `live:stop`
+
+### Next
+- Available when `running === true`
 - Advances to next non-skipped shot: `liveIndex = nextNonSkipped(liveIndex)`
 - Sets `startedAt = Date.now()`
-- If no next shot: `liveIndex = null`, `running = false`
+- If no next shot: transitions to idle
 - IPC: `live:next`
 
-### Skip next shot
-- Only available when `running === true` and there is a next shot
-- Marks the shot at `liveIndex + 1` (the next queued shot) as skipped for this run
+### Skip next
+- Available when `running === true` and a next shot exists
+- Marks the next queued shot (after liveIndex) as skipped for this run
 - Does not advance `liveIndex` or reset `startedAt`
-- Skipped shot is visually struck through in shotlist
+- Skipped shot shown struck-through in shotlist
 - IPC: `live:skip-next`
 
-> Skipped shot IDs are persisted to SQLite in `live_state` and restored on app restart.
+### Restart
+- Available when `running === true`
+- Clears `skippedIds`, sets `liveIndex = 0`, `startedAt = Date.now()`
+- IPC: `live:restart`
+
+## Rundown edit lock
+
+When `running === true`:
+- Shot add/edit/delete/reorder controls are hidden or disabled
+- Visual indicator on the shotlist: "Live — editing disabled"
+- Rundown rename is also disabled
 
 ## Persisted live state (SQLite)
 
@@ -89,8 +111,10 @@ io.emit('state:playback', { running: boolean })
 | Channel | Payload | Returns |
 |---|---|---|
 | `live:start` | `{ rundownId: string }` | `LiveState` |
+| `live:stop` | — | `LiveState` |
 | `live:next` | — | `LiveState` |
 | `live:skip-next` | — | `LiveState` |
+| `live:restart` | — | `LiveState` |
 | `live:get` | — | `LiveState` |
 
 ```ts
@@ -105,10 +129,12 @@ interface LiveState {
 
 ## Acceptance criteria
 
-- Start rundown enables controls and sets liveIndex to 0
-- Go next advances liveIndex; records new startedAt
-- Skip next marks next shot as skipped; shotlist shows it struck through
-- After last shot, running becomes false
+- Start locks rundown editing and sets liveIndex to 0
+- Next advances liveIndex with new startedAt
+- Skip marks next shot struck-through; does not advance
+- Stop returns to idle; editing unlocked; skips preserved
+- Restart resets to liveIndex=0 and clears skips
+- After last shot, Next transitions to idle
 - All state changes broadcast via Socket.io
-- Live state restored on app restart
+- Live state (including skippedIds) restored on app restart
 - `yarn test` passes
