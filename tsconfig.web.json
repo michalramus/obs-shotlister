@@ -1,0 +1,13 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.web.json",
+  "include": ["src/renderer/**/*", "src/web/**/*"],
+  "compilerOptions": {
+    "strict": true,
+    "composite": true,
+    "baseUrl": ".",
+    "paths": {
+      "@renderer/*": ["src/renderer/*"],
+      "@web/*": ["src/web/*"]
+    }
+  }
+}
