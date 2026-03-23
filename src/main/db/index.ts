@@ -61,6 +61,16 @@ export function applyMigrations(database: Database.Database): void {
     -- Ensure singleton row exists
     INSERT OR IGNORE INTO live_state (id, running, skipped_ids) VALUES (1, 0, '[]');
   `)
+
+  // Idempotent column additions (ALTER TABLE is not in CREATE TABLE IF NOT EXISTS)
+  try { database.exec('ALTER TABLE cameras ADD COLUMN obs_scene TEXT') } catch (_) { /* column exists */ }
+  try { database.exec('ALTER TABLE live_state ADD COLUMN project_id TEXT') } catch (_) { /* column exists */ }
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `)
 }
 
 export function getDatabase(): Database.Database {

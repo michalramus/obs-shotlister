@@ -28,6 +28,7 @@ interface CameraRow {
   name: string
   color: string
   resolve_color: string | null
+  obs_scene: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -50,6 +51,7 @@ function rowToCamera(row: CameraRow): Camera {
     name: row.name,
     color: row.color,
     resolveColor: row.resolve_color,
+    obsScene: row.obs_scene,
   }
 }
 
@@ -107,10 +109,17 @@ export function deleteProject(db: Database.Database, id: string): void {
 export function listCameras(db: Database.Database, projectId: string): Camera[] {
   const rows = db
     .prepare(
-      'SELECT id, project_id, number, name, color, resolve_color FROM cameras WHERE project_id = ? ORDER BY number ASC',
+      'SELECT id, project_id, number, name, color, resolve_color, obs_scene FROM cameras WHERE project_id = ? ORDER BY number ASC',
     )
     .all(projectId) as CameraRow[]
   return rows.map(rowToCamera)
+}
+
+export function getCameraById(db: Database.Database, id: string): Camera | null {
+  const row = db
+    .prepare('SELECT id, project_id, number, name, color, resolve_color, obs_scene FROM cameras WHERE id = ?')
+    .get(id) as CameraRow | undefined
+  return row ? rowToCamera(row) : null
 }
 
 export type CameraUpsertInput = Omit<Camera, 'id'> & { id?: string }
@@ -120,24 +129,24 @@ export function upsertCamera(db: Database.Database, input: CameraUpsertInput): C
     // Update existing camera
     const result = db
       .prepare(
-        'UPDATE cameras SET project_id = ?, number = ?, name = ?, color = ?, resolve_color = ? WHERE id = ?',
+        'UPDATE cameras SET project_id = ?, number = ?, name = ?, color = ?, resolve_color = ?, obs_scene = ? WHERE id = ?',
       )
-      .run(input.projectId, input.number, input.name, input.color, input.resolveColor ?? null, input.id)
+      .run(input.projectId, input.number, input.name, input.color, input.resolveColor ?? null, input.obsScene ?? null, input.id)
 
     if (result.changes === 0) {
       throw new Error(`Camera not found: ${input.id}`)
     }
 
     const row = db
-      .prepare('SELECT id, project_id, number, name, color, resolve_color FROM cameras WHERE id = ?')
+      .prepare('SELECT id, project_id, number, name, color, resolve_color, obs_scene FROM cameras WHERE id = ?')
       .get(input.id) as CameraRow
     return rowToCamera(row)
   } else {
     // Insert new camera — foreign key enforcement will throw if projectId is invalid
     const id = randomUUID()
     db.prepare(
-      'INSERT INTO cameras (id, project_id, number, name, color, resolve_color) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(id, input.projectId, input.number, input.name, input.color, input.resolveColor ?? null)
+      'INSERT INTO cameras (id, project_id, number, name, color, resolve_color, obs_scene) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(id, input.projectId, input.number, input.name, input.color, input.resolveColor ?? null, input.obsScene ?? null)
 
     return {
       id,
@@ -145,7 +154,8 @@ export function upsertCamera(db: Database.Database, input: CameraUpsertInput): C
       number: input.number,
       name: input.name,
       color: input.color,
-      resolveColor: input.resolveColor,
+      resolveColor: input.resolveColor ?? null,
+      obsScene: input.obsScene ?? null,
     }
   }
 }

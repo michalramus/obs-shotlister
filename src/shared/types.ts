@@ -11,6 +11,7 @@ export interface Camera {
   name: string
   color: string // hex, e.g. '#e74c3c'
   resolveColor: string | null // Resolve marker color name, e.g. 'Red'
+  obsScene: string | null // OBS scene name
 }
 
 export interface Rundown {
