@@ -300,6 +300,7 @@ interface CameraRowState {
   name: string
   color: string
   resolveColor: string | null
+  obsScene: string
 }
 
 interface CameraRowProps {
@@ -314,6 +315,7 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
     name: camera.name,
     color: camera.color,
     resolveColor: camera.resolveColor,
+    obsScene: camera.obsScene ?? '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -325,7 +327,8 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
       draft.number === camera.number &&
       draft.name === camera.name &&
       draft.color === camera.color &&
-      draft.resolveColor === camera.resolveColor
+      draft.resolveColor === camera.resolveColor &&
+      (draft.obsScene || null) === camera.obsScene
     ) {
       return
     }
@@ -339,6 +342,7 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
         name: draft.name,
         color: draft.color,
         resolveColor: draft.resolveColor,
+        obsScene: draft.obsScene || null,
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed.')
@@ -409,6 +413,18 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
           ))}
         </select>
       </td>
+      <td style={s.td}>
+        <input
+          style={s.input}
+          type="text"
+          value={draft.obsScene}
+          aria-label="OBS scene"
+          placeholder="Scene name"
+          onChange={(e) => setDraft((d) => ({ ...d, obsScene: e.target.value }))}
+          onBlur={() => void handleBlur()}
+          disabled={saving}
+        />
+      </td>
       <td style={{ ...s.td, width: '48px' }}>
         {error !== null && (
           <span style={{ color: '#e74c3c', fontSize: '12px' }} title={error}>
@@ -445,6 +461,7 @@ function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): Rea
   const [name, setName] = useState('')
   const [color, setColor] = useState('#4a90d9')
   const [resolveColor, setResolveColor] = useState<string | null>(null)
+  const [obsScene, setObsScene] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -456,7 +473,7 @@ function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): Rea
     setSaving(true)
     setError(null)
     try {
-      await upsertCamera({ projectId, number, name: name.trim(), color, resolveColor })
+      await upsertCamera({ projectId, number, name: name.trim(), color, resolveColor, obsScene: obsScene || null })
       onDone()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add camera.')
@@ -521,6 +538,17 @@ function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): Rea
             </option>
           ))}
         </select>
+      </td>
+      <td style={s.td}>
+        <input
+          style={s.input}
+          type="text"
+          value={obsScene}
+          aria-label="OBS scene"
+          placeholder="Scene name"
+          onChange={(e) => setObsScene(e.target.value)}
+          disabled={saving}
+        />
       </td>
       <td style={{ ...s.td, width: '48px', whiteSpace: 'nowrap' }}>
         {error !== null && (
@@ -597,6 +625,7 @@ export function CameraConfigPanel({ onClose }: CameraConfigPanelProps): React.JS
                 <th style={s.th}>Name</th>
                 <th style={s.th}>Color</th>
                 <th style={s.th}>Resolve color</th>
+                <th style={s.th}>OBS Scene</th>
                 <th style={s.th} />
               </tr>
             </thead>
