@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Project, Camera, Rundown, Shot } from '../shared/types'
+import type { Project, Camera, Rundown, Shot, Marker } from '../shared/types'
 import type { LiveState, CreateShotInput, UpdateShotInput, OBSConnectionStatus, OBSValidateResult } from './electron-api.d'
 
 interface AppStore {
@@ -8,6 +8,7 @@ interface AppStore {
   cameras: Camera[] // cameras for active project
   rundowns: Rundown[] // rundowns for active project
   shots: Shot[] // shots for active rundown
+  markers: Marker[] // markers for active rundown
 
   // Selection
   activeProjectId: string | null
@@ -58,6 +59,12 @@ interface AppStore {
   reorderShots: (ids: string[]) => Promise<void>
   splitShot: (shotId: string, atMs: number, newCameraId: string) => Promise<void>
 
+  // Marker CRUD actions
+  loadMarkers: (rundownId: string) => Promise<void>
+  addMarker: (rundownId: string, positionMs: number, label?: string | null) => Promise<Marker>
+  updateMarker: (id: string, positionMs: number) => Promise<void>
+  removeMarker: (id: string) => Promise<void>
+
   // Live control actions
   loadLiveState: () => Promise<void>
   liveStart: (rundownId: string) => Promise<void>
@@ -73,6 +80,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   cameras: [],
   rundowns: [],
   shots: [],
+  markers: [],
 
   // Selection
   activeProjectId: null,
@@ -234,6 +242,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   loadShots: async (rundownId) => {
     const shots = await window.api.shots.list({ rundownId })
     set({ shots })
+    await get().loadMarkers(rundownId)
   },
 
   addShot: async (input) => {
@@ -267,6 +276,37 @@ export const useAppStore = create<AppStore>((set, get) => ({
     await window.api.shots.split({ shotId, atMs, newCameraId })
     const { activeRundownId } = get()
     if (activeRundownId) await get().loadShots(activeRundownId)
+  },
+
+  // Marker CRUD
+  loadMarkers: async (rundownId) => {
+    const markers = await window.api.markers.list({ rundownId })
+    set({ markers })
+  },
+
+  addMarker: async (rundownId, positionMs, label = null) => {
+    const marker = await window.api.markers.upsert({ rundownId, positionMs, label })
+    set((state) => ({
+      markers: [...state.markers, marker].sort((a, b) => a.positionMs - b.positionMs),
+    }))
+    return marker
+  },
+
+  updateMarker: async (id, positionMs) => {
+    const { markers } = get()
+    const existing = markers.find((m) => m.id === id)
+    if (!existing) return
+    const updated = await window.api.markers.upsert({ id, rundownId: existing.rundownId, positionMs, label: existing.label })
+    set((state) => ({
+      markers: state.markers
+        .map((m) => (m.id === id ? updated : m))
+        .sort((a, b) => a.positionMs - b.positionMs),
+    }))
+  },
+
+  removeMarker: async (id) => {
+    await window.api.markers.delete({ id })
+    set((state) => ({ markers: state.markers.filter((m) => m.id !== id) }))
   },
 
   // Live controls

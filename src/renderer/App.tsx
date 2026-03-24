@@ -143,6 +143,10 @@ export default function App(): React.JSX.Element {
   const obsValidationResult = useAppStore((s) => s.obsValidationResult)
   const setObsValidationResult = useAppStore((s) => s.setObsValidationResult)
   const uiMode = useAppStore((s) => s.uiMode)
+  const markers = useAppStore((s) => s.markers)
+  const addMarker = useAppStore((s) => s.addMarker)
+  const updateMarker = useAppStore((s) => s.updateMarker)
+  const removeMarker = useAppStore((s) => s.removeMarker)
 
   const [showCameraConfig, setShowCameraConfig] = useState(false)
   const [showResolveImport, setShowResolveImport] = useState(false)
@@ -284,20 +288,26 @@ export default function App(): React.JSX.Element {
                 cameras={cameras}
                 liveIndex={liveIndex}
                 running={running}
+                markers={markers}
                 onShotClick={(_id) => { console.log('[App] shot clicked:', _id) }}
-              onSplitShot={(shotId, atMs, newCameraId) => {
-                if (atMs <= 0) {
-                  editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) => console.error('[App] editShot:', err))
-                } else {
-                  splitShot(shotId, atMs, newCameraId).catch((err: unknown) => console.error('[App] splitShot:', err))
-                }
-              }}
-              onResizeShots={(idA, durA, idB, durB) => {
-                Promise.all([
-                  editShot({ id: idA, durationMs: Math.round(durA) }),
-                  editShot({ id: idB, durationMs: Math.round(durB) }),
-                ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
-              }}
+                onSplitShot={(shotId, atMs, newCameraId) => {
+                  if (atMs <= 0) {
+                    editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) => console.error('[App] editShot:', err))
+                  } else {
+                    splitShot(shotId, atMs, newCameraId).catch((err: unknown) => console.error('[App] splitShot:', err))
+                  }
+                }}
+                onResizeShots={(idA, durA, idB, durB) => {
+                  Promise.all([
+                    editShot({ id: idA, durationMs: Math.round(durA) }),
+                    editShot({ id: idB, durationMs: Math.round(durB) }),
+                  ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
+                }}
+                onAddMarker={(posMs) => {
+                  if (activeRundownId) addMarker(activeRundownId, posMs).catch((err: unknown) => console.error('[App] addMarker:', err))
+                }}
+                onUpdateMarker={(id, posMs) => updateMarker(id, posMs).catch((err: unknown) => console.error('[App] updateMarker:', err))}
+                onDeleteMarker={(id) => removeMarker(id).catch((err: unknown) => console.error('[App] removeMarker:', err))}
               />
             </div>
 
@@ -341,20 +351,26 @@ export default function App(): React.JSX.Element {
                 cameras={cameras}
                 liveIndex={liveIndex}
                 running={running}
+                markers={markers}
                 onShotClick={(_id) => { console.log('[App] shot clicked:', _id) }}
-              onSplitShot={(shotId, atMs, newCameraId) => {
-                if (atMs <= 0) {
-                  editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) => console.error('[App] editShot:', err))
-                } else {
-                  splitShot(shotId, atMs, newCameraId).catch((err: unknown) => console.error('[App] splitShot:', err))
-                }
-              }}
-              onResizeShots={(idA, durA, idB, durB) => {
-                Promise.all([
-                  editShot({ id: idA, durationMs: Math.round(durA) }),
-                  editShot({ id: idB, durationMs: Math.round(durB) }),
-                ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
-              }}
+                onSplitShot={(shotId, atMs, newCameraId) => {
+                  if (atMs <= 0) {
+                    editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) => console.error('[App] editShot:', err))
+                  } else {
+                    splitShot(shotId, atMs, newCameraId).catch((err: unknown) => console.error('[App] splitShot:', err))
+                  }
+                }}
+                onResizeShots={(idA, durA, idB, durB) => {
+                  Promise.all([
+                    editShot({ id: idA, durationMs: Math.round(durA) }),
+                    editShot({ id: idB, durationMs: Math.round(durB) }),
+                  ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
+                }}
+                onAddMarker={(posMs) => {
+                  if (activeRundownId) addMarker(activeRundownId, posMs).catch((err: unknown) => console.error('[App] addMarker:', err))
+                }}
+                onUpdateMarker={(id, posMs) => updateMarker(id, posMs).catch((err: unknown) => console.error('[App] updateMarker:', err))}
+                onDeleteMarker={(id) => removeMarker(id).catch((err: unknown) => console.error('[App] removeMarker:', err))}
               />
             </div>
           </>

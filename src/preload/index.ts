@@ -2,7 +2,7 @@
 // Exposes a typed API surface to the renderer via contextBridge.
 
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Project, Camera, Rundown, Shot } from '../shared/types'
+import type { Project, Camera, Rundown, Shot, Marker } from '../shared/types'
 import type { CameraUpsertInput } from '../main/ipc/projects'
 import type { CreateShotInput, UpdateShotInput } from '../main/ipc/shots'
 import type { LiveState } from '../main/ipc/live'
@@ -72,6 +72,11 @@ export interface ElectronApi {
     getSettings: () => Promise<{ enabled: boolean; port: number }>
     saveSettings: (payload: { enabled: boolean; port: number }) => Promise<void>
   }
+  markers: {
+    list: (payload: { rundownId: string }) => Promise<Marker[]>
+    upsert: (payload: { id?: string; rundownId: string; positionMs: number; label?: string | null }) => Promise<Marker>
+    delete: (payload: { id: string }) => Promise<void>
+  }
 }
 
 const api: ElectronApi = {
@@ -136,6 +141,11 @@ const api: ElectronApi = {
   osc: {
     getSettings: () => ipcRenderer.invoke('osc:settings:get'),
     saveSettings: (payload) => ipcRenderer.invoke('osc:settings:save', payload),
+  },
+  markers: {
+    list: (payload) => ipcRenderer.invoke('markers:list', payload),
+    upsert: (payload) => ipcRenderer.invoke('markers:upsert', payload),
+    delete: (payload) => ipcRenderer.invoke('markers:delete', payload),
   },
 }
 

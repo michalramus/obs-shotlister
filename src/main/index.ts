@@ -31,6 +31,8 @@ import {
   resolveTransition,
 } from './ipc/transitions'
 import type { TransitionMapping } from './ipc/transitions'
+import { listMarkers, upsertMarker, deleteMarker } from './ipc/markers'
+import type { UpsertMarkerInput } from './ipc/markers'
 
 const obsClient = createOBSClient()
 let obsAutoReconnect = false
@@ -416,6 +418,11 @@ function registerIpcHandlers(): void {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
   })
+
+  // Markers
+  ipcMain.handle('markers:list', (_e, payload: { rundownId: string }) => listMarkers(db, payload.rundownId))
+  ipcMain.handle('markers:upsert', (_e, payload: UpsertMarkerInput) => upsertMarker(db, payload))
+  ipcMain.handle('markers:delete', (_e, payload: { id: string }) => deleteMarker(db, payload.id))
 
   // OSC
   ipcMain.handle('osc:settings:get', () => getOscSettings(db))

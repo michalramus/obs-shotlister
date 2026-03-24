@@ -78,6 +78,13 @@ export function applyMigrations(database: Database.Database): void {
       obs_transition_name TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS markers (
+      id          TEXT PRIMARY KEY,
+      rundown_id  TEXT NOT NULL REFERENCES rundowns(id) ON DELETE CASCADE,
+      position_ms INTEGER NOT NULL,
+      label       TEXT
+    );
+
     INSERT OR IGNORE INTO transition_mappings (logical_name, obs_transition_name) VALUES
       ('cut', 'Cut'),
       ('fade', 'Fade'),

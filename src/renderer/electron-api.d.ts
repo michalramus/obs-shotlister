@@ -2,7 +2,7 @@
 // Augments the global Window interface so renderer code can access window.api
 // with full type safety.
 
-import type { Project, Camera, Rundown, Shot } from '../shared/types'
+import type { Project, Camera, Rundown, Shot, Marker } from '../shared/types'
 
 export type OBSConnectionStatus = 'disconnected' | 'connecting' | 'connected'
 
@@ -127,6 +127,11 @@ export interface ElectronApi {
   osc: {
     getSettings: () => Promise<{ enabled: boolean; port: number }>
     saveSettings: (payload: { enabled: boolean; port: number }) => Promise<void>
+  }
+  markers: {
+    list: (payload: { rundownId: string }) => Promise<Marker[]>
+    upsert: (payload: { id?: string; rundownId: string; positionMs: number; label?: string | null }) => Promise<Marker>
+    delete: (payload: { id: string }) => Promise<void>
   }
 }
 

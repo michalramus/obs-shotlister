@@ -32,3 +32,10 @@ export interface Shot {
   transitionName: string | null
   transitionMs: number  // 0 = cut / no transition
 }
+
+export interface Marker {
+  id: string
+  rundownId: string
+  positionMs: number
+  label: string | null
+}
