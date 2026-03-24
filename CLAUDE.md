@@ -58,3 +58,6 @@ OBS ←→ obs-websocket ←→ Electron main ←→ SQLite
 ## Robustness requirements
 
 This runs in production. All async operations must handle errors explicitly. No unhandled promise rejections. Electron `uncaughtException` and `unhandledRejection` must be caught and logged without crashing the app.
+
+#live mode approach
+When any feature is about live mode, don't edit database - any changes made in live mode should be not be persistand.
