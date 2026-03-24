@@ -88,7 +88,6 @@ export default function App(): React.JSX.Element {
   const cameras = useWebStore((s) => s.cameras)
   const liveIndex = useWebStore((s) => s.liveIndex)
   const startedAt = useWebStore((s) => s.startedAt)
-  const skippedIds = useWebStore((s) => s.skippedIds)
   const running = useWebStore((s) => s.running)
   const cameraFilter = useWebStore((s) => s.cameraFilter)
 
@@ -105,7 +104,7 @@ export default function App(): React.JSX.Element {
 
     socket.on(
       'state:live',
-      (data: { liveIndex: number | null; startedAt: number | null; skippedIds: string[] }) => {
+      (data: { liveIndex: number | null; startedAt: number | null }) => {
         setLiveState(data)
       },
     )
@@ -178,7 +177,6 @@ export default function App(): React.JSX.Element {
             liveIndex={liveIndex}
             startedAt={startedAt}
             running={running}
-            skippedIds={skippedIds}
             cameraFilter={effectiveFilter}
           />
         )}

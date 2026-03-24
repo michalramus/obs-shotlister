@@ -18,14 +18,13 @@ export interface WebStore {
   cameras: Camera[]
   liveIndex: number | null
   startedAt: number | null
-  skippedIds: string[]
   running: boolean
   cameraFilter: number[] // empty = show all
   connected: boolean
 
   // Actions
   setRundownState: (data: { rundown: Rundown | null; shots: Shot[]; cameras: Camera[] }) => void
-  setLiveState: (data: { liveIndex: number | null; startedAt: number | null; skippedIds: string[] }) => void
+  setLiveState: (data: { liveIndex: number | null; startedAt: number | null }) => void
   setPlayback: (data: { running: boolean }) => void
   setConnected: (connected: boolean) => void
   setCameraFilter: (num: number | null) => void
@@ -37,7 +36,6 @@ export const useWebStore = create<WebStore>((set) => ({
   cameras: [],
   liveIndex: null,
   startedAt: null,
-  skippedIds: [],
   running: false,
   cameraFilter: initialCameraFilter(),
   connected: false,
@@ -57,7 +55,6 @@ export const useWebStore = create<WebStore>((set) => ({
     set({
       liveIndex: data.liveIndex,
       startedAt: data.startedAt,
-      skippedIds: data.skippedIds,
     }),
 
   setPlayback: (data) => set({ running: data.running }),

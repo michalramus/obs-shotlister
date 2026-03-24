@@ -9,7 +9,6 @@ export interface ShotlistWidgetProps {
   liveIndex: number | null
   startedAt: number | null
   running: boolean
-  skippedIds?: string[]
   cameraFilter?: number[]
 }
 
@@ -130,11 +129,6 @@ const s = {
     width: '100%',
   } satisfies React.CSSProperties,
 
-  skipped: {
-    textDecoration: 'line-through',
-    opacity: 0.5,
-  } satisfies React.CSSProperties,
-
   emptyState: {
     padding: '24px',
     textAlign: 'center' as const,
@@ -161,7 +155,6 @@ export function ShotlistWidget({
   liveIndex,
   startedAt,
   running,
-  skippedIds = [],
   cameraFilter,
 }: ShotlistWidgetProps): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now())
@@ -248,7 +241,6 @@ export function ShotlistWidget({
             const shotIndexInAll = shots.indexOf(shot)
             const isLive = timing.liveIndex === shotIndexInAll
             const isNext = timing.nextVisibleIndex === shotIndexInAll
-            const isSkipped = skippedIds.includes(shot.id)
 
             const camera = cameraById.get(shot.cameraId)
 
@@ -273,7 +265,7 @@ export function ShotlistWidget({
               <li
                 key={shot.id}
                 ref={isLive ? (el) => { liveRef.current = el } : undefined}
-                style={{ ...s.shotRow(isLive, isNext), ...(isSkipped ? s.skipped : {}) }}
+                style={s.shotRow(isLive, isNext)}
                 data-testid={isLive ? 'shot-live' : isNext ? 'shot-next' : 'shot-row'}
                 data-shot-id={isLive ? shot.id : undefined}
               >
