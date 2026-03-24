@@ -9,6 +9,7 @@ import { ShotlistWidget } from '../shared/components/ShotlistWidget'
 import { ResolveImportDialog } from './components/ResolveImportDialog'
 import { OBSSettingsPanel } from './components/OBSSettingsPanel'
 import { OSCSettingsPanel } from './components/OSCSettingsPanel'
+import { TimelineEditor } from './components/TimelineEditor'
 
 const styles = {
   root: {
@@ -276,7 +277,13 @@ export default function App(): React.JSX.Element {
             <div style={styles.center}>
               {activeRundownId !== null && <LiveControls />}
               <ShotListPanel />
-              {/* TODO: TimelineEditor Phase 2 */}
+              <TimelineEditor
+                shots={shots}
+                cameras={cameras}
+                liveIndex={liveIndex}
+                running={running}
+                onShotClick={(_id) => { /* highlight – Phase 3 */ }}
+              />
             </div>
 
             {activeRundown !== null && (
@@ -314,8 +321,13 @@ export default function App(): React.JSX.Element {
                   />
                 )}
               </div>
-              {/* TODO: TimelineEditor Phase 2 */}
-              <div style={{ height: '180px', flexShrink: 0, borderTop: '1px solid #2a2a2a', background: '#161616' }} />
+              <TimelineEditor
+                shots={shots}
+                cameras={cameras}
+                liveIndex={liveIndex}
+                running={running}
+                onShotClick={(_id) => { /* highlight – Phase 3 */ }}
+              />
             </div>
           </>
         )}
