@@ -320,10 +320,8 @@ async function switchOBSScenes(state: LiveState, database: ReturnType<typeof get
     } catch (e: unknown) { console.error('[OBS] program:', e) }
   }
 
-  // 3. Wait for transition to finish
-  if (transitionMs > 0) {
-    await new Promise<void>((resolve) => setTimeout(resolve, transitionMs))
-  }
+  // 3. Wait for transition to finish + 1s buffer before touching preview
+  await new Promise<void>((resolve) => setTimeout(resolve, transitionMs + 1000))
 
   // 4. Set next camera to preview
   const hiddenIds = new Set(queue.filter((s) => s.hidden).map((s) => s.id))
