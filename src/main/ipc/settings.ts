@@ -22,3 +22,17 @@ export function getObsEnabled(db: Database.Database): boolean {
 export function setObsEnabled(db: Database.Database, enabled: boolean): void {
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('obs_enabled', enabled ? 'true' : 'false')
 }
+
+export function getOscSettings(db: Database.Database): { enabled: boolean; port: number } {
+  const enabledRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('osc_enabled') as { value: string } | undefined
+  const portRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('osc_port') as { value: string } | undefined
+  return {
+    enabled: enabledRow?.value === 'true',
+    port: portRow?.value ? parseInt(portRow.value, 10) : 8000,
+  }
+}
+
+export function saveOscSettings(db: Database.Database, enabled: boolean, port: number): void {
+  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('osc_enabled', enabled ? 'true' : 'false')
+  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('osc_port', String(port))
+}

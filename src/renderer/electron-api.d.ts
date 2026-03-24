@@ -123,6 +123,10 @@ export interface ElectronApi {
     onStatusChange: (cb: (status: OBSConnectionStatus) => void) => void
     onValidationResult: (cb: (result: OBSValidateResult | null) => void) => void
   }
+  osc: {
+    getSettings: () => Promise<{ enabled: boolean; port: number }>
+    saveSettings: (payload: { enabled: boolean; port: number }) => Promise<void>
+  }
 }
 
 declare global {

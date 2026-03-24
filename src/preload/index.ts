@@ -67,6 +67,10 @@ export interface ElectronApi {
     onStatusChange: (cb: (status: OBSConnectionStatus) => void) => void
     onValidationResult: (cb: (result: OBSValidateResult | null) => void) => void
   }
+  osc: {
+    getSettings: () => Promise<{ enabled: boolean; port: number }>
+    saveSettings: (payload: { enabled: boolean; port: number }) => Promise<void>
+  }
 }
 
 const api: ElectronApi = {
@@ -126,6 +130,10 @@ const api: ElectronApi = {
     deleteTransitionMapping: (p) => ipcRenderer.invoke('obs:transitions:delete', p),
     onStatusChange: (cb) => { ipcRenderer.on('obs:status', (_event, d: { status: OBSConnectionStatus }) => cb(d.status)) },
     onValidationResult: (cb) => { ipcRenderer.on('obs:validationResult', (_event, result: OBSValidateResult | null) => cb(result)) },
+  },
+  osc: {
+    getSettings: () => ipcRenderer.invoke('osc:settings:get'),
+    saveSettings: (payload) => ipcRenderer.invoke('osc:settings:save', payload),
   },
 }
 

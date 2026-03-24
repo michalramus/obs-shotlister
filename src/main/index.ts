@@ -22,7 +22,8 @@ import { parseResolveCSV, confirmResolveImport } from './ipc/resolve-import'
 import type { ConfirmImportInput } from './ipc/resolve-import'
 import { createOBSClient } from './obs/client'
 import type { OBSConnectionStatus } from './obs/client'
-import { getObsSettings, saveObsSettings, getObsEnabled, setObsEnabled } from './ipc/settings'
+import { getObsSettings, saveObsSettings, getObsEnabled, setObsEnabled, getOscSettings, saveOscSettings } from './ipc/settings'
+import { startOscServer, stopOscServer } from './osc/server'
 import {
   listTransitionMappings,
   upsertTransitionMapping,
@@ -104,6 +105,32 @@ function runValidation(database: ReturnType<typeof getDatabase>): void {
   runOBSValidation(database).then(sendValidationResult).catch((err: unknown) => {
     console.error('[OBS] validation error:', err)
   })
+}
+
+// --- OSC helpers -------------------------------------------------------------
+
+function handleOscNext(): void {
+  try {
+    const db = getDatabase()
+    const state = nextShot(db)
+    broadcastLiveState(state)
+    broadcastRundown()
+    switchOBSScenes(state, db).catch(console.error)
+  } catch (err) {
+    console.error('[osc] next error:', err)
+  }
+}
+
+function handleOscSkip(): void {
+  try {
+    const db = getDatabase()
+    const state = skipNext(db)
+    broadcastLiveState(state)
+    broadcastRundown()
+    switchOBSPreview(state, db).catch(console.error)
+  } catch (err) {
+    console.error('[osc] skip error:', err)
+  }
 }
 
 // --- App lifecycle -----------------------------------------------------------
@@ -383,6 +410,17 @@ function registerIpcHandlers(): void {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
   })
+
+  // OSC
+  ipcMain.handle('osc:settings:get', () => getOscSettings(db))
+  ipcMain.handle('osc:settings:save', (_e: Electron.IpcMainInvokeEvent, payload: { enabled: boolean; port: number }) => {
+    saveOscSettings(db, payload.enabled, payload.port)
+    if (payload.enabled) {
+      startOscServer(payload.port, { next: handleOscNext, skip: handleOscSkip })
+    } else {
+      stopOscServer()
+    }
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -507,6 +545,11 @@ app.whenReady().then(() => {
     obsClient.connect(url, password || undefined).catch(() => {})
   }
 
+  const oscSettings = getOscSettings(_db)
+  if (oscSettings.enabled) {
+    startOscServer(oscSettings.port, { next: handleOscNext, skip: handleOscSkip })
+  }
+
   // Subscribe to OBS WebSocket events for auto-validation
   const validationEvents = [
     'StudioModeStateChanged',
@@ -545,6 +588,10 @@ app.whenReady().then(() => {
       createWindow()
     }
   })
+})
+
+app.on('will-quit', () => {
+  stopOscServer()
 })
 
 app.on('window-all-closed', () => {

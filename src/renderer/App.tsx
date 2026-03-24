@@ -8,6 +8,7 @@ import { LiveControls } from './components/LiveControls'
 import { ShotlistWidget } from '../shared/components/ShotlistWidget'
 import { ResolveImportDialog } from './components/ResolveImportDialog'
 import { OBSSettingsPanel } from './components/OBSSettingsPanel'
+import { OSCSettingsPanel } from './components/OSCSettingsPanel'
 
 const styles = {
   root: {
@@ -142,6 +143,7 @@ export default function App(): React.JSX.Element {
   const [showCameraConfig, setShowCameraConfig] = useState(false)
   const [showResolveImport, setShowResolveImport] = useState(false)
   const [showObsPanel, setShowObsPanel] = useState(false)
+  const [showOscPanel, setShowOscPanel] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [headerFlash, setHeaderFlash] = useState(false)
   const isFirstLiveIndexRef = useRef(true)
@@ -224,6 +226,13 @@ export default function App(): React.JSX.Element {
             <span style={styles.obsDot(obsStatus)} />
             OBS
           </button>
+          <button
+            style={styles.obsBtn}
+            onClick={() => setShowOscPanel(true)}
+            title="OSC Server"
+          >
+            OSC
+          </button>
         </div>
       </header>
 
@@ -289,6 +298,7 @@ export default function App(): React.JSX.Element {
       {showCameraConfig && <CameraConfigPanel onClose={() => setShowCameraConfig(false)} />}
       {showResolveImport && <ResolveImportDialog onClose={() => setShowResolveImport(false)} />}
       {showObsPanel && <OBSSettingsPanel onClose={() => setShowObsPanel(false)} />}
+      {showOscPanel && <OSCSettingsPanel onClose={() => setShowOscPanel(false)} />}
     </div>
   )
 }

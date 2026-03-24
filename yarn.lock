@@ -2965,6 +2965,11 @@ node-gyp@^11.2.0:
     tinyglobby "^0.2.12"
     which "^5.0.0"
 
+node-osc@^11.3.0:
+  version "11.3.0"
+  resolved "https://registry.yarnpkg.com/node-osc/-/node-osc-11.3.0.tgz#f35e2c7a53b5de84ba0f97605c12d07f73921f97"
+  integrity sha512-MtXBBcdzBO00ykGdoe23TB0Ex6Yv9bEf0yB4d4HjWB6hyaFzPg/QGTyw/YaLR2Uwaro+4eM7VCWtzRHu1El4ng==
+
 node-releases@^2.0.27:
   version "2.0.36"
   resolved "https://registry.yarnpkg.com/node-releases/-/node-releases-2.0.36.tgz#99fd6552aaeda9e17c4713b57a63964a2e325e9d"
