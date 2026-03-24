@@ -18,6 +18,7 @@ function openMemoryDb(): Database.Database {
 function seedRundownWithShots(
   db: Database.Database,
   shotCount = 3,
+  durationMs = 5000,
 ): { rundownId: string; shotIds: string[] } {
   const projectId = 'p1'
   const rundownId = 'rd-1'
@@ -41,10 +42,14 @@ function seedRundownWithShots(
     const id = `shot-${i}`
     db.prepare(
       'INSERT INTO shots (id, rundown_id, camera_id, duration_ms, order_index) VALUES (?, ?, ?, ?, ?)',
-    ).run(id, rundownId, cameraId, 5000, i)
+    ).run(id, rundownId, cameraId, durationMs, i)
     shotIds.push(id)
   }
   return { rundownId, shotIds }
+}
+
+function getShotIds(db: Database.Database, rundownId: string): string[] {
+  return (db.prepare('SELECT id FROM shots WHERE rundown_id = ? ORDER BY order_index ASC').all(rundownId) as { id: string }[]).map((r) => r.id)
 }
 
 // ---------------------------------------------------------------------------
@@ -68,7 +73,6 @@ describe('getLiveState', () => {
     expect(state.liveIndex).toBeNull()
     expect(state.startedAt).toBeNull()
     expect(state.rundownId).toBeNull()
-    expect(state.skippedIds).toEqual([])
   })
 })
 
@@ -124,18 +128,14 @@ describe('stopLive', () => {
     db.close()
   })
 
-  it('returns to idle state but preserves skippedIds', () => {
-    const { rundownId, shotIds } = seedRundownWithShots(db)
+  it('returns to idle state', () => {
+    const { rundownId } = seedRundownWithShots(db)
     startLive(db, rundownId)
-    // Skip the next shot
-    skipNext(db)
     const stopped = stopLive(db)
 
     expect(stopped.running).toBe(false)
     expect(stopped.liveIndex).toBeNull()
     expect(stopped.startedAt).toBeNull()
-    // Skipped shot id should be preserved
-    expect(stopped.skippedIds).toContain(shotIds[1])
   })
 })
 
@@ -159,19 +159,9 @@ describe('nextShot', () => {
     const started = startLive(db, rundownId)
     const startedAt1 = started.startedAt as number
 
-    // Small delay to ensure timestamps differ
     const state = nextShot(db)
     expect(state.liveIndex).toBe(1)
     expect(state.startedAt).toBeGreaterThanOrEqual(startedAt1)
-  })
-
-  it('skips over skipped shots', () => {
-    const { rundownId } = seedRundownWithShots(db, 3) // shots 0,1,2
-    startLive(db, rundownId)
-    skipNext(db) // skip shot at index 1
-    const state = nextShot(db)
-    // should land on index 2 (index 1 is skipped)
-    expect(state.liveIndex).toBe(2)
   })
 
   it('transitions to idle when advancing past last shot', () => {
@@ -198,23 +188,42 @@ describe('skipNext', () => {
     db.close()
   })
 
-  it('adds the next shot id to skippedIds without advancing liveIndex', () => {
-    const { rundownId, shotIds } = seedRundownWithShots(db, 3)
+  it('deletes the next shot and extends started_at back by its duration', () => {
+    const { rundownId, shotIds } = seedRundownWithShots(db, 3, 5000)
     startLive(db, rundownId)
+
+    // Capture started_at before skip
+    const before = getLiveState(db)
+    const beforeStartedAt = before.startedAt as number
+
     const state = skipNext(db)
 
     expect(state.liveIndex).toBe(0) // unchanged
-    expect(state.skippedIds).toContain(shotIds[1]) // next shot marked skipped
+    // started_at moved back by 5000ms (next shot's duration)
+    expect(state.startedAt).toBe(beforeStartedAt - 5000)
+
+    // shot-1 (the next shot) should be deleted
+    const remaining = getShotIds(db, rundownId)
+    expect(remaining).not.toContain(shotIds[1])
+    expect(remaining).toContain(shotIds[0])
+    expect(remaining).toContain(shotIds[2])
   })
 
-  it('does not double-add the same shot', () => {
-    const { rundownId, shotIds } = seedRundownWithShots(db, 3)
+  it('does nothing when there is no next shot', () => {
+    const { rundownId } = seedRundownWithShots(db, 1)
     startLive(db, rundownId)
-    skipNext(db)
-    skipNext(db)
-    const state = getLiveState(db)
-    const occurrences = state.skippedIds.filter((id) => id === shotIds[1]).length
-    expect(occurrences).toBe(1)
+    const before = getLiveState(db)
+    const state = skipNext(db)
+    expect(state.liveIndex).toBe(0)
+    expect(state.startedAt).toBe(before.startedAt)
+    expect(getShotIds(db, rundownId)).toHaveLength(1)
+  })
+
+  it('throws when not running', () => {
+    const { rundownId } = seedRundownWithShots(db, 3)
+    // not started
+    expect(() => skipNext(db)).toThrow('Cannot skip: not running')
+    void rundownId
   })
 })
 
@@ -233,15 +242,13 @@ describe('restartLive', () => {
     db.close()
   })
 
-  it('resets liveIndex to 0, clears skippedIds, keeps running=true', () => {
+  it('resets liveIndex to 0 and keeps running=true', () => {
     const { rundownId } = seedRundownWithShots(db, 3)
     startLive(db, rundownId)
-    skipNext(db)
-    nextShot(db) // advance to 2
+    nextShot(db) // advance to 1
 
     const state = restartLive(db)
     expect(state.liveIndex).toBe(0)
-    expect(state.skippedIds).toEqual([])
     expect(state.running).toBe(true)
   })
 })

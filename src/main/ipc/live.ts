@@ -9,7 +9,6 @@
  */
 
 import Database from 'better-sqlite3'
-import type { Shot } from '../../shared/types'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -21,7 +20,6 @@ export interface LiveState {
   liveIndex: number | null
   startedAt: number | null
   running: boolean
-  skippedIds: string[]
 }
 
 interface LiveStateRow {
@@ -30,12 +28,12 @@ interface LiveStateRow {
   live_shot_id: string | null
   started_at: number | null
   running: number
-  skipped_ids: string
 }
 
 interface ShotRow {
   id: string
   order_index: number
+  duration_ms: number
 }
 
 // ---------------------------------------------------------------------------
@@ -49,13 +47,12 @@ function rowToLiveState(row: LiveStateRow, liveIndex: number | null): LiveState 
     liveIndex,
     startedAt: row.started_at,
     running: row.running === 1,
-    skippedIds: JSON.parse(row.skipped_ids) as string[],
   }
 }
 
 function getShotsForRundown(db: Database.Database, rundownId: string): ShotRow[] {
   return db
-    .prepare('SELECT id, order_index FROM shots WHERE rundown_id = ? ORDER BY order_index ASC')
+    .prepare('SELECT id, order_index, duration_ms FROM shots WHERE rundown_id = ? ORDER BY order_index ASC')
     .all(rundownId) as ShotRow[]
 }
 
@@ -65,13 +62,9 @@ function liveShotIdToIndex(shots: ShotRow[], liveShotId: string | null): number 
   return idx === -1 ? null : idx
 }
 
-export function findNextNonSkipped(shots: ShotRow[], fromIndex: number, skippedIds: string[]): number | null {
-  for (let i = fromIndex + 1; i < shots.length; i++) {
-    if (!skippedIds.includes(shots[i].id)) {
-      return i
-    }
-  }
-  return null
+export function findNext(shots: ShotRow[], fromIndex: number): number | null {
+  const next = fromIndex + 1
+  return next < shots.length ? next : null
 }
 
 // ---------------------------------------------------------------------------
@@ -114,8 +107,8 @@ export function startLive(db: Database.Database, rundownId: string): LiveState {
   const startedAt = Date.now()
 
   db.prepare(
-    'UPDATE live_state SET rundown_id = ?, live_shot_id = ?, started_at = ?, running = 1, skipped_ids = ? WHERE id = 1',
-  ).run(rundownId, liveShotId, startedAt, '[]')
+    'UPDATE live_state SET rundown_id = ?, live_shot_id = ?, started_at = ?, running = 1 WHERE id = 1',
+  ).run(rundownId, liveShotId, startedAt)
 
   return {
     rundownId,
@@ -123,7 +116,6 @@ export function startLive(db: Database.Database, rundownId: string): LiveState {
     liveIndex: 0,
     startedAt,
     running: true,
-    skippedIds: [],
   }
 }
 
@@ -140,7 +132,6 @@ export function stopLive(db: Database.Database): LiveState {
     liveIndex: null,
     startedAt: null,
     running: false,
-    skippedIds: JSON.parse(row.skipped_ids) as string[],
   }
 }
 
@@ -152,10 +143,9 @@ export function nextShot(db: Database.Database): LiveState {
   }
 
   const shots = getShotsForRundown(db, row.rundown_id)
-  const skippedIds = JSON.parse(row.skipped_ids) as string[]
   const currentIndex = liveShotIdToIndex(shots, row.live_shot_id) ?? 0
 
-  const nextIndex = findNextNonSkipped(shots, currentIndex, skippedIds)
+  const nextIndex = findNext(shots, currentIndex)
 
   if (nextIndex === null) {
     // Past last shot → transition to idle
@@ -168,7 +158,6 @@ export function nextShot(db: Database.Database): LiveState {
       liveIndex: null,
       startedAt: null,
       running: false,
-      skippedIds,
     }
   }
 
@@ -185,7 +174,6 @@ export function nextShot(db: Database.Database): LiveState {
     liveIndex: nextIndex,
     startedAt,
     running: true,
-    skippedIds,
   }
 }
 
@@ -197,39 +185,36 @@ export function skipNext(db: Database.Database): LiveState {
   }
 
   const shots = getShotsForRundown(db, row.rundown_id)
-  const skippedIds = JSON.parse(row.skipped_ids) as string[]
   const currentIndex = liveShotIdToIndex(shots, row.live_shot_id) ?? 0
 
-  // Find the next shot after current (regardless of skip status) and mark it skipped
-  // We skip the next physical shot in the ordered list that isn't already skipped
-  // Actually per spec: marks "next queued shot (after liveIndex) as skipped"
-  // Find first non-skipped shot after current
-  let nextToSkip: Shot | ShotRow | null = null
-  for (let i = currentIndex + 1; i < shots.length; i++) {
-    if (!skippedIds.includes(shots[i].id)) {
-      nextToSkip = shots[i]
-      break
-    }
-  }
-
-  if (!nextToSkip) {
+  // Find the next shot after current
+  const nextIndex = findNext(shots, currentIndex)
+  if (nextIndex === null) {
     // Nothing to skip
     return rowToLiveState(row, currentIndex)
   }
 
-  if (!skippedIds.includes(nextToSkip.id)) {
-    skippedIds.push(nextToSkip.id)
-  }
+  const nextShot = shots[nextIndex]
+  const durationMs = nextShot.duration_ms
 
-  db.prepare('UPDATE live_state SET skipped_ids = ? WHERE id = 1').run(JSON.stringify(skippedIds))
+  // In a transaction: extend current shot's started_at back by next shot's duration,
+  // then delete the next shot
+  const skipTx = db.transaction(() => {
+    db.prepare(
+      'UPDATE live_state SET started_at = started_at - ? WHERE id = 1',
+    ).run(durationMs)
+    db.prepare('DELETE FROM shots WHERE id = ?').run(nextShot.id)
+  })
+  skipTx()
+
+  const updatedRow = db.prepare('SELECT * FROM live_state WHERE id = 1').get() as LiveStateRow
 
   return {
-    rundownId: row.rundown_id,
-    projectId: row.project_id,
+    rundownId: updatedRow.rundown_id,
+    projectId: updatedRow.project_id,
     liveIndex: currentIndex,
-    startedAt: row.started_at,
+    startedAt: updatedRow.started_at,
     running: true,
-    skippedIds,
   }
 }
 
@@ -249,8 +234,8 @@ export function restartLive(db: Database.Database): LiveState {
   const startedAt = Date.now()
 
   db.prepare(
-    'UPDATE live_state SET live_shot_id = ?, started_at = ?, running = 1, skipped_ids = ? WHERE id = 1',
-  ).run(liveShotId, startedAt, '[]')
+    'UPDATE live_state SET live_shot_id = ?, started_at = ?, running = 1 WHERE id = 1',
+  ).run(liveShotId, startedAt)
 
   return {
     rundownId: row.rundown_id,
@@ -258,6 +243,5 @@ export function restartLive(db: Database.Database): LiveState {
     liveIndex: 0,
     startedAt,
     running: true,
-    skippedIds: [],
   }
 }
