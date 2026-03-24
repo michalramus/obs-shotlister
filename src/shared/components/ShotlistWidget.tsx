@@ -132,6 +132,17 @@ const s = {
     transition: 'none',
   }),
 
+  transitionBarRight: (leftPct: number, widthPct: number): React.CSSProperties => ({
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: `${leftPct * 100}%`,
+    width: `${widthPct * 100}%`,
+    background: '#9b59b6',
+    opacity: 0.5,
+    transition: 'none',
+  }),
+
   rowContent: {
     position: 'relative',
     zIndex: 1,
@@ -241,6 +252,21 @@ export function ShotlistWidget({
     return num !== undefined && cameraFilter!.includes(num)
   }
 
+  // Transition time of the first non-hidden filtered-out shot after live.
+  // In filter mode this warns the operator their camera stays on-screen during
+  // the transition even though the live shot has ended.
+  let filteredNextTransitionMs = 0
+  if (hasFilter && timing.liveIndex !== null) {
+    for (let i = timing.liveIndex + 1; i < shots.length; i++) {
+      if (!shots[i].hidden) {
+        if (!passesFilter(shots[i]) && shots[i].transitionMs > 0) {
+          filteredNextTransitionMs = shots[i].transitionMs
+        }
+        break
+      }
+    }
+  }
+
   const visibleShots = shots.filter((s) => !s.hidden && passesFilter(s))
 
   const liveShot = timing.liveIndex !== null ? shots[timing.liveIndex] : null
@@ -277,8 +303,12 @@ export function ShotlistWidget({
             let progressPct: number | null = null
 
             if (isLive && timing.remainingMs !== null) {
-              timeLabel = formatMs(timing.remainingMs)
-              progressPct = 1 - timing.remainingMs / (timing.effectiveDurationMs ?? shot.durationMs)
+              const effectiveDur = timing.effectiveDurationMs ?? shot.durationMs
+              const totalMs = effectiveDur + filteredNextTransitionMs
+              timeLabel = formatMs(timing.remainingMs + filteredNextTransitionMs)
+              progressPct = filteredNextTransitionMs > 0
+                ? (effectiveDur - timing.remainingMs) / totalMs
+                : 1 - timing.remainingMs / effectiveDur
             } else if (isNext && showNextBar && timing.timeUntilNextVisibleMs !== null) {
               timeLabel = formatMs(timing.timeUntilNextVisibleMs)
               // Use the total wait captured when this shot first became "next".
@@ -314,6 +344,15 @@ export function ShotlistWidget({
                     )}
                     {progressPct !== null && (
                       <div style={s.progressBar(Math.min(1, Math.max(0, progressPct)), isLive)} />
+                    )}
+                    {isLive && filteredNextTransitionMs > 0 && timing.effectiveDurationMs !== null && (
+                      <div
+                        style={s.transitionBarRight(
+                          timing.effectiveDurationMs / (timing.effectiveDurationMs + filteredNextTransitionMs),
+                          filteredNextTransitionMs / (timing.effectiveDurationMs + filteredNextTransitionMs),
+                        )}
+                        data-testid="progress-transition-right"
+                      />
                     )}
                   </div>
                 )}
