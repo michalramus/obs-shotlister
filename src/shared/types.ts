@@ -28,4 +28,5 @@ export interface Shot {
   durationMs: number
   label: string | null
   orderIndex: number
+  hidden?: boolean
 }
