@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { io } from 'socket.io-client'
 import { useWebStore } from './store'
 import { ShotlistWidget } from '../shared/components/ShotlistWidget'
@@ -73,9 +73,35 @@ const s = {
     fontSize: '12px',
     padding: '4px 8px',
   } satisfies React.CSSProperties,
+
+  zoomBtn: {
+    background: '#2a2a2a',
+    border: '1px solid #444',
+    borderRadius: '4px',
+    color: '#fff',
+    fontSize: '14px',
+    padding: '2px 8px',
+    cursor: 'pointer',
+    lineHeight: '1',
+  } satisfies React.CSSProperties,
 }
 
 export default function App(): React.JSX.Element {
+  const [zoom, setZoom] = useState<number>(() => {
+    const stored = localStorage.getItem('obs-queuer-zoom')
+    const parsed = stored !== null ? parseFloat(stored) : NaN
+    return isNaN(parsed) ? 1.0 : parsed
+  })
+
+  function adjustZoom(delta: number): void {
+    setZoom((prev) => {
+      const next = Math.round((prev + delta) * 10) / 10
+      const clamped = Math.min(2.0, Math.max(0.7, next))
+      localStorage.setItem('obs-queuer-zoom', String(clamped))
+      return clamped
+    })
+  }
+
   const setRundownState = useWebStore((s) => s.setRundownState)
   const setLiveState = useWebStore((s) => s.setLiveState)
   const setPlayback = useWebStore((s) => s.setPlayback)
@@ -158,13 +184,30 @@ export default function App(): React.JSX.Element {
           </select>
         )}
 
+        <button
+          style={s.zoomBtn}
+          onClick={() => adjustZoom(-0.1)}
+          aria-label="Zoom out"
+          disabled={zoom <= 0.7}
+        >
+          −
+        </button>
+        <button
+          style={s.zoomBtn}
+          onClick={() => adjustZoom(0.1)}
+          aria-label="Zoom in"
+          disabled={zoom >= 2.0}
+        >
+          +
+        </button>
+
         <span style={s.statusText}>
           <span style={s.statusDot(connected)} />
           {connected ? 'Connected' : 'Disconnected'}
         </span>
       </header>
 
-      <div style={s.content}>
+      <div style={{ ...s.content, zoom: zoom }}>
         {rundown === null ? (
           <div style={s.noRundown}>
             {connected ? 'Waiting for rundown...' : 'Connecting...'}
