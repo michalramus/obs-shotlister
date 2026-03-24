@@ -8,6 +8,8 @@ import type { CreateShotInput, UpdateShotInput } from '../main/ipc/shots'
 import type { LiveState } from '../main/ipc/live'
 import type { OBSConnectionStatus } from '../main/obs/client'
 import type { ParseResult, ConfirmImportInput } from '../main/ipc/resolve-import'
+import type { TransitionMapping } from '../main/ipc/transitions'
+import type { OBSValidateResult } from '../main/index'
 
 export interface ElectronApi {
   projects: {
@@ -58,7 +60,12 @@ export interface ElectronApi {
     checkScenes: () => Promise<{ allMapped: boolean; missing: string[] }>
     getScenes: () => Promise<string[]>
     getTransitions: () => Promise<string[]>
+    validate: () => Promise<OBSValidateResult | null>
+    listTransitionMappings: () => Promise<TransitionMapping[]>
+    upsertTransitionMapping: (p: { logicalName: string; obsTransitionName: string }) => Promise<void>
+    deleteTransitionMapping: (p: { logicalName: string }) => Promise<void>
     onStatusChange: (cb: (status: OBSConnectionStatus) => void) => void
+    onValidationResult: (cb: (result: OBSValidateResult | null) => void) => void
   }
 }
 
@@ -113,7 +120,12 @@ const api: ElectronApi = {
     getTransitions: () => ipcRenderer.invoke('obs:getTransitions'),
     getEnabled: () => ipcRenderer.invoke('obs:getEnabled'),
     setEnabled: (enabled: boolean) => ipcRenderer.invoke('obs:setEnabled', enabled),
+    validate: () => ipcRenderer.invoke('obs:validate'),
+    listTransitionMappings: () => ipcRenderer.invoke('obs:transitions:list'),
+    upsertTransitionMapping: (p) => ipcRenderer.invoke('obs:transitions:upsert', p),
+    deleteTransitionMapping: (p) => ipcRenderer.invoke('obs:transitions:delete', p),
     onStatusChange: (cb) => { ipcRenderer.on('obs:status', (_event, d: { status: OBSConnectionStatus }) => cb(d.status)) },
+    onValidationResult: (cb) => { ipcRenderer.on('obs:validationResult', (_event, result: OBSValidateResult | null) => cb(result)) },
   },
 }
 

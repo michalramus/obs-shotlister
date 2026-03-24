@@ -14,7 +14,10 @@ export interface OBSClient {
   getSceneList: () => Promise<string[]>
   getTransitionList: () => Promise<string[]>
   setCurrentSceneTransition: (name: string, durationMs: number) => Promise<void>
+  triggerStudioModeTransition: () => Promise<void>
+  getStudioModeEnabled: () => Promise<boolean>
   onStatusChange: (cb: (status: OBSConnectionStatus) => void) => void
+  onOBSEvent: (event: string, cb: (...args: unknown[]) => void) => void
 }
 
 export function createOBSClient(): OBSClient {
@@ -66,8 +69,18 @@ export function createOBSClient(): OBSClient {
         await obs.call('SetCurrentSceneTransitionDuration', { transitionDuration: durationMs })
       }
     },
+    async triggerStudioModeTransition(): Promise<void> {
+      await obs.call('TriggerStudioModeTransition')
+    },
+    async getStudioModeEnabled(): Promise<boolean> {
+      const r = await obs.call('GetStudioModeEnabled')
+      return r.studioModeEnabled
+    },
     onStatusChange(cb: (status: OBSConnectionStatus) => void): void {
       listeners.push(cb)
+    },
+    onOBSEvent(event: string, cb: (...args: unknown[]) => void): void {
+      obs.on(event as Parameters<typeof obs.on>[0], cb as never)
     },
   }
 }

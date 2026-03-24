@@ -6,6 +6,17 @@ import type { Project, Camera, Rundown, Shot } from '../shared/types'
 
 export type OBSConnectionStatus = 'disconnected' | 'connecting' | 'connected'
 
+export interface OBSValidateResult {
+  studioModeEnabled: boolean
+  missingScenes: string[]
+  missingTransitions: string[]
+}
+
+export interface TransitionMapping {
+  logicalName: string
+  obsTransitionName: string
+}
+
 export interface CameraUpsertInput extends Omit<Camera, 'id'> {
   id?: string
 }
@@ -105,7 +116,12 @@ export interface ElectronApi {
     getTransitions: () => Promise<string[]>
     getEnabled: () => Promise<boolean>
     setEnabled: (enabled: boolean) => Promise<void>
+    validate: () => Promise<OBSValidateResult | null>
+    listTransitionMappings: () => Promise<TransitionMapping[]>
+    upsertTransitionMapping: (p: { logicalName: string; obsTransitionName: string }) => Promise<void>
+    deleteTransitionMapping: (p: { logicalName: string }) => Promise<void>
     onStatusChange: (cb: (status: OBSConnectionStatus) => void) => void
+    onValidationResult: (cb: (result: OBSValidateResult | null) => void) => void
   }
 }
 

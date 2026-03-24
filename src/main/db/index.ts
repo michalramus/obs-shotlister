@@ -72,6 +72,16 @@ export function applyMigrations(database: Database.Database): void {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS transition_mappings (
+      logical_name        TEXT PRIMARY KEY,
+      obs_transition_name TEXT NOT NULL
+    );
+
+    INSERT OR IGNORE INTO transition_mappings (logical_name, obs_transition_name) VALUES
+      ('cut', 'Cut'),
+      ('fade', 'Fade'),
+      ('stinger', 'Stinger');
   `)
 }
 

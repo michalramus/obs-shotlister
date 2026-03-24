@@ -23,6 +23,13 @@ import type { ConfirmImportInput } from './ipc/resolve-import'
 import { createOBSClient } from './obs/client'
 import type { OBSConnectionStatus } from './obs/client'
 import { getObsSettings, saveObsSettings, getObsEnabled, setObsEnabled } from './ipc/settings'
+import {
+  listTransitionMappings,
+  upsertTransitionMapping,
+  deleteTransitionMapping,
+  resolveTransition,
+} from './ipc/transitions'
+import type { TransitionMapping } from './ipc/transitions'
 
 const obsClient = createOBSClient()
 let obsAutoReconnect = false
@@ -41,6 +48,63 @@ process.on('unhandledRejection', (reason: unknown) => {
   // eslint-disable-next-line no-console
   console.error('[unhandledRejection]', reason)
 })
+
+// --- OBS validation ----------------------------------------------------------
+
+export interface OBSValidateResult {
+  studioModeEnabled: boolean
+  missingScenes: string[]
+  missingTransitions: string[]
+}
+
+async function runOBSValidation(database: ReturnType<typeof getDatabase>): Promise<OBSValidateResult | null> {
+  if (obsClient.status !== 'connected') return null
+  const liveState = getLiveState(database)
+  const [studioModeEnabled, scenes, transitions] = await Promise.all([
+    obsClient.getStudioModeEnabled(),
+    obsClient.getSceneList(),
+    obsClient.getTransitionList(),
+  ])
+
+  // Check camera scene mappings for active project
+  const missingScenes: string[] = []
+  if (liveState.projectId) {
+    const cameras = listCameras(database, liveState.projectId)
+    for (const cam of cameras) {
+      if (cam.obsScene && !scenes.includes(cam.obsScene)) {
+        missingScenes.push(cam.obsScene)
+      }
+    }
+  }
+
+  // Check transition names used in active rundown shots
+  const missingTransitions: string[] = []
+  if (liveState.rundownId) {
+    const shots = listShots(database, liveState.rundownId)
+    const uniqueTransitions = new Set(
+      shots
+        .filter((s) => s.transitionName != null)
+        .map((s) => resolveTransition(database, s.transitionName!)),
+    )
+    for (const t of uniqueTransitions) {
+      if (!transitions.includes(t)) {
+        missingTransitions.push(t)
+      }
+    }
+  }
+
+  return { studioModeEnabled, missingScenes, missingTransitions }
+}
+
+function sendValidationResult(result: OBSValidateResult | null): void {
+  BrowserWindow.getAllWindows()[0]?.webContents.send('obs:validationResult', result)
+}
+
+function runValidation(database: ReturnType<typeof getDatabase>): void {
+  runOBSValidation(database).then(sendValidationResult).catch((err: unknown) => {
+    console.error('[OBS] validation error:', err)
+  })
+}
 
 // --- App lifecycle -----------------------------------------------------------
 
@@ -284,6 +348,41 @@ function registerIpcHandlers(): void {
       missing,
     }
   })
+
+  ipcMain.handle('obs:validate', async () => {
+    try {
+      return await runOBSValidation(db)
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err))
+    }
+  })
+
+  ipcMain.handle('obs:transitions:list', (): TransitionMapping[] => {
+    try {
+      return listTransitionMappings(db)
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err))
+    }
+  })
+
+  ipcMain.handle(
+    'obs:transitions:upsert',
+    (_event, payload: { logicalName: string; obsTransitionName: string }) => {
+      try {
+        upsertTransitionMapping(db, payload.logicalName, payload.obsTransitionName)
+      } catch (err) {
+        throw new Error(err instanceof Error ? err.message : String(err))
+      }
+    },
+  )
+
+  ipcMain.handle('obs:transitions:delete', (_event, payload: { logicalName: string }) => {
+    try {
+      deleteTransitionMapping(db, payload.logicalName)
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err))
+    }
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -307,16 +406,16 @@ async function switchOBSScenes(state: LiveState, database: ReturnType<typeof get
   const liveShot = allShots[liveShotIdx]
   const liveCamera = getCameraById(database, liveShot.cameraId)
 
-  const transitionName = liveShot.transitionName ?? 'Cut'
+  const resolvedName = resolveTransition(database, liveShot.transitionName ?? 'cut')
   const transitionMs = liveShot.transitionMs ?? 0
 
-  // 1+2. Configure transition, then set live camera to program
+  // 1+2. Configure transition, then trigger studio mode transition (preview→program)
   if (liveCamera?.obsScene) {
     try {
-      await obsClient.setCurrentSceneTransition(transitionName, transitionMs)
+      await obsClient.setCurrentSceneTransition(resolvedName, transitionMs)
     } catch (e: unknown) { console.error('[OBS] setTransition:', e) }
     try {
-      await obsClient.setCurrentProgramScene(liveCamera.obsScene)
+      await obsClient.triggerStudioModeTransition()
     } catch (e: unknown) { console.error('[OBS] program:', e) }
   }
 
@@ -408,8 +507,26 @@ app.whenReady().then(() => {
     obsClient.connect(url, password || undefined).catch(() => {})
   }
 
+  // Subscribe to OBS WebSocket events for auto-validation
+  const validationEvents = [
+    'StudioModeStateChanged',
+    'SceneCreated',
+    'SceneRemoved',
+    'SceneNameChanged',
+    'SceneTransitionCreated',
+    'SceneTransitionRemoved',
+  ]
+  for (const event of validationEvents) {
+    obsClient.onOBSEvent(event, () => {
+      if (_db) runValidation(_db)
+    })
+  }
+
   obsClient.onStatusChange((status: OBSConnectionStatus) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send('obs:status', { status })
+    if (status === 'connected' && _db) {
+      runValidation(_db)
+    }
     if (status === 'disconnected' && obsAutoReconnect) {
       obsReconnectTimer = setTimeout(async () => {
         if (!obsAutoReconnect || obsClient.status !== 'disconnected') return
