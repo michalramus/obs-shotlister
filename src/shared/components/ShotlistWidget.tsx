@@ -56,7 +56,7 @@ const s = {
 
   shotRow: (isLive: boolean, isNext: boolean, showNextBg: boolean): React.CSSProperties => ({
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: '8px',
     padding: '8px 14px',
     borderBottom: '1px solid #2a2a2a',
@@ -87,9 +87,7 @@ const s = {
     fontSize: '13px',
     color: '#888',
     flex: 1,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap' as const,
+    wordBreak: 'break-word' as const,
   } satisfies React.CSSProperties,
 
   timeDisplay: {
@@ -159,7 +157,7 @@ const s = {
     position: 'relative',
     zIndex: 1,
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: '8px',
     width: '100%',
   } satisfies React.CSSProperties,
