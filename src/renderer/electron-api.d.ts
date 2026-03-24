@@ -29,7 +29,6 @@ export interface LiveState {
   liveIndex: number | null
   startedAt: number | null
   running: boolean
-  skippedIds: string[]
 }
 
 export interface ParsedRow {

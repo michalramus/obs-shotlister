@@ -42,7 +42,6 @@ export function LiveControls(): React.JSX.Element {
   const liveSkipNext = useAppStore((s) => s.liveSkipNext)
   const liveRestart = useAppStore((s) => s.liveRestart)
   const liveIndex = useAppStore((s) => s.liveIndex)
-  const skippedIds = useAppStore((s) => s.skippedIds)
 
   function handleError(label: string, err: unknown): void {
     console.error(`[LiveControls] ${label}:`, err)
@@ -52,24 +51,13 @@ export function LiveControls(): React.JSX.Element {
     return !running && shots.length > 0 && activeRundownId !== null
   }
 
-  // There is a next non-skipped shot available
   function hasNextShot(): boolean {
     if (!running || liveIndex === null) return false
-    const skipped = new Set(skippedIds)
-    for (let i = liveIndex + 1; i < shots.length; i++) {
-      if (!skipped.has(shots[i].id)) return true
-    }
-    return false
+    return liveIndex + 1 < shots.length
   }
 
-  // There is a next shot that can be skipped (not yet skipped)
   function canSkipNext(): boolean {
-    if (!running || liveIndex === null) return false
-    const skipped = new Set(skippedIds)
-    for (let i = liveIndex + 1; i < shots.length; i++) {
-      if (!skipped.has(shots[i].id)) return true
-    }
-    return false
+    return hasNextShot()
   }
 
   if (!running) {

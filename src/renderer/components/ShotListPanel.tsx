@@ -115,11 +115,6 @@ const s = {
     flexShrink: 0,
   } satisfies React.CSSProperties,
 
-  skipped: {
-    textDecoration: 'line-through',
-    opacity: 0.5,
-  } satisfies React.CSSProperties,
-
   emptyState: {
     padding: '32px',
     textAlign: 'center' as const,
@@ -291,7 +286,6 @@ interface SortableShotRowProps {
   shot: Shot
   cameras: Camera[]
   isLocked: boolean
-  isSkipped: boolean
   isLive: boolean
   liveRefCallback?: (el: HTMLLIElement | null) => void
   onEdit: (shot: Shot) => void
@@ -302,7 +296,6 @@ function SortableShotRow({
   shot,
   cameras,
   isLocked,
-  isSkipped,
   isLive,
   liveRefCallback,
   onEdit,
@@ -318,7 +311,6 @@ function SortableShotRow({
 
   const style: React.CSSProperties = {
     ...s.row,
-    ...(isSkipped ? s.skipped : {}),
     ...(isLive ? { background: liveBg } : {}),
     transform: CSS.Transform.toString(transform),
     transition,
@@ -377,7 +369,6 @@ export function ShotListPanel(): React.JSX.Element {
   const cameras = useAppStore((s) => s.cameras)
   const running = useAppStore((s) => s.running)
   const activeRundownId = useAppStore((s) => s.activeRundownId)
-  const skippedIds = useAppStore((s) => s.skippedIds)
   const liveIndex = useAppStore((s) => s.liveIndex)
   const addShot = useAppStore((s) => s.addShot)
   const editShot = useAppStore((s) => s.editShot)
@@ -513,7 +504,6 @@ export function ShotListPanel(): React.JSX.Element {
                   shot={shot}
                   cameras={cameras}
                   isLocked={running}
-                  isSkipped={skippedIds.includes(shot.id)}
                   isLive={liveIndex === shots.indexOf(shot)}
                   liveRefCallback={liveIndex === shots.indexOf(shot) ? setLiveRef : undefined}
                   onEdit={(s) => { setEditingShot(s); setShowAddForm(false) }}

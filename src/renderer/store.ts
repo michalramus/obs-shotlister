@@ -17,7 +17,6 @@ interface AppStore {
   liveIndex: number | null // index into shots[] of current live shot
   startedAt: number | null // Date.now() when live shot started
   running: boolean // whether rundown is started
-  skippedIds: string[] // shot IDs skipped this run
 
   // OBS state
   obsStatus: OBSConnectionStatus
@@ -76,7 +75,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
   liveIndex: null,
   startedAt: null,
   running: false,
-  skippedIds: [],
 
   // OBS state
   obsStatus: 'disconnected',
@@ -99,7 +97,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
       liveIndex: state.liveIndex,
       startedAt: state.startedAt,
       running: state.running,
-      skippedIds: state.skippedIds,
     }),
 
   setObsStatus: (status) => set({ obsStatus: status }),
@@ -272,6 +269,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   liveSkipNext: async () => {
     const state = await window.api.live.skipNext()
     get().setLiveState(state)
+    const { activeRundownId } = get()
+    if (activeRundownId) await get().loadShots(activeRundownId)
   },
 
   liveRestart: async () => {

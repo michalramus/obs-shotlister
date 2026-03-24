@@ -119,7 +119,6 @@ export default function App(): React.JSX.Element {
   const liveIndex = useAppStore((s) => s.liveIndex)
   const startedAt = useAppStore((s) => s.startedAt)
   const running = useAppStore((s) => s.running)
-  const skippedIds = useAppStore((s) => s.skippedIds)
   const liveNext = useAppStore((s) => s.liveNext)
   const liveStart = useAppStore((s) => s.liveStart)
   const liveSkipNext = useAppStore((s) => s.liveSkipNext)
@@ -228,7 +227,6 @@ export default function App(): React.JSX.Element {
                   liveIndex={liveIndex}
                   startedAt={startedAt}
                   running={running}
-                  skippedIds={skippedIds}
                 />
               </div>
             )}
