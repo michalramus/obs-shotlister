@@ -201,20 +201,23 @@ export function ShotlistWidget({
   // This keeps the bar stable when operator advances filtered-out shots.
   const nextTotalWaitRef = useRef<number | null>(null)
   const prevNextVisibleIndexRef = useRef<number | null | undefined>(undefined)
-  const [postTransition, setPostTransition] = useState<{
-    shotIndex: number
+  // Delayed display state: liveIndex/startedAt are applied after transitionMs when needed
+  const [displayedLiveIndex, setDisplayedLiveIndex] = useState<number | null>(liveIndex)
+  const [displayedStartedAt, setDisplayedStartedAt] = useState<number | null>(startedAt)
+  const [activeTransition, setActiveTransition] = useState<{
     startedAt: number
     durationMs: number
     effectiveDurationMs: number
   } | null>(null)
-  const prevLiveIndexRef = useRef<number | null>(null)
+  const pendingUpdateRef = useRef<{ liveIndex: number; startedAt: number | null } | null>(null)
+  const displayedLiveIndexRef = useRef<number | null>(liveIndex)
   // Stable refs so the liveIndex effect can read current values without re-running
   const shotsRef = useRef(shots)
   const camerasRef = useRef(cameras)
   const cameraFilterRef = useRef(cameraFilter)
 
-  // 60fps ticker when running OR during post-transition animation
-  const shouldTick = running || postTransition !== null
+  // 60fps ticker when running OR during active transition animation
+  const shouldTick = running || activeTransition !== null
   useEffect(() => {
     if (!shouldTick) {
       if (rafRef.current !== null) {
@@ -242,75 +245,88 @@ export function ShotlistWidget({
     }
   }, [shouldTick])
 
-  // Auto-scroll to live shot when liveIndex changes
+  // Auto-scroll to live shot when displayed index changes (after transition delay)
   useEffect(() => {
     liveRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [liveIndex])
+  }, [displayedLiveIndex])
 
-  // Flash header white on camera change
+  // Flash header white when displayed camera changes (after transition delay)
   useEffect(() => {
-    if (liveIndex === null) return
+    if (displayedLiveIndex === null) return
     setHeaderFlash(true)
     const t = setTimeout(() => setHeaderFlash(false), 350)
     return () => clearTimeout(t)
-  }, [liveIndex])
+  }, [displayedLiveIndex])
 
   // Keep refs current so the liveIndex effect reads latest values without restarts
   shotsRef.current = shots
   camerasRef.current = cameras
   cameraFilterRef.current = cameraFilter
 
-  // Post-transition: when liveIndex advances to a filtered-out shot with a transition,
-  // keep showing the previous shot as "live" for the duration of that transition.
+  // Sync displayed liveIndex/startedAt with delay when advancing to a filtered+transition shot.
+  // Keeps the current camera shown as "live" through the transition before updating.
   useEffect(() => {
-    const prevIdx = prevLiveIndexRef.current
-    prevLiveIndexRef.current = liveIndex
+    // If another advance arrived while a delay was pending, flush it immediately first
+    if (pendingUpdateRef.current !== null) {
+      const pending = pendingUpdateRef.current
+      pendingUpdateRef.current = null
+      setDisplayedLiveIndex(pending.liveIndex)
+      setDisplayedStartedAt(pending.startedAt)
+      displayedLiveIndexRef.current = pending.liveIndex
+      setActiveTransition(null)
+    }
 
-    if (liveIndex === null || prevIdx === null) {
-      setPostTransition(null)
+    if (liveIndex === null) {
+      setDisplayedLiveIndex(null)
+      setDisplayedStartedAt(null)
+      displayedLiveIndexRef.current = null
+      setActiveTransition(null)
       return
     }
 
     const filter = cameraFilterRef.current
-    if (!filter || filter.length === 0) {
-      setPostTransition(null)
-      return
-    }
-
     const allShots = shotsRef.current
     const allCameras = camerasRef.current
     const newShot = allShots[liveIndex]
-    if (!newShot || newShot.transitionMs === 0) {
-      setPostTransition(null)
-      return
+    const prevIdx = displayedLiveIndexRef.current
+    const hasFilter = (filter?.length ?? 0) > 0
+
+    if (hasFilter && newShot && newShot.transitionMs > 0 && prevIdx !== null) {
+      const camNumById = new Map(allCameras.map((c) => [c.id, c.number]))
+      const newShotNum = camNumById.get(newShot.cameraId)
+      const isFilteredOut = newShotNum === undefined || !filter!.includes(newShotNum)
+
+      if (isFilteredOut) {
+        // Delay display update — keep showing the current shot as "live" through the transition
+        let effectiveDurationMs = allShots[prevIdx]?.durationMs ?? 0
+        for (let i = prevIdx + 1; i < allShots.length; i++) {
+          if (allShots[i].hidden) effectiveDurationMs += allShots[i].durationMs
+          else break
+        }
+
+        setActiveTransition({ startedAt: Date.now(), durationMs: newShot.transitionMs, effectiveDurationMs })
+        pendingUpdateRef.current = { liveIndex, startedAt }
+
+        const timer = setTimeout(() => {
+          pendingUpdateRef.current = null
+          setDisplayedLiveIndex(liveIndex)
+          setDisplayedStartedAt(startedAt)
+          displayedLiveIndexRef.current = liveIndex
+          setActiveTransition(null)
+        }, newShot.transitionMs)
+
+        return () => clearTimeout(timer)
+      }
     }
 
-    const camNumById = new Map(allCameras.map((c) => [c.id, c.number]))
-    const newShotNum = camNumById.get(newShot.cameraId)
-    if (newShotNum !== undefined && filter.includes(newShotNum)) {
-      setPostTransition(null)
-      return
-    }
+    // Normal immediate update
+    setDisplayedLiveIndex(liveIndex)
+    setDisplayedStartedAt(startedAt)
+    displayedLiveIndexRef.current = liveIndex
+    setActiveTransition(null)
+  }, [liveIndex, startedAt])
 
-    // New shot is filtered out AND has transition — hold previous shot as "live"
-    let effectiveDurationMs = allShots[prevIdx]?.durationMs ?? 0
-    for (let i = prevIdx + 1; i < allShots.length; i++) {
-      if (allShots[i].hidden) effectiveDurationMs += allShots[i].durationMs
-      else break
-    }
-
-    setPostTransition({
-      shotIndex: prevIdx,
-      startedAt: Date.now(),
-      durationMs: newShot.transitionMs,
-      effectiveDurationMs,
-    })
-
-    const timer = setTimeout(() => setPostTransition(null), newShot.transitionMs)
-    return () => clearTimeout(timer)
-  }, [liveIndex])
-
-  const timing = computeTiming(shots, cameras, liveIndex, startedAt, now, cameraFilter)
+  const timing = computeTiming(shots, cameras, displayedLiveIndex, displayedStartedAt, now, cameraFilter)
 
   // When the next visible shot changes, capture the total wait for that new period.
   // Stays fixed while nextVisibleIndex is the same, so the bar never resets mid-wait.
@@ -347,20 +363,18 @@ export function ShotlistWidget({
 
   const visibleShots = shots.filter((s) => !s.hidden && passesFilter(s))
 
-  // Post-transition override: keep previous shot as "live" during transition
-  const postTrans = postTransition
-  const isPostTransitionActive = postTrans !== null && (now - postTrans.startedAt) < postTrans.durationMs
-  const effectiveLiveIndex = isPostTransitionActive ? postTrans.shotIndex : timing.liveIndex
-  // Don't show filteredNextTransitionMs preview while post-transition is already running
-  const displayFilteredNextTransitionMs = isPostTransitionActive ? 0 : filteredNextTransitionMs
+  // During activeTransition, suppress the filteredNextTransitionMs preview bar
+  const displayFilteredNextTransitionMs = activeTransition !== null ? 0 : filteredNextTransitionMs
 
   const liveShot = timing.liveIndex !== null ? shots[timing.liveIndex] : null
   const showNextBar = hasFilter && (liveShot == null || !passesFilter(liveShot))
 
   const isWaitingForFiltered = showNextBar && timing.timeUntilNextVisibleMs !== null
-  const headerCountdown = isWaitingForFiltered
-    ? formatMs(timing.timeUntilNextVisibleMs!)
-    : timing.remainingMs !== null ? formatMs(timing.remainingMs) : '--:--'
+  const headerCountdown = activeTransition !== null
+    ? formatMs(Math.max(0, activeTransition.durationMs - (now - activeTransition.startedAt)))
+    : isWaitingForFiltered
+      ? formatMs(timing.timeUntilNextVisibleMs!)
+      : timing.remainingMs !== null ? formatMs(timing.remainingMs) : '--:--'
   const headerCountdownColor = isWaitingForFiltered ? '#2ecc71' : '#ff3b30'
 
   return (
@@ -379,7 +393,7 @@ export function ShotlistWidget({
         <ul style={s.shotList}>
           {visibleShots.map((shot) => {
             const shotIndexInAll = shots.indexOf(shot)
-            const isLive = effectiveLiveIndex === shotIndexInAll
+            const isLive = timing.liveIndex === shotIndexInAll
             const isNext = timing.nextVisibleIndex === shotIndexInAll
 
             const camera = cameraById.get(shot.cameraId)
@@ -387,11 +401,11 @@ export function ShotlistWidget({
             let timeLabel = formatMs(shot.durationMs)
             let progressPct: number | null = null
 
-            if (isLive && isPostTransitionActive && postTrans) {
-              const elapsed = now - postTrans.startedAt
-              const totalMs = postTrans.effectiveDurationMs + postTrans.durationMs
-              timeLabel = formatMs(Math.max(0, postTrans.durationMs - elapsed))
-              progressPct = Math.min(1, (postTrans.effectiveDurationMs + elapsed) / totalMs)
+            if (isLive && activeTransition !== null) {
+              const elapsed = now - activeTransition.startedAt
+              const totalMs = activeTransition.effectiveDurationMs + activeTransition.durationMs
+              timeLabel = formatMs(Math.max(0, activeTransition.durationMs - elapsed))
+              progressPct = Math.min(1, (activeTransition.effectiveDurationMs + elapsed) / totalMs)
             } else if (isLive && timing.remainingMs !== null) {
               const effectiveDur = timing.effectiveDurationMs ?? shot.durationMs
               const totalMs = effectiveDur + displayFilteredNextTransitionMs
@@ -435,16 +449,16 @@ export function ShotlistWidget({
                         ? <div style={s.progressBarRight(Math.min(1, Math.max(0, progressPct)))} />
                         : <div style={s.progressBar(Math.min(1, Math.max(0, progressPct)), isLive)} />
                     )}
-                    {isLive && isPostTransitionActive && postTrans && (
+                    {isLive && activeTransition !== null && (
                       <div
                         style={s.transitionBarRight(
-                          postTrans.effectiveDurationMs / (postTrans.effectiveDurationMs + postTrans.durationMs),
-                          postTrans.durationMs / (postTrans.effectiveDurationMs + postTrans.durationMs),
+                          activeTransition.effectiveDurationMs / (activeTransition.effectiveDurationMs + activeTransition.durationMs),
+                          activeTransition.durationMs / (activeTransition.effectiveDurationMs + activeTransition.durationMs),
                         )}
                         data-testid="progress-transition-right"
                       />
                     )}
-                    {isLive && !isPostTransitionActive && displayFilteredNextTransitionMs > 0 && timing.effectiveDurationMs !== null && (
+                    {isLive && activeTransition === null && displayFilteredNextTransitionMs > 0 && timing.effectiveDurationMs !== null && (
                       <div
                         style={s.transitionBarRight(
                           timing.effectiveDurationMs / (timing.effectiveDurationMs + displayFilteredNextTransitionMs),
