@@ -65,6 +65,8 @@ export function applyMigrations(database: Database.Database): void {
   // Idempotent column additions (ALTER TABLE is not in CREATE TABLE IF NOT EXISTS)
   try { database.exec('ALTER TABLE cameras ADD COLUMN obs_scene TEXT') } catch (_) { /* column exists */ }
   try { database.exec('ALTER TABLE live_state ADD COLUMN project_id TEXT') } catch (_) { /* column exists */ }
+  try { database.exec('ALTER TABLE shots ADD COLUMN transition_name TEXT') } catch (_) { /* column exists */ }
+  try { database.exec('ALTER TABLE shots ADD COLUMN transition_ms INTEGER NOT NULL DEFAULT 0') } catch (_) { /* column exists */ }
   database.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       key   TEXT PRIMARY KEY,

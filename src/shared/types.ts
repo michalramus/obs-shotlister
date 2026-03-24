@@ -29,4 +29,6 @@ export interface Shot {
   label: string | null
   orderIndex: number
   hidden?: boolean
+  transitionName: string | null
+  transitionMs: number  // 0 = cut / no transition
 }

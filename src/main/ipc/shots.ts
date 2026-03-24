@@ -22,6 +22,8 @@ interface ShotRow {
   duration_ms: number
   label: string | null
   order_index: number
+  transition_name: string | null
+  transition_ms: number
 }
 
 // ---------------------------------------------------------------------------
@@ -36,6 +38,8 @@ function rowToShot(row: ShotRow): Shot {
     durationMs: row.duration_ms,
     label: row.label,
     orderIndex: row.order_index,
+    transitionName: row.transition_name ?? null,
+    transitionMs: row.transition_ms ?? 0,
   }
 }
 
@@ -46,7 +50,7 @@ function rowToShot(row: ShotRow): Shot {
 export function listShots(db: Database.Database, rundownId: string): Shot[] {
   const rows = db
     .prepare(
-      'SELECT id, rundown_id, camera_id, duration_ms, label, order_index FROM shots WHERE rundown_id = ? ORDER BY order_index ASC',
+      'SELECT id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE rundown_id = ? ORDER BY order_index ASC',
     )
     .all(rundownId) as ShotRow[]
   return rows.map(rowToShot)
@@ -57,6 +61,8 @@ export interface CreateShotInput {
   cameraId: string
   durationMs: number
   label?: string | null
+  transitionName?: string | null
+  transitionMs?: number
 }
 
 export function createShot(db: Database.Database, input: CreateShotInput): Shot {
@@ -68,9 +74,12 @@ export function createShot(db: Database.Database, input: CreateShotInput): Shot 
     .get(input.rundownId) as { max_idx: number }
   const orderIndex = maxRow.max_idx + 1
 
+  const transitionName = input.transitionName ?? null
+  const transitionMs = input.transitionMs ?? 0
+
   db.prepare(
-    'INSERT INTO shots (id, rundown_id, camera_id, duration_ms, label, order_index) VALUES (?, ?, ?, ?, ?, ?)',
-  ).run(id, input.rundownId, input.cameraId, input.durationMs, input.label ?? null, orderIndex)
+    'INSERT INTO shots (id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run(id, input.rundownId, input.cameraId, input.durationMs, input.label ?? null, orderIndex, transitionName, transitionMs)
 
   return {
     id,
@@ -79,6 +88,8 @@ export function createShot(db: Database.Database, input: CreateShotInput): Shot 
     durationMs: input.durationMs,
     label: input.label ?? null,
     orderIndex,
+    transitionName,
+    transitionMs,
   }
 }
 
@@ -87,12 +98,14 @@ export interface UpdateShotInput {
   cameraId?: string
   durationMs?: number
   label?: string | null
+  transitionName?: string | null
+  transitionMs?: number
 }
 
 export function updateShot(db: Database.Database, input: UpdateShotInput): Shot {
   // Check existence first
   const existing = db
-    .prepare('SELECT id, rundown_id, camera_id, duration_ms, label, order_index FROM shots WHERE id = ?')
+    .prepare('SELECT id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?')
     .get(input.id) as ShotRow | undefined
 
   if (!existing) {
@@ -103,13 +116,16 @@ export function updateShot(db: Database.Database, input: UpdateShotInput): Shot 
   const durationMs = input.durationMs ?? existing.duration_ms
   // label can be explicitly set to null to clear it
   const label = 'label' in input ? (input.label ?? null) : existing.label
+  // transitionName can be explicitly set to null to clear it
+  const transitionName = 'transitionName' in input ? (input.transitionName ?? null) : existing.transition_name
+  const transitionMs = input.transitionMs ?? existing.transition_ms
 
   db.prepare(
-    'UPDATE shots SET camera_id = ?, duration_ms = ?, label = ? WHERE id = ?',
-  ).run(cameraId, durationMs, label, input.id)
+    'UPDATE shots SET camera_id = ?, duration_ms = ?, label = ?, transition_name = ?, transition_ms = ? WHERE id = ?',
+  ).run(cameraId, durationMs, label, transitionName, transitionMs, input.id)
 
   const updated = db
-    .prepare('SELECT id, rundown_id, camera_id, duration_ms, label, order_index FROM shots WHERE id = ?')
+    .prepare('SELECT id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?')
     .get(input.id) as ShotRow
   return rowToShot(updated)
 }
