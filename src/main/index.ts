@@ -16,7 +16,7 @@ import type { CameraUpsertInput } from './ipc/projects'
 import { listRundowns, createRundown, renameRundown, deleteRundown } from './ipc/rundowns'
 import { listShots, createShot, updateShot, deleteShot, reorderShots } from './ipc/shots'
 import type { CreateShotInput, UpdateShotInput } from './ipc/shots'
-import { getLiveState, getLiveQueue, getVisibleQueue, startLive, stopLive, nextShot, skipNext, restartLive, setActiveRundown, setActiveProject } from './ipc/live'
+import { getLiveState, getLiveQueue, startLive, stopLive, nextShot, skipNext, restartLive, setActiveRundown, setActiveProject } from './ipc/live'
 import { getCameraById } from './ipc/projects'
 import { parseResolveCSV, confirmResolveImport } from './ipc/resolve-import'
 import type { ConfirmImportInput } from './ipc/resolve-import'
@@ -127,8 +127,8 @@ function registerIpcHandlers(): void {
   ipcMain.handle('shots:list', (_event, payload: { rundownId: string }) => {
     const queue = getLiveQueue()
     if (queue.length > 0) {
-      const visibleIds = new Set(getVisibleQueue().map((s) => s.id))
-      return listShots(db, payload.rundownId).filter((s) => visibleIds.has(s.id))
+      const hiddenIds = new Set(queue.filter((s) => s.hidden).map((s) => s.id))
+      return listShots(db, payload.rundownId).map((s) => ({ ...s, hidden: hiddenIds.has(s.id) }))
     }
     return listShots(db, payload.rundownId)
   })
@@ -260,33 +260,19 @@ function registerIpcHandlers(): void {
 // OBS scene switching helpers
 // ---------------------------------------------------------------------------
 
-function findNextIdx(shots: Array<{ id: string }>, fromIndex: number): number | null {
-  const next = fromIndex + 1
-  return next < shots.length ? next : null
-}
-
 import type { LiveState } from './ipc/live'
-
-function getActiveShots(database: ReturnType<typeof getDatabase>, rundownId: string): ReturnType<typeof listShots> {
-  const allShots = listShots(database, rundownId)
-  const queue = getLiveQueue()
-  if (queue.length > 0) {
-    const ids = new Set(getVisibleQueue().map((s) => s.id))
-    return allShots.filter((s) => ids.has(s.id))
-  }
-  return allShots
-}
 
 async function switchOBSScenes(state: LiveState, database: ReturnType<typeof getDatabase>): Promise<void> {
   if (obsClient.status !== 'connected' || !state.running || state.liveIndex === null || !state.rundownId) return
-  const shots = getActiveShots(database, state.rundownId)
-  const liveCamera = getCameraById(database, shots[state.liveIndex].cameraId)
+  const allShots = listShots(database, state.rundownId)
+  const liveCamera = getCameraById(database, allShots[state.liveIndex].cameraId)
   if (liveCamera?.obsScene) {
     obsClient.setCurrentProgramScene(liveCamera.obsScene).catch((e: unknown) => console.error('[OBS] program:', e))
   }
-  const nextIdx = findNextIdx(shots, state.liveIndex)
-  if (nextIdx !== null) {
-    const nextCamera = getCameraById(database, shots[nextIdx].cameraId)
+  const hiddenIds = new Set(getLiveQueue().filter((s) => s.hidden).map((s) => s.id))
+  const nextShot = allShots.slice(state.liveIndex + 1).find((s) => !hiddenIds.has(s.id))
+  if (nextShot) {
+    const nextCamera = getCameraById(database, nextShot.cameraId)
     if (nextCamera?.obsScene) {
       obsClient.setCurrentPreviewScene(nextCamera.obsScene).catch((e: unknown) => console.error('[OBS] preview:', e))
     }
@@ -295,10 +281,11 @@ async function switchOBSScenes(state: LiveState, database: ReturnType<typeof get
 
 async function switchOBSPreview(state: LiveState, database: ReturnType<typeof getDatabase>): Promise<void> {
   if (obsClient.status !== 'connected' || !state.running || state.liveIndex === null || !state.rundownId) return
-  const shots = getActiveShots(database, state.rundownId)
-  const nextIdx = findNextIdx(shots, state.liveIndex)
-  if (nextIdx !== null) {
-    const nextCamera = getCameraById(database, shots[nextIdx].cameraId)
+  const allShots = listShots(database, state.rundownId)
+  const hiddenIds = new Set(getLiveQueue().filter((s) => s.hidden).map((s) => s.id))
+  const nextShot = allShots.slice(state.liveIndex + 1).find((s) => !hiddenIds.has(s.id))
+  if (nextShot) {
+    const nextCamera = getCameraById(database, nextShot.cameraId)
     if (nextCamera?.obsScene) {
       obsClient.setCurrentPreviewScene(nextCamera.obsScene).catch((e: unknown) => console.error('[OBS] preview:', e))
     }
@@ -330,12 +317,13 @@ function broadcastLiveState(state: LiveState): void {
 
 function broadcastRundown(): void {
   if (!_io || !_db) return
-  if (getLiveQueue().length > 0) {
+  const queue = getLiveQueue()
+  if (queue.length > 0) {
     const state = getLiveState(_db)
     if (state.rundownId) {
-      const visibleIds = new Set(getVisibleQueue().map((s) => s.id))
-      const visible = listShots(_db, state.rundownId).filter((s) => visibleIds.has(s.id))
-      broadcastRundownState(_io, _db, visible)
+      const hiddenIds = new Set(queue.filter((s) => s.hidden).map((s) => s.id))
+      const shotsWithHidden = listShots(_db, state.rundownId).map((s) => ({ ...s, hidden: hiddenIds.has(s.id) }))
+      broadcastRundownState(_io, _db, shotsWithHidden)
       return
     }
   }
