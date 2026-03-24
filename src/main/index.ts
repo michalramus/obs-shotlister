@@ -294,32 +294,40 @@ import type { LiveState } from './ipc/live'
 
 async function switchOBSScenes(state: LiveState, database: ReturnType<typeof getDatabase>): Promise<void> {
   if (obsClient.status !== 'connected' || !state.running || state.liveIndex === null || !state.rundownId) return
+
+  // Resolve live shot by ID (safe against index/order_index misalignment)
+  const queue = getLiveQueue()
+  const liveShotId = queue[state.liveIndex]?.id
+  if (!liveShotId) return
+
   const allShots = listShots(database, state.rundownId)
-  const liveShot = allShots[state.liveIndex]
+  const liveShotIdx = allShots.findIndex((s) => s.id === liveShotId)
+  if (liveShotIdx === -1) return
+
+  const liveShot = allShots[liveShotIdx]
   const liveCamera = getCameraById(database, liveShot.cameraId)
 
   const transitionName = liveShot.transitionName ?? 'Cut'
   const transitionMs = liveShot.transitionMs ?? 0
 
+  // 1+2. Configure transition, then set live camera to program
   if (liveCamera?.obsScene) {
     try {
       await obsClient.setCurrentSceneTransition(transitionName, transitionMs)
-    } catch (e: unknown) {
-      console.error('[OBS] setTransition:', e)
-    }
+    } catch (e: unknown) { console.error('[OBS] setTransition:', e) }
     try {
       await obsClient.setCurrentProgramScene(liveCamera.obsScene)
-    } catch (e: unknown) {
-      console.error('[OBS] program:', e)
-    }
+    } catch (e: unknown) { console.error('[OBS] program:', e) }
   }
 
+  // 3. Wait for transition to finish
   if (transitionMs > 0) {
     await new Promise<void>((resolve) => setTimeout(resolve, transitionMs))
   }
 
-  const hiddenIds = new Set(getLiveQueue().filter((s) => s.hidden).map((s) => s.id))
-  const nextVisibleShot = allShots.slice(state.liveIndex + 1).find((s) => !hiddenIds.has(s.id))
+  // 4. Set next camera to preview
+  const hiddenIds = new Set(queue.filter((s) => s.hidden).map((s) => s.id))
+  const nextVisibleShot = allShots.slice(liveShotIdx + 1).find((s) => !hiddenIds.has(s.id))
   if (nextVisibleShot) {
     const nextCamera = getCameraById(database, nextVisibleShot.cameraId)
     if (nextCamera?.obsScene) {
@@ -330,11 +338,20 @@ async function switchOBSScenes(state: LiveState, database: ReturnType<typeof get
 
 async function switchOBSPreview(state: LiveState, database: ReturnType<typeof getDatabase>): Promise<void> {
   if (obsClient.status !== 'connected' || !state.running || state.liveIndex === null || !state.rundownId) return
+
+  // Resolve live shot by ID (safe against index/order_index misalignment)
+  const queue = getLiveQueue()
+  const liveShotId = queue[state.liveIndex]?.id
+  if (!liveShotId) return
+
   const allShots = listShots(database, state.rundownId)
-  const hiddenIds = new Set(getLiveQueue().filter((s) => s.hidden).map((s) => s.id))
-  const nextShot = allShots.slice(state.liveIndex + 1).find((s) => !hiddenIds.has(s.id))
-  if (nextShot) {
-    const nextCamera = getCameraById(database, nextShot.cameraId)
+  const liveShotIdx = allShots.findIndex((s) => s.id === liveShotId)
+  if (liveShotIdx === -1) return
+
+  const hiddenIds = new Set(queue.filter((s) => s.hidden).map((s) => s.id))
+  const nextVisibleShot = allShots.slice(liveShotIdx + 1).find((s) => !hiddenIds.has(s.id))
+  if (nextVisibleShot) {
+    const nextCamera = getCameraById(database, nextVisibleShot.cameraId)
     if (nextCamera?.obsScene) {
       obsClient.setCurrentPreviewScene(nextCamera.obsScene).catch((e: unknown) => console.error('[OBS] preview:', e))
     }
