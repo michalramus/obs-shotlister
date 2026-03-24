@@ -115,6 +115,12 @@ const s = {
     flexShrink: 0,
   } satisfies React.CSSProperties,
 
+  transitionInfo: {
+    fontSize: '11px',
+    color: '#9b59b6',
+    flexShrink: 0,
+  } satisfies React.CSSProperties,
+
   emptyState: {
     padding: '32px',
     textAlign: 'center' as const,
@@ -375,6 +381,9 @@ function SortableShotRow({
         {shot.label ? ` "${shot.label}"` : ''}
       </span>
       <span style={s.duration}>{msToMss(shot.durationMs)}</span>
+      {shot.transitionName && (
+        <span style={s.transitionInfo}>↪ {shot.transitionName} {(shot.transitionMs / 1000).toFixed(1)}s</span>
+      )}
 
       {!isLocked && (
         <>

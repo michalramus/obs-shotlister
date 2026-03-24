@@ -121,14 +121,14 @@ const s = {
     transition: 'none',
   }),
 
-  transitionBar: (pct: number, isLive: boolean): React.CSSProperties => ({
+  transitionBar: (pct: number): React.CSSProperties => ({
     position: 'absolute',
     top: 0,
     bottom: 0,
     left: 0,
     width: `${pct * 100}%`,
-    background: isLive ? '#c0392b' : '#27ae60',
-    opacity: 0.35,
+    background: '#9b59b6',
+    opacity: 0.5,
     transition: 'none',
   }),
 
@@ -292,8 +292,8 @@ export function ShotlistWidget({
             }
 
             const effectiveDuration = timing.effectiveDurationMs ?? shot.durationMs
-            const transitionPct = isLive && shot.transitionMs > 0
-              ? Math.min(1, shot.transitionMs / effectiveDuration)
+            const transitionPct = shot.transitionMs > 0 && (isLive || isNext)
+              ? Math.min(1, shot.transitionMs / (isLive ? effectiveDuration : shot.durationMs))
               : 0
 
             return (
@@ -304,14 +304,16 @@ export function ShotlistWidget({
                 data-testid={isLive ? 'shot-live' : isNext ? 'shot-next' : 'shot-row'}
                 data-shot-id={isLive ? shot.id : undefined}
               >
-                {progressPct !== null && (
+                {(transitionPct > 0 || progressPct !== null) && (
                   <div
                     style={s.progressTrack()}
-                    data-testid={isLive ? 'progress-live' : 'progress-next'}
+                    data-testid={isLive ? 'progress-live' : isNext ? 'progress-next' : undefined}
                   >
-                    <div style={s.progressBar(Math.min(1, Math.max(0, progressPct)), isLive)} />
                     {transitionPct > 0 && (
-                      <div style={s.transitionBar(transitionPct, isLive)} data-testid="progress-transition" />
+                      <div style={s.transitionBar(transitionPct)} data-testid="progress-transition" />
+                    )}
+                    {progressPct !== null && (
+                      <div style={s.progressBar(Math.min(1, Math.max(0, progressPct)), isLive)} />
                     )}
                   </div>
                 )}
