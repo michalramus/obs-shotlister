@@ -13,13 +13,17 @@ interface TimelineEditorProps {
   onAddMarker: (positionMs: number) => void
   onUpdateMarker: (id: string, positionMs: number) => void
   onDeleteMarker: (id: string) => void
+  rundownMedia: { filePath: string; offsetMs: number } | null
+  onImportMedia: () => void
+  onUpdateMediaOffset: (offsetMs: number) => void
+  onClearMedia: () => void
 }
 
 const TRACK_HEIGHT = 50
 const RULER_HEIGHT = 20
 const TOOLBAR_HEIGHT = 32
 const MARKER_ROW_HEIGHT = 30
-const MEDIA_ROW_HEIGHT = 20
+const MEDIA_ROW_HEIGHT = 60
 const CAM_BUTTONS_HEIGHT = 36
 
 function formatTime(ms: number): string {
@@ -43,6 +47,11 @@ interface MarkerDragState {
   origPositionMs: number
 }
 
+interface MediaDragState {
+  startX: number
+  origOffset: number
+}
+
 export function TimelineEditor({
   shots,
   cameras,
@@ -55,6 +64,10 @@ export function TimelineEditor({
   onAddMarker,
   onUpdateMarker,
   onDeleteMarker,
+  rundownMedia,
+  onImportMedia,
+  onUpdateMediaOffset,
+  onClearMedia,
 }: TimelineEditorProps): React.JSX.Element {
   const [zoomPxPerSec, setZoomPxPerSec] = useState(80)
   const [playheadMs, setPlayheadMs] = useState(0)
@@ -63,15 +76,62 @@ export function TimelineEditor({
   const [editingMarkerId, setEditingMarkerId] = useState<string | null>(null)
   const [editingMarkerLabel, setEditingMarkerLabel] = useState('')
   const [hoveredMarkerId, setHoveredMarkerId] = useState<string | null>(null)
+  const [waveformData, setWaveformData] = useState<number[] | null>(null)
+  const [mediaDurationMs, setMediaDurationMs] = useState<number>(0)
+  const [mediaOffsetOverride, setMediaOffsetOverride] = useState<number | null>(null)
+  const [mediaHovered, setMediaHovered] = useState(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const dragStateRef = useRef<DragState | null>(null)
   const markerDragStateRef = useRef<MarkerDragState | null>(null)
+  const mediaDragStateRef = useRef<MediaDragState | null>(null)
   const zoomRef = useRef(zoomPxPerSec)
 
   // Keep zoomRef in sync so drag handlers always have current value
   useEffect(() => {
     zoomRef.current = zoomPxPerSec
   }, [zoomPxPerSec])
+
+  // Decode waveform when media file changes
+  useEffect(() => {
+    if (!rundownMedia?.filePath) {
+      setWaveformData(null)
+      setMediaDurationMs(0)
+      return
+    }
+    let cancelled = false
+    async function decode(): Promise<void> {
+      try {
+        const response = await fetch(`file://${rundownMedia!.filePath}`)
+        const arrayBuffer = await response.arrayBuffer()
+        const audioCtx = new AudioContext()
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer)
+        await audioCtx.close()
+        if (cancelled) return
+
+        setMediaDurationMs(audioBuffer.duration * 1000)
+
+        const channelData = audioBuffer.getChannelData(0)
+        const totalSamples = channelData.length
+        const numBuckets = Math.ceil(audioBuffer.duration * 40)
+        const bucketSize = Math.floor(totalSamples / numBuckets)
+        const peaks: number[] = []
+        for (let i = 0; i < numBuckets; i++) {
+          let max = 0
+          for (let j = i * bucketSize; j < Math.min((i + 1) * bucketSize, totalSamples); j++) {
+            max = Math.max(max, Math.abs(channelData[j]))
+          }
+          peaks.push(max)
+        }
+        if (!cancelled) setWaveformData(peaks)
+      } catch (err) {
+        console.error('[TimelineEditor] waveform decode error:', err)
+      }
+    }
+    void decode()
+    return () => {
+      cancelled = true
+    }
+  }, [rundownMedia?.filePath]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const totalMs = shots.reduce((sum, s) => sum + s.durationMs, 0)
   const totalPx = Math.max((totalMs / 1000) * zoomPxPerSec, 300)
@@ -213,6 +273,38 @@ export function TimelineEditor({
     setEditingMarkerId(null)
   }
 
+  function handleMediaTrackMouseDown(e: React.MouseEvent): void {
+    if (!rundownMedia) return
+    e.preventDefault()
+    e.stopPropagation()
+    mediaDragStateRef.current = {
+      startX: e.clientX,
+      origOffset: rundownMedia.offsetMs,
+    }
+
+    function onMouseMove(ev: MouseEvent): void {
+      const ds = mediaDragStateRef.current
+      if (!ds) return
+      const newOffset = ds.origOffset + ((ev.clientX - ds.startX) / zoomRef.current) * 1000
+      setMediaOffsetOverride(newOffset)
+    }
+
+    function onMouseUp(ev: MouseEvent): void {
+      const ds = mediaDragStateRef.current
+      if (ds) {
+        const newOffset = ds.origOffset + ((ev.clientX - ds.startX) / zoomRef.current) * 1000
+        onUpdateMediaOffset(Math.round(newOffset))
+        mediaDragStateRef.current = null
+      }
+      setMediaOffsetOverride(null)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
+
   const playheadPx = (playheadMs / 1000) * zoomPxPerSec
 
   // Build tick marks for ruler
@@ -309,17 +401,17 @@ export function TimelineEditor({
         </span>
         <div style={{ flex: 1 }} />
         <button
-          disabled
           style={{
             background: 'none',
-            border: '1px solid #333',
+            border: '1px solid #444',
             borderRadius: '3px',
-            color: '#555',
+            color: '#aaa',
             fontSize: '11px',
             padding: '2px 8px',
-            cursor: 'not-allowed',
+            cursor: 'pointer',
           }}
-          title="Import media — Phase 5"
+          title="Import reference media file"
+          onClick={onImportMedia}
         >
           Import media
         </button>
@@ -651,23 +743,147 @@ export function TimelineEditor({
             </span>
           )}
         </div>
-      </div>
 
-      {/* Row 5: Media track placeholder — Phase 5 */}
-      <div
-        style={{
-          height: MEDIA_ROW_HEIGHT,
-          background: '#1e1e1e',
-          flexShrink: 0,
-          display: 'flex',
-          alignItems: 'center',
-          paddingLeft: '8px',
-          borderTop: '1px solid #2a2a2a',
-        }}
-      >
-        <span style={{ color: '#444', fontSize: '10px', fontFamily: 'monospace' }}>
-          // media – Phase 5
-        </span>
+        {/* Row 5: Media track */}
+        {(() => {
+          const effectiveOffset = mediaOffsetOverride ?? rundownMedia?.offsetMs ?? 0
+          const offsetPx = (effectiveOffset / 1000) * zoomPxPerSec
+          const svgWidth = (mediaDurationMs / 1000) * zoomPxPerSec
+          const trackHeightPx = MEDIA_ROW_HEIGHT
+          const halfHeight = trackHeightPx / 2
+
+          return (
+            <div
+              style={{
+                height: MEDIA_ROW_HEIGHT,
+                width: totalPx,
+                background: '#0d0d0d',
+                position: 'relative',
+                borderTop: '1px solid #2a2a2a',
+                overflow: 'hidden',
+                cursor: rundownMedia ? 'grab' : 'default',
+                userSelect: 'none',
+              }}
+              onMouseEnter={() => setMediaHovered(true)}
+              onMouseLeave={() => setMediaHovered(false)}
+              onMouseDown={rundownMedia ? handleMediaTrackMouseDown : undefined}
+              onDoubleClick={!rundownMedia ? onImportMedia : undefined}
+            >
+              {!rundownMedia && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    left: '8px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    color: '#333',
+                    fontSize: '10px',
+                    fontFamily: 'monospace',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  Double-click or use &apos;Import media&apos; to add a reference track
+                </span>
+              )}
+
+              {rundownMedia && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    top: 0,
+                    width: '100%',
+                    height: '100%',
+                    transform: `translateX(${offsetPx}px)`,
+                  }}
+                >
+                  {waveformData === null ? (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        left: '8px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        color: '#555',
+                        fontSize: '10px',
+                        fontFamily: 'monospace',
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      Loading waveform...
+                    </span>
+                  ) : (
+                    <svg width={svgWidth} height={trackHeightPx} style={{ display: 'block' }}>
+                      {waveformData.map((peak, i) => {
+                        const x = (i / waveformData.length) * svgWidth
+                        const barWidth = Math.max(1, svgWidth / waveformData.length)
+                        const barHeight = peak * halfHeight * 2
+                        return (
+                          <rect
+                            key={i}
+                            x={x}
+                            y={halfHeight - barHeight / 2}
+                            width={barWidth}
+                            height={barHeight}
+                            fill="rgba(39,174,96,0.7)"
+                          />
+                        )
+                      })}
+                    </svg>
+                  )}
+
+                  {/* Filename + clear overlay */}
+                  {mediaHovered && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '2px 6px',
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      <span
+                        style={{
+                          color: '#888',
+                          fontSize: '9px',
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          maxWidth: '200px',
+                        }}
+                      >
+                        {rundownMedia.filePath.split('/').pop() ?? rundownMedia.filePath}
+                      </span>
+                      <button
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#888',
+                          fontSize: '9px',
+                          cursor: 'pointer',
+                          padding: '0 2px',
+                          pointerEvents: 'all',
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onClearMedia()
+                        }}
+                        title="Remove media track"
+                      >
+                        × Clear
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })()}
       </div>
 
       {/* Row 6: Camera buttons */}

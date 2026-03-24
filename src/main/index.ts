@@ -424,6 +424,35 @@ function registerIpcHandlers(): void {
   ipcMain.handle('markers:upsert', (_e, payload: UpsertMarkerInput) => upsertMarker(db, payload))
   ipcMain.handle('markers:delete', (_e, payload: { id: string }) => deleteMarker(db, payload.id))
 
+  // Rundown media
+  ipcMain.handle('rundown:media:get', (_e, payload: { rundownId: string }) => {
+    const filePath = (db.prepare("SELECT value FROM settings WHERE key = ?").get(`rundown_media_path_${payload.rundownId}`) as { value: string } | undefined)?.value ?? null
+    const offsetStr = (db.prepare("SELECT value FROM settings WHERE key = ?").get(`rundown_media_offset_${payload.rundownId}`) as { value: string } | undefined)?.value ?? '0'
+    return { filePath, offsetMs: parseInt(offsetStr, 10) }
+  })
+
+  ipcMain.handle('rundown:media:save', (_e, payload: { rundownId: string; filePath: string; offsetMs: number }) => {
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run(`rundown_media_path_${payload.rundownId}`, payload.filePath)
+    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .run(`rundown_media_offset_${payload.rundownId}`, String(payload.offsetMs))
+  })
+
+  ipcMain.handle('rundown:media:clear', (_e, payload: { rundownId: string }) => {
+    db.prepare("DELETE FROM settings WHERE key = ?").run(`rundown_media_path_${payload.rundownId}`)
+    db.prepare("DELETE FROM settings WHERE key = ?").run(`rundown_media_offset_${payload.rundownId}`)
+  })
+
+  ipcMain.handle('rundown:media:open-dialog', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [
+        { name: 'Audio/Video', extensions: ['mp3', 'wav', 'aac', 'ogg', 'flac', 'm4a', 'mp4', 'mov', 'webm', 'avi', 'mkv'] },
+      ],
+    })
+    return result
+  })
+
   // OSC
   ipcMain.handle('osc:settings:get', () => getOscSettings(db))
   ipcMain.handle('osc:settings:save', (_e: Electron.IpcMainInvokeEvent, payload: { enabled: boolean; port: number }) => {

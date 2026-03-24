@@ -77,6 +77,12 @@ export interface ElectronApi {
     upsert: (payload: { id?: string; rundownId: string; positionMs: number; label?: string | null }) => Promise<Marker>
     delete: (payload: { id: string }) => Promise<void>
   }
+  rundownMedia: {
+    get: (payload: { rundownId: string }) => Promise<{ filePath: string | null; offsetMs: number }>
+    save: (payload: { rundownId: string; filePath: string; offsetMs: number }) => Promise<void>
+    clear: (payload: { rundownId: string }) => Promise<void>
+    openDialog: () => Promise<{ canceled: boolean; filePaths: string[] }>
+  }
 }
 
 const api: ElectronApi = {
@@ -146,6 +152,12 @@ const api: ElectronApi = {
     list: (payload) => ipcRenderer.invoke('markers:list', payload),
     upsert: (payload) => ipcRenderer.invoke('markers:upsert', payload),
     delete: (payload) => ipcRenderer.invoke('markers:delete', payload),
+  },
+  rundownMedia: {
+    get: (payload) => ipcRenderer.invoke('rundown:media:get', payload),
+    save: (payload) => ipcRenderer.invoke('rundown:media:save', payload),
+    clear: (payload) => ipcRenderer.invoke('rundown:media:clear', payload),
+    openDialog: () => ipcRenderer.invoke('rundown:media:open-dialog'),
   },
 }
 

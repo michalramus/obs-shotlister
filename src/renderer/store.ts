@@ -65,6 +65,12 @@ interface AppStore {
   updateMarker: (id: string, positionMs: number) => Promise<void>
   removeMarker: (id: string) => Promise<void>
 
+  // Rundown media
+  rundownMedia: { filePath: string; offsetMs: number } | null
+  loadRundownMedia: (rundownId: string) => Promise<void>
+  saveRundownMedia: (rundownId: string, filePath: string, offsetMs: number) => Promise<void>
+  clearRundownMedia: (rundownId: string) => Promise<void>
+
   // Live control actions
   loadLiveState: () => Promise<void>
   liveStart: (rundownId: string) => Promise<void>
@@ -81,6 +87,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   rundowns: [],
   shots: [],
   markers: [],
+
+  // Rundown media
+  rundownMedia: null,
 
   // Selection
   activeProjectId: null,
@@ -238,11 +247,26 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
+  // Rundown media
+  loadRundownMedia: async (rundownId) => {
+    const result = await window.api.rundownMedia.get({ rundownId })
+    set({ rundownMedia: result.filePath ? { filePath: result.filePath, offsetMs: result.offsetMs } : null })
+  },
+  saveRundownMedia: async (rundownId, filePath, offsetMs) => {
+    await window.api.rundownMedia.save({ rundownId, filePath, offsetMs })
+    set({ rundownMedia: { filePath, offsetMs } })
+  },
+  clearRundownMedia: async (rundownId) => {
+    await window.api.rundownMedia.clear({ rundownId })
+    set({ rundownMedia: null })
+  },
+
   // Shot CRUD
   loadShots: async (rundownId) => {
     const shots = await window.api.shots.list({ rundownId })
     set({ shots })
     await get().loadMarkers(rundownId)
+    await get().loadRundownMedia(rundownId)
   },
 
   addShot: async (input) => {

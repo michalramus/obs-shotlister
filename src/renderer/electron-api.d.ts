@@ -133,6 +133,12 @@ export interface ElectronApi {
     upsert: (payload: { id?: string; rundownId: string; positionMs: number; label?: string | null }) => Promise<Marker>
     delete: (payload: { id: string }) => Promise<void>
   }
+  rundownMedia: {
+    get: (payload: { rundownId: string }) => Promise<{ filePath: string | null; offsetMs: number }>
+    save: (payload: { rundownId: string; filePath: string; offsetMs: number }) => Promise<void>
+    clear: (payload: { rundownId: string }) => Promise<void>
+    openDialog: () => Promise<{ canceled: boolean; filePaths: string[] }>
+  }
 }
 
 declare global {
