@@ -239,10 +239,12 @@ function ShotForm({ cameras, initial, onConfirm, onCancel }: ShotFormProps): Rea
   const [transitionSecs, setTransitionSecs] = useState<string>(
     initial?.transitionMs ? (initial.transitionMs / 1000).toString() : '0.5'
   )
-  const [obsTransitions, setObsTransitions] = useState<string[]>([])
+  const [logicalTransitions, setLogicalTransitions] = useState<string[]>([])
 
   useEffect(() => {
-    window.api.obs.getTransitions().then((list) => setObsTransitions(list)).catch(() => {/* OBS not connected */})
+    window.api.obs.listTransitionMappings()
+      .then((mappings) => setLogicalTransitions(mappings.map((m) => m.logicalName)))
+      .catch(() => {/* ignore */})
   }, [])
 
   function handleConfirm(): void {
@@ -294,11 +296,11 @@ function ShotForm({ cameras, initial, onConfirm, onCancel }: ShotFormProps): Rea
         onChange={(e) => setTransitionName(e.target.value === '' ? null : e.target.value)}
         aria-label="Transition"
       >
-        <option value="">— cut / none —</option>
-        {obsTransitions.map((t) => (
+        <option value="">— cut —</option>
+        {logicalTransitions.map((t) => (
           <option key={t} value={t}>{t}</option>
         ))}
-        {transitionName && !obsTransitions.includes(transitionName) && (
+        {transitionName && !logicalTransitions.includes(transitionName) && (
           <option value={transitionName}>{transitionName}</option>
         )}
       </select>

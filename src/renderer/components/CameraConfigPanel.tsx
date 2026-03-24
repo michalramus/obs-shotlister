@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useAppStore } from '../store'
 import type { Camera } from '../../shared/types'
+import type { TransitionMapping } from '../electron-api.d'
 
 // ---------------------------------------------------------------------------
 // Resolve marker color options
@@ -67,6 +68,15 @@ const s = {
     fontSize: '17px',
     fontWeight: 600,
     color: '#fff',
+  } satisfies React.CSSProperties,
+
+  sectionTitle: {
+    margin: '8px 0 6px',
+    fontSize: '13px',
+    fontWeight: 600,
+    color: '#888',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.05em',
   } satisfies React.CSSProperties,
 
   closeBtn: {
@@ -292,7 +302,7 @@ function DeleteCameraDialog({ camera, onCancel, onConfirm }: DeleteCameraDialogP
 }
 
 // ---------------------------------------------------------------------------
-// Camera row — inline edit
+// Camera row — inline edit (no OBS scene column)
 // ---------------------------------------------------------------------------
 
 interface CameraRowState {
@@ -300,7 +310,6 @@ interface CameraRowState {
   name: string
   color: string
   resolveColor: string | null
-  obsScene: string
 }
 
 interface CameraRowProps {
@@ -309,42 +318,23 @@ interface CameraRowProps {
 }
 
 function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Element {
-  const upsertCamera = useAppStore((s) => s.upsertCamera)
+  const upsertCamera = useAppStore((st) => st.upsertCamera)
   const [draft, setDraft] = useState<CameraRowState>({
     number: camera.number,
     name: camera.name,
     color: camera.color,
     resolveColor: camera.resolveColor,
-    obsScene: camera.obsScene ?? '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [obsScenes, setObsScenes] = useState<string[]>([])
-  const [obsConnected, setObsConnected] = useState(false)
-
-  const fetchObsScenes = async (): Promise<void> => {
-    try {
-      const scenes = await window.api.obs.getScenes()
-      setObsScenes(scenes)
-      setObsConnected(true)
-    } catch {
-      setObsConnected(false)
-    }
-  }
-
-  useEffect(() => {
-    void fetchObsScenes()
-  }, [])
 
   // Commit changes on blur from any field
   const handleBlur = async (): Promise<void> => {
-    // Avoid saving if nothing changed
     if (
       draft.number === camera.number &&
       draft.name === camera.name &&
       draft.color === camera.color &&
-      draft.resolveColor === camera.resolveColor &&
-      (draft.obsScene || null) === camera.obsScene
+      draft.resolveColor === camera.resolveColor
     ) {
       return
     }
@@ -358,7 +348,7 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
         name: draft.name,
         color: draft.color,
         resolveColor: draft.resolveColor,
-        obsScene: draft.obsScene || null,
+        obsScene: camera.obsScene ?? null,
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed.')
@@ -429,48 +419,6 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
           ))}
         </select>
       </td>
-      <td style={s.td}>
-        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-          {obsConnected && obsScenes.length > 0 ? (
-            <select
-              style={s.select}
-              value={draft.obsScene}
-              aria-label="OBS scene"
-              onChange={(e) => setDraft((d) => ({ ...d, obsScene: e.target.value }))}
-              onBlur={() => void handleBlur()}
-              disabled={saving}
-            >
-              <option value="">— None —</option>
-              {obsScenes.map((scene) => (
-                <option key={scene} value={scene}>{scene}</option>
-              ))}
-              {draft.obsScene && !obsScenes.includes(draft.obsScene) && (
-                <option value={draft.obsScene}>{draft.obsScene}</option>
-              )}
-            </select>
-          ) : (
-            <input
-              style={s.input}
-              type="text"
-              value={draft.obsScene}
-              aria-label="OBS scene"
-              placeholder={obsConnected ? 'Scene name' : 'OBS not connected'}
-              onChange={(e) => setDraft((d) => ({ ...d, obsScene: e.target.value }))}
-              onBlur={() => void handleBlur()}
-              disabled={saving}
-            />
-          )}
-          <button
-            style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '14px', padding: '2px' }}
-            onClick={() => void fetchObsScenes()}
-            title="Refresh OBS scenes"
-            aria-label="Refresh OBS scenes"
-            type="button"
-          >
-            ⟳
-          </button>
-        </div>
-      </td>
       <td style={{ ...s.td, width: '48px' }}>
         {error !== null && (
           <span style={{ color: '#e74c3c', fontSize: '12px' }} title={error}>
@@ -502,12 +450,11 @@ interface NewCameraRowProps {
 }
 
 function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): React.JSX.Element {
-  const upsertCamera = useAppStore((s) => s.upsertCamera)
+  const upsertCamera = useAppStore((st) => st.upsertCamera)
   const [number, setNumber] = useState(nextNumber)
   const [name, setName] = useState('')
   const [color, setColor] = useState('#4a90d9')
   const [resolveColor, setResolveColor] = useState<string | null>(null)
-  const [obsScene, setObsScene] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -519,7 +466,7 @@ function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): Rea
     setSaving(true)
     setError(null)
     try {
-      await upsertCamera({ projectId, number, name: name.trim(), color, resolveColor, obsScene: obsScene || null })
+      await upsertCamera({ projectId, number, name: name.trim(), color, resolveColor, obsScene: null })
       onDone()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add camera.')
@@ -585,17 +532,6 @@ function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): Rea
           ))}
         </select>
       </td>
-      <td style={s.td}>
-        <input
-          style={s.input}
-          type="text"
-          value={obsScene}
-          aria-label="OBS scene"
-          placeholder="Scene name"
-          onChange={(e) => setObsScene(e.target.value)}
-          disabled={saving}
-        />
-      </td>
       <td style={{ ...s.td, width: '48px', whiteSpace: 'nowrap' }}>
         {error !== null && (
           <span style={{ color: '#e74c3c', fontSize: '12px', marginRight: '4px' }} title={error}>
@@ -626,6 +562,232 @@ function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): Rea
 }
 
 // ---------------------------------------------------------------------------
+// Transition Mappings section
+// ---------------------------------------------------------------------------
+
+const BUILTIN_TRANSITIONS = ['cut', 'fade', 'stinger'] as const
+
+interface TransitionMappingsSectionProps {
+  obsConnected: boolean
+}
+
+function TransitionMappingsSection({ obsConnected }: TransitionMappingsSectionProps): React.JSX.Element {
+  const [mappings, setMappings] = useState<TransitionMapping[]>([])
+  const [obsTransitions, setObsTransitions] = useState<string[]>([])
+  const [savingMap, setSavingMap] = useState<Record<string, boolean>>({})
+  const [error, setError] = useState<string | null>(null)
+
+  // New mapping form state
+  const [newLogicalName, setNewLogicalName] = useState('')
+  const [newObsName, setNewObsName] = useState('')
+  const [addingNew, setAddingNew] = useState(false)
+
+  useEffect(() => {
+    void fetchAll()
+  }, [])
+
+  async function fetchAll(): Promise<void> {
+    try {
+      const [maps, transitions] = await Promise.all([
+        window.api.obs.listTransitionMappings(),
+        window.api.obs.getTransitions(),
+      ])
+      setMappings(maps)
+      setObsTransitions(transitions)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function handleObsNameChange(logicalName: string, obsName: string): Promise<void> {
+    setSavingMap((prev) => ({ ...prev, [logicalName]: true }))
+    setError(null)
+    try {
+      await window.api.obs.upsertTransitionMapping({ logicalName, obsTransitionName: obsName })
+      setMappings((prev) =>
+        prev.map((m) => (m.logicalName === logicalName ? { ...m, obsTransitionName: obsName } : m)),
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed.')
+    } finally {
+      setSavingMap((prev) => ({ ...prev, [logicalName]: false }))
+    }
+  }
+
+  async function handleDelete(logicalName: string): Promise<void> {
+    setSavingMap((prev) => ({ ...prev, [logicalName]: true }))
+    setError(null)
+    try {
+      await window.api.obs.deleteTransitionMapping({ logicalName })
+      setMappings((prev) => prev.filter((m) => m.logicalName !== logicalName))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Delete failed.')
+    } finally {
+      setSavingMap((prev) => ({ ...prev, [logicalName]: false }))
+    }
+  }
+
+  async function handleAddMapping(): Promise<void> {
+    if (!newLogicalName.trim() || !newObsName) return
+    setError(null)
+    try {
+      await window.api.obs.upsertTransitionMapping({
+        logicalName: newLogicalName.trim(),
+        obsTransitionName: newObsName,
+      })
+      await fetchAll()
+      setNewLogicalName('')
+      setNewObsName('')
+      setAddingNew(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add mapping.')
+    }
+  }
+
+  return (
+    <div>
+      <p style={s.sectionTitle}>Transition Mappings</p>
+      {error !== null && <p style={s.errorText}>{error}</p>}
+      <table style={s.table}>
+        <thead>
+          <tr>
+            <th style={s.th}>Logical name</th>
+            <th style={s.th}>OBS transition</th>
+            <th style={s.th} />
+          </tr>
+        </thead>
+        <tbody>
+          {mappings.map((m) => {
+            const isBuiltin = (BUILTIN_TRANSITIONS as readonly string[]).includes(m.logicalName)
+            const isSaving = savingMap[m.logicalName] === true
+            return (
+              <tr key={m.logicalName}>
+                <td style={s.td}>
+                  <span style={{ color: isBuiltin ? '#888' : '#ddd' }}>{m.logicalName}</span>
+                </td>
+                <td style={s.td}>
+                  {obsConnected && obsTransitions.length > 0 ? (
+                    <select
+                      style={s.select}
+                      value={m.obsTransitionName}
+                      aria-label={`OBS transition for ${m.logicalName}`}
+                      disabled={isSaving}
+                      onChange={(e) => void handleObsNameChange(m.logicalName, e.target.value)}
+                    >
+                      {obsTransitions.map((t) => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                      {!obsTransitions.includes(m.obsTransitionName) && (
+                        <option value={m.obsTransitionName}>{m.obsTransitionName}</option>
+                      )}
+                    </select>
+                  ) : (
+                    <input
+                      style={s.input}
+                      type="text"
+                      value={m.obsTransitionName}
+                      aria-label={`OBS transition for ${m.logicalName}`}
+                      disabled={isSaving}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        setMappings((prev) =>
+                          prev.map((mp) =>
+                            mp.logicalName === m.logicalName ? { ...mp, obsTransitionName: val } : mp,
+                          ),
+                        )
+                      }}
+                      onBlur={(e) => void handleObsNameChange(m.logicalName, e.target.value)}
+                    />
+                  )}
+                </td>
+                <td style={{ ...s.td, width: '40px' }}>
+                  {!isBuiltin && (
+                    <button
+                      style={s.iconBtn}
+                      onClick={() => void handleDelete(m.logicalName)}
+                      title="Delete mapping"
+                      aria-label={`Delete mapping ${m.logicalName}`}
+                      disabled={isSaving}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+          {addingNew && (
+            <tr>
+              <td style={s.td}>
+                <input
+                  autoFocus
+                  style={s.input}
+                  type="text"
+                  placeholder="Logical name"
+                  value={newLogicalName}
+                  aria-label="New logical name"
+                  onChange={(e) => setNewLogicalName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') setAddingNew(false)
+                  }}
+                />
+              </td>
+              <td style={s.td}>
+                {obsConnected && obsTransitions.length > 0 ? (
+                  <select
+                    style={s.select}
+                    value={newObsName}
+                    aria-label="New OBS transition"
+                    onChange={(e) => setNewObsName(e.target.value)}
+                  >
+                    <option value="">— Select —</option>
+                    {obsTransitions.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    style={s.input}
+                    type="text"
+                    placeholder="OBS transition name"
+                    value={newObsName}
+                    aria-label="New OBS transition"
+                    onChange={(e) => setNewObsName(e.target.value)}
+                  />
+                )}
+              </td>
+              <td style={{ ...s.td, width: '72px', whiteSpace: 'nowrap' }}>
+                <button
+                  style={{ ...s.iconBtn, color: '#4a90d9' }}
+                  onClick={() => void handleAddMapping()}
+                  title="Save mapping"
+                  aria-label="Save new mapping"
+                >
+                  ✓
+                </button>
+                <button
+                  style={s.iconBtn}
+                  onClick={() => setAddingNew(false)}
+                  title="Cancel"
+                  aria-label="Cancel new mapping"
+                >
+                  ✕
+                </button>
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      {!addingNew && (
+        <button style={{ ...s.addBtn, marginTop: '8px' }} onClick={() => setAddingNew(true)}>
+          + Add mapping
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // CameraConfigPanel — modal
 // ---------------------------------------------------------------------------
 
@@ -634,9 +796,10 @@ interface CameraConfigPanelProps {
 }
 
 export function CameraConfigPanel({ onClose }: CameraConfigPanelProps): React.JSX.Element {
-  const cameras = useAppStore((s) => s.cameras)
-  const activeProjectId = useAppStore((s) => s.activeProjectId)
-  const removeCamera = useAppStore((s) => s.removeCamera)
+  const cameras = useAppStore((st) => st.cameras)
+  const activeProjectId = useAppStore((st) => st.activeProjectId)
+  const obsStatus = useAppStore((st) => st.obsStatus)
+  const removeCamera = useAppStore((st) => st.removeCamera)
 
   const [addingNew, setAddingNew] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<Camera | null>(null)
@@ -671,7 +834,6 @@ export function CameraConfigPanel({ onClose }: CameraConfigPanelProps): React.JS
                 <th style={s.th}>Name</th>
                 <th style={s.th}>Color</th>
                 <th style={s.th}>Resolve color</th>
-                <th style={s.th}>OBS Scene</th>
                 <th style={s.th} />
               </tr>
             </thead>
@@ -698,6 +860,8 @@ export function CameraConfigPanel({ onClose }: CameraConfigPanelProps): React.JS
               + Add camera
             </button>
           )}
+
+          <TransitionMappingsSection obsConnected={obsStatus === 'connected'} />
         </div>
       </div>
 

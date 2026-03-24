@@ -103,6 +103,18 @@ const styles = {
     gap: '12px',
     color: '#555',
   } satisfies React.CSSProperties,
+
+  warningBanner: {
+    background: '#e67e22',
+    color: '#fff',
+    fontSize: '12px',
+    padding: '6px 16px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    cursor: 'pointer',
+    flexShrink: 0,
+  } satisfies React.CSSProperties,
 }
 
 export default function App(): React.JSX.Element {
@@ -124,6 +136,8 @@ export default function App(): React.JSX.Element {
   const liveSkipNext = useAppStore((s) => s.liveSkipNext)
   const obsStatus = useAppStore((s) => s.obsStatus)
   const setObsStatus = useAppStore((s) => s.setObsStatus)
+  const obsValidationResult = useAppStore((s) => s.obsValidationResult)
+  const setObsValidationResult = useAppStore((s) => s.setObsValidationResult)
 
   const [showCameraConfig, setShowCameraConfig] = useState(false)
   const [showResolveImport, setShowResolveImport] = useState(false)
@@ -150,7 +164,8 @@ export default function App(): React.JSX.Element {
     })
     window.api.obs.getStatus().then((r) => setObsStatus(r.status)).catch(() => {})
     window.api.obs.onStatusChange(setObsStatus)
-  }, [loadProjects, loadLiveState, setObsStatus])
+    window.api.obs.onValidationResult(setObsValidationResult)
+  }, [loadProjects, loadLiveState, setObsStatus, setObsValidationResult])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -211,6 +226,28 @@ export default function App(): React.JSX.Element {
           </button>
         </div>
       </header>
+
+      {obsStatus === 'connected' && obsValidationResult !== null && (
+        !obsValidationResult.studioModeEnabled ||
+        obsValidationResult.missingScenes.length > 0 ||
+        obsValidationResult.missingTransitions.length > 0
+      ) && (
+        <div
+          style={styles.warningBanner}
+          onClick={() => setShowObsPanel(true)}
+          role="button"
+          aria-label="OBS misconfigured — click to open settings"
+        >
+          <span>OBS:</span>
+          {!obsValidationResult.studioModeEnabled && <span>studio mode off</span>}
+          {obsValidationResult.missingScenes.length > 0 && (
+            <span>missing scenes: {obsValidationResult.missingScenes.join(', ')}</span>
+          )}
+          {obsValidationResult.missingTransitions.length > 0 && (
+            <span>missing transitions: {obsValidationResult.missingTransitions.join(', ')}</span>
+          )}
+        </div>
+      )}
 
       <div style={styles.body}>
         {loadError !== null && (
