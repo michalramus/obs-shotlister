@@ -121,6 +121,17 @@ const s = {
     transition: 'none',
   }),
 
+  transitionBar: (pct: number, isLive: boolean): React.CSSProperties => ({
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    width: `${pct * 100}%`,
+    background: isLive ? '#c0392b' : '#27ae60',
+    opacity: 0.35,
+    transition: 'none',
+  }),
+
   rowContent: {
     position: 'relative',
     zIndex: 1,
@@ -280,6 +291,11 @@ export function ShotlistWidget({
                 : 0
             }
 
+            const effectiveDuration = timing.effectiveDurationMs ?? shot.durationMs
+            const transitionPct = isLive && shot.transitionMs > 0
+              ? Math.min(1, shot.transitionMs / effectiveDuration)
+              : 0
+
             return (
               <li
                 key={shot.id}
@@ -294,6 +310,9 @@ export function ShotlistWidget({
                     data-testid={isLive ? 'progress-live' : 'progress-next'}
                   >
                     <div style={s.progressBar(Math.min(1, Math.max(0, progressPct)), isLive)} />
+                    {transitionPct > 0 && (
+                      <div style={s.transitionBar(transitionPct, isLive)} data-testid="progress-transition" />
+                    )}
                   </div>
                 )}
                 <div style={s.rowContent}>
