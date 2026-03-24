@@ -14,8 +14,8 @@ import {
 } from './ipc/projects'
 import type { CameraUpsertInput } from './ipc/projects'
 import { listRundowns, createRundown, renameRundown, deleteRundown } from './ipc/rundowns'
-import { listShots, createShot, updateShot, deleteShot, reorderShots } from './ipc/shots'
-import type { CreateShotInput, UpdateShotInput } from './ipc/shots'
+import { listShots, createShot, updateShot, deleteShot, reorderShots, splitShot } from './ipc/shots'
+import type { CreateShotInput, UpdateShotInput, SplitShotInput } from './ipc/shots'
 import { getLiveState, getLiveQueue, startLive, stopLive, nextShot, skipNext, restartLive, setActiveRundown, setActiveProject, clearLiveState } from './ipc/live'
 import { getCameraById } from './ipc/projects'
 import { parseResolveCSV, confirmResolveImport } from './ipc/resolve-import'
@@ -246,6 +246,12 @@ function registerIpcHandlers(): void {
   ipcMain.handle('shots:reorder', (_event, payload: { ids: string[] }) => {
     reorderShots(db, payload.ids)
     broadcastRundown()
+  })
+
+  ipcMain.handle('shots:split', (_e, payload: SplitShotInput) => {
+    const result = splitShot(db, payload)
+    broadcastRundown()
+    return result
   })
 
   // Live controls

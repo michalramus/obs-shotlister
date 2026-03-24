@@ -56,6 +56,7 @@ interface AppStore {
   editShot: (input: UpdateShotInput) => Promise<void>
   removeShot: (id: string) => Promise<void>
   reorderShots: (ids: string[]) => Promise<void>
+  splitShot: (shotId: string, atMs: number, newCameraId: string) => Promise<void>
 
   // Live control actions
   loadLiveState: () => Promise<void>
@@ -200,6 +201,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
       shots: [],
     }))
     await window.api.rundowns.setActive({ rundownId: rundown.id })
+    const { cameras } = get()
+    if (cameras.length > 0) {
+      await window.api.shots.create({ rundownId: rundown.id, cameraId: cameras[0].id, durationMs: 180000 })
+      await get().loadShots(rundown.id)
+    }
     return rundown
   },
 
@@ -255,6 +261,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (activeRundownId) {
       await get().loadShots(activeRundownId)
     }
+  },
+
+  splitShot: async (shotId, atMs, newCameraId) => {
+    await window.api.shots.split({ shotId, atMs, newCameraId })
+    const { activeRundownId } = get()
+    if (activeRundownId) await get().loadShots(activeRundownId)
   },
 
   // Live controls

@@ -136,6 +136,8 @@ export default function App(): React.JSX.Element {
   const liveNext = useAppStore((s) => s.liveNext)
   const liveStart = useAppStore((s) => s.liveStart)
   const liveSkipNext = useAppStore((s) => s.liveSkipNext)
+  const editShot = useAppStore((s) => s.editShot)
+  const splitShot = useAppStore((s) => s.splitShot)
   const obsStatus = useAppStore((s) => s.obsStatus)
   const setObsStatus = useAppStore((s) => s.setObsStatus)
   const obsValidationResult = useAppStore((s) => s.obsValidationResult)
@@ -282,7 +284,20 @@ export default function App(): React.JSX.Element {
                 cameras={cameras}
                 liveIndex={liveIndex}
                 running={running}
-                onShotClick={(_id) => { /* highlight – Phase 3 */ }}
+                onShotClick={(_id) => { console.log('[App] shot clicked:', _id) }}
+              onSplitShot={(shotId, atMs, newCameraId) => {
+                if (atMs <= 0) {
+                  editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) => console.error('[App] editShot:', err))
+                } else {
+                  splitShot(shotId, atMs, newCameraId).catch((err: unknown) => console.error('[App] splitShot:', err))
+                }
+              }}
+              onResizeShots={(idA, durA, idB, durB) => {
+                Promise.all([
+                  editShot({ id: idA, durationMs: Math.round(durA) }),
+                  editShot({ id: idB, durationMs: Math.round(durB) }),
+                ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
+              }}
               />
             </div>
 
@@ -326,7 +341,20 @@ export default function App(): React.JSX.Element {
                 cameras={cameras}
                 liveIndex={liveIndex}
                 running={running}
-                onShotClick={(_id) => { /* highlight – Phase 3 */ }}
+                onShotClick={(_id) => { console.log('[App] shot clicked:', _id) }}
+              onSplitShot={(shotId, atMs, newCameraId) => {
+                if (atMs <= 0) {
+                  editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) => console.error('[App] editShot:', err))
+                } else {
+                  splitShot(shotId, atMs, newCameraId).catch((err: unknown) => console.error('[App] splitShot:', err))
+                }
+              }}
+              onResizeShots={(idA, durA, idB, durB) => {
+                Promise.all([
+                  editShot({ id: idA, durationMs: Math.round(durA) }),
+                  editShot({ id: idB, durationMs: Math.round(durB) }),
+                ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
+              }}
               />
             </div>
           </>

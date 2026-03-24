@@ -36,6 +36,7 @@ export interface ElectronApi {
     update: (payload: UpdateShotInput) => Promise<Shot>
     delete: (payload: { id: string }) => Promise<void>
     reorder: (payload: { ids: string[] }) => Promise<void>
+    split: (payload: { shotId: string; atMs: number; newCameraId: string }) => Promise<{ first: Shot; second: Shot }>
     importCsvOpenDialog: () => Promise<Electron.OpenDialogReturnValue>
     importCsvParse: (payload: { filePath: string }) => Promise<ParseResult>
     importCsvConfirm: (payload: ConfirmImportInput) => Promise<Shot[]>
@@ -98,6 +99,7 @@ const api: ElectronApi = {
     update: (payload) => ipcRenderer.invoke('shots:update', payload),
     delete: (payload) => ipcRenderer.invoke('shots:delete', payload),
     reorder: (payload) => ipcRenderer.invoke('shots:reorder', payload),
+    split: (payload) => ipcRenderer.invoke('shots:split', payload),
     importCsvOpenDialog: () => ipcRenderer.invoke('shots:import-csv:open-dialog'),
     importCsvParse: (payload) => ipcRenderer.invoke('shots:import-csv:parse', payload),
     importCsvConfirm: (payload) => ipcRenderer.invoke('shots:import-csv:confirm', payload),

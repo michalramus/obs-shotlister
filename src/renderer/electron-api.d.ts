@@ -90,6 +90,7 @@ export interface ElectronApi {
     update: (payload: UpdateShotInput) => Promise<Shot>
     delete: (payload: { id: string }) => Promise<void>
     reorder: (payload: { ids: string[] }) => Promise<void>
+    split: (payload: { shotId: string; atMs: number; newCameraId: string }) => Promise<{ first: Shot; second: Shot }>
     importCsvOpenDialog: () => Promise<{ canceled: boolean; filePaths: string[] }>
     importCsvParse: (payload: { filePath: string }) => Promise<ParseResult>
     importCsvConfirm: (payload: ConfirmImportInput) => Promise<Shot[]>

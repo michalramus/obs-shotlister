@@ -7,6 +7,8 @@ interface TimelineEditorProps {
   liveIndex: number | null
   running: boolean
   onShotClick: (shotId: string) => void
+  onSplitShot: (shotId: string, atMs: number, newCameraId: string) => void
+  onResizeShots: (shotAId: string, newDurationA: number, shotBId: string, newDurationB: number) => void
 }
 
 const TRACK_HEIGHT = 50
@@ -23,16 +25,34 @@ function formatTime(ms: number): string {
   return `${min}:${sec.toString().padStart(2, '0')}`
 }
 
+interface DragState {
+  shotA: Shot
+  shotB: Shot
+  startX: number
+  origDurA: number
+  origDurB: number
+}
+
 export function TimelineEditor({
   shots,
   cameras,
   liveIndex,
   running,
   onShotClick,
+  onSplitShot,
+  onResizeShots,
 }: TimelineEditorProps): React.JSX.Element {
   const [zoomPxPerSec, setZoomPxPerSec] = useState(80)
   const [playheadMs, setPlayheadMs] = useState(0)
+  const [dragOverride, setDragOverride] = useState<Record<string, number>>({})
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const dragStateRef = useRef<DragState | null>(null)
+  const zoomRef = useRef(zoomPxPerSec)
+
+  // Keep zoomRef in sync so drag handlers always have current value
+  useEffect(() => {
+    zoomRef.current = zoomPxPerSec
+  }, [zoomPxPerSec])
 
   const totalMs = shots.reduce((sum, s) => sum + s.durationMs, 0)
   const totalPx = Math.max((totalMs / 1000) * zoomPxPerSec, 300)
@@ -61,6 +81,58 @@ export function TimelineEditor({
     onShotClick(shotId)
   }
 
+  function handleCamButtonClick(camera: Camera): void {
+    let accumulated = 0
+    for (const shot of shots) {
+      const shotStart = accumulated
+      const shotEnd = accumulated + shot.durationMs
+      if (playheadMs >= shotStart && playheadMs < shotEnd) {
+        const atMs = playheadMs - shotStart
+        onSplitShot(shot.id, atMs, camera.id)
+        return
+      }
+      accumulated = shotEnd
+    }
+  }
+
+  function handleBoundaryMouseDown(e: React.MouseEvent, shotA: Shot, shotB: Shot): void {
+    e.preventDefault()
+    e.stopPropagation()
+    dragStateRef.current = {
+      shotA,
+      shotB,
+      startX: e.clientX,
+      origDurA: shotA.durationMs,
+      origDurB: shotB.durationMs,
+    }
+
+    function onMouseMove(ev: MouseEvent): void {
+      const ds = dragStateRef.current
+      if (!ds) return
+      const deltaMs = ((ev.clientX - ds.startX) / zoomRef.current) * 1000
+      const newDurA = Math.max(1000, ds.origDurA + deltaMs)
+      const newDurB = Math.max(1000, ds.origDurB - deltaMs)
+      setDragOverride({ [ds.shotA.id]: newDurA, [ds.shotB.id]: newDurB })
+    }
+
+    function onMouseUp(ev: MouseEvent): void {
+      const ds = dragStateRef.current
+      if (ds) {
+        const deltaMs = ((ev.clientX - ds.startX) / zoomRef.current) * 1000
+        const newDurA = Math.max(1000, ds.origDurA + deltaMs)
+        const newDurB = Math.max(1000, ds.origDurB - deltaMs)
+        onResizeShots(ds.shotA.id, newDurA, ds.shotB.id, newDurB)
+        dragStateRef.current = null
+      }
+      setDragOverride({})
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
+
   const playheadPx = (playheadMs / 1000) * zoomPxPerSec
 
   // Build tick marks for ruler
@@ -77,12 +149,12 @@ export function TimelineEditor({
   // Camera lookup map
   const cameraMap = new Map(cameras.map((c) => [c.id, c]))
 
-  // Compute shot left offsets
+  // Compute shot left offsets using dragOverride durations
   const shotOffsets: number[] = []
   let acc = 0
   for (const shot of shots) {
     shotOffsets.push((acc / 1000) * zoomPxPerSec)
-    acc += shot.durationMs
+    acc += dragOverride[shot.id] ?? shot.durationMs
   }
 
   const sortedCameras = [...cameras].sort((a, b) => a.number - b.number)
@@ -268,12 +340,17 @@ export function TimelineEditor({
               const cam = cameraMap.get(shot.cameraId)
               const bgColor = cam?.color ?? '#555'
               const leftPx = shotOffsets[i]
-              const widthPx = (shot.durationMs / 1000) * zoomPxPerSec
+              const effectiveDuration = dragOverride[shot.id] ?? shot.durationMs
+              const widthPx = (effectiveDuration / 1000) * zoomPxPerSec
               const isLive = liveIndex !== null && shots[liveIndex]?.id === shot.id
 
               // Transition triangle
               const hasTransition = shot.transitionName !== null && shot.transitionMs > 0
               const triWidthPx = hasTransition ? (shot.transitionMs / 1000) * zoomPxPerSec : 0
+
+              // Boundary handle (rendered after each shot except the last)
+              const nextShot = shots[i + 1]
+              const boundaryLeftPx = leftPx + widthPx
 
               return (
                 <React.Fragment key={shot.id}>
@@ -330,6 +407,29 @@ export function TimelineEditor({
                         fill="rgba(255,255,255,0.4)"
                       />
                     </svg>
+                  )}
+
+                  {/* Boundary drag handle between this shot and the next */}
+                  {nextShot !== undefined && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: boundaryLeftPx - 4,
+                        top: 0,
+                        width: 8,
+                        height: TRACK_HEIGHT,
+                        cursor: 'ew-resize',
+                        background: 'transparent',
+                        zIndex: 10,
+                      }}
+                      onMouseDown={(e) => handleBoundaryMouseDown(e, shot, nextShot)}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.2)'
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLDivElement).style.background = 'transparent'
+                      }}
+                    />
                   )}
                 </React.Fragment>
               )
@@ -389,21 +489,21 @@ export function TimelineEditor({
         {sortedCameras.map((cam) => (
           <button
             key={cam.id}
-            disabled
             style={{
               background: 'none',
-              border: '1px solid #333',
+              border: '1px solid #555',
               borderRadius: '3px',
-              color: '#555',
+              color: '#ccc',
               fontSize: '11px',
               padding: '3px 8px',
-              cursor: 'not-allowed',
+              cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               gap: '5px',
               whiteSpace: 'nowrap',
             }}
-            title={`Add ${cam.name} shot — Phase 3`}
+            title={`Split at playhead and assign ${cam.name}`}
+            onClick={() => handleCamButtonClick(cam)}
           >
             <span
               style={{

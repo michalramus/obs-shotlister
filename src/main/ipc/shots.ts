@@ -147,3 +147,37 @@ export function reorderShots(db: Database.Database, ids: string[]): void {
   })
   updateAll()
 }
+
+export interface SplitShotInput {
+  shotId: string
+  atMs: number
+  newCameraId: string
+}
+
+export function splitShot(db: Database.Database, input: SplitShotInput): { first: Shot; second: Shot } {
+  const existing = db.prepare('SELECT id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?').get(input.shotId) as ShotRow | undefined
+  if (!existing) throw new Error(`Shot not found: ${input.shotId}`)
+  if (input.atMs <= 0 || input.atMs >= existing.duration_ms) {
+    throw new Error(`Invalid split position: ${input.atMs} (shot duration: ${existing.duration_ms})`)
+  }
+
+  const newId = randomUUID()
+  const newOrderIndex = existing.order_index + 1
+
+  const doSplit = db.transaction(() => {
+    // Shift all subsequent shots up by 1
+    db.prepare('UPDATE shots SET order_index = order_index + 1 WHERE rundown_id = ? AND order_index > ?')
+      .run(existing.rundown_id, existing.order_index)
+    // Update existing shot duration
+    db.prepare('UPDATE shots SET duration_ms = ? WHERE id = ?').run(input.atMs, input.shotId)
+    // Insert new shot
+    db.prepare('INSERT INTO shots (id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(newId, existing.rundown_id, input.newCameraId, existing.duration_ms - input.atMs, null, newOrderIndex, null, 0)
+  })
+  doSplit()
+
+  const first = db.prepare('SELECT id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?').get(input.shotId) as ShotRow
+  const second = db.prepare('SELECT id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?').get(newId) as ShotRow
+
+  return { first: rowToShot(first), second: rowToShot(second) }
+}
