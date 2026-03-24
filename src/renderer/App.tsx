@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useAppStore } from './store'
 import { ProjectSelector } from './components/ProjectSelector'
 import { CameraConfigPanel } from './components/CameraConfigPanel'
@@ -129,6 +129,19 @@ export default function App(): React.JSX.Element {
   const [showResolveImport, setShowResolveImport] = useState(false)
   const [showObsPanel, setShowObsPanel] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [headerFlash, setHeaderFlash] = useState(false)
+  const isFirstLiveIndexRef = useRef(true)
+
+  useEffect(() => {
+    if (isFirstLiveIndexRef.current) {
+      isFirstLiveIndexRef.current = false
+      return
+    }
+    if (liveIndex === null) return
+    setHeaderFlash(true)
+    const t = setTimeout(() => setHeaderFlash(false), 350)
+    return () => clearTimeout(t)
+  }, [liveIndex])
 
   // Load projects + live state on mount
   useEffect(() => {
@@ -175,7 +188,7 @@ export default function App(): React.JSX.Element {
 
   return (
     <div style={styles.root}>
-      <header style={styles.header}>
+      <header style={{ ...styles.header, background: headerFlash ? '#888' : '#1a1a1a', transition: 'background 0.35s ease-out' }}>
         <span style={styles.appName}>OBS Queuer</span>
         <ProjectSelector onOpenCameraConfig={() => setShowCameraConfig(true)} />
         <div style={styles.headerActions}>
@@ -227,6 +240,7 @@ export default function App(): React.JSX.Element {
                   liveIndex={liveIndex}
                   startedAt={startedAt}
                   running={running}
+                  showNextBackground
                 />
               </div>
             )}

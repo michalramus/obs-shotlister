@@ -54,7 +54,7 @@ const s = {
 
   content: {
     flex: 1,
-    padding: '12px',
+    padding: 0,
     overflowY: 'auto' as const,
   } satisfies React.CSSProperties,
 

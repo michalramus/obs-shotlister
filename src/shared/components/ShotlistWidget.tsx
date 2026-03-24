@@ -10,6 +10,7 @@ export interface ShotlistWidgetProps {
   startedAt: number | null
   running: boolean
   cameraFilter?: number[]
+  showNextBackground?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -43,7 +44,7 @@ const s = {
     fontSize: '20px',
     fontWeight: 700,
     fontVariantNumeric: 'tabular-nums' as const,
-    color: '#e74c3c',
+    color: '#ff3b30',
   } satisfies React.CSSProperties,
 
   shotList: {
@@ -52,13 +53,13 @@ const s = {
     padding: 0,
   } satisfies React.CSSProperties,
 
-  shotRow: (isLive: boolean, isNext: boolean): React.CSSProperties => ({
+  shotRow: (isLive: boolean, isNext: boolean, showNextBg: boolean): React.CSSProperties => ({
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
     padding: '8px 14px',
     borderBottom: '1px solid #2a2a2a',
-    background: isLive ? '#1e2d1e' : isNext ? '#1e1e2d' : 'transparent',
+    background: isLive ? 'transparent' : (isNext && showNextBg) ? 'rgba(46, 204, 113, 0.18)' : 'transparent',
     position: 'relative',
     overflow: 'hidden',
   }),
@@ -115,8 +116,8 @@ const s = {
     bottom: 0,
     left: 0,
     width: `${pct * 100}%`,
-    background: isLive ? '#e74c3c' : '#3498db',
-    opacity: 0.18,
+    background: isLive ? '#ff3b30' : '#2ecc71',
+    opacity: 0.55,
     transition: 'none',
   }),
 
@@ -156,8 +157,10 @@ export function ShotlistWidget({
   startedAt,
   running,
   cameraFilter,
+  showNextBackground = false,
 }: ShotlistWidgetProps): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now())
+  const [headerFlash, setHeaderFlash] = useState(false)
   const rafRef = useRef<number | null>(null)
   const liveRef = useRef<HTMLLIElement | null>(null)
   // Track total wait for the current "next visible shot" period.
@@ -199,6 +202,14 @@ export function ShotlistWidget({
     liveRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [liveIndex])
 
+  // Flash header white on camera change
+  useEffect(() => {
+    if (liveIndex === null) return
+    setHeaderFlash(true)
+    const t = setTimeout(() => setHeaderFlash(false), 350)
+    return () => clearTimeout(t)
+  }, [liveIndex])
+
   const timing = computeTiming(shots, cameras, liveIndex, startedAt, now, cameraFilter)
 
   // When the next visible shot changes, capture the total wait for that new period.
@@ -224,13 +235,17 @@ export function ShotlistWidget({
   const liveShot = timing.liveIndex !== null ? shots[timing.liveIndex] : null
   const showNextBar = hasFilter && (liveShot == null || !passesFilter(liveShot))
 
-  const headerCountdown = timing.remainingMs !== null ? formatMs(timing.remainingMs) : '--:--'
+  const isWaitingForFiltered = showNextBar && timing.timeUntilNextVisibleMs !== null
+  const headerCountdown = isWaitingForFiltered
+    ? formatMs(timing.timeUntilNextVisibleMs!)
+    : timing.remainingMs !== null ? formatMs(timing.remainingMs) : '--:--'
+  const headerCountdownColor = isWaitingForFiltered ? '#2ecc71' : '#ff3b30'
 
   return (
     <div style={s.widget} data-testid="shotlist-widget">
-      <div style={s.header}>
+      <div style={{ ...s.header, background: headerFlash ? '#666' : '#222', transition: 'background 0.35s ease-out' }}>
         <span style={s.rundownName}>{rundownName}</span>
-        <span style={s.countdown}>
+        <span style={{ ...s.countdown, color: headerCountdownColor }}>
           {running && <span style={{ fontSize: '12px', marginRight: '4px' }}>▶</span>}
           {headerCountdown}
         </span>
@@ -259,16 +274,17 @@ export function ShotlistWidget({
               // progressPct = 1 - (remaining / original total) so the bar fills
               // monotonically and never resets when operator advances filtered shots.
               const totalWait = nextTotalWaitRef.current ?? timing.timeUntilNextVisibleMs
+              // Bar shrinks 1→0 as the wait counts down to zero
               progressPct = totalWait > 0
-                ? Math.min(1, Math.max(0, 1 - timing.timeUntilNextVisibleMs / totalWait))
-                : 1
+                ? Math.min(1, Math.max(0, timing.timeUntilNextVisibleMs / totalWait))
+                : 0
             }
 
             return (
               <li
                 key={shot.id}
                 ref={isLive ? (el) => { liveRef.current = el } : undefined}
-                style={s.shotRow(isLive, isNext)}
+                style={s.shotRow(isLive, isNext, showNextBackground)}
                 data-testid={isLive ? 'shot-live' : isNext ? 'shot-next' : 'shot-row'}
                 data-shot-id={isLive ? shot.id : undefined}
               >
