@@ -292,23 +292,23 @@ async function switchOBSScenes(state: LiveState, database: ReturnType<typeof get
     } catch (e: unknown) {
       console.error('[OBS] setTransition:', e)
     }
-    obsClient.setCurrentProgramScene(liveCamera.obsScene).catch((e: unknown) => console.error('[OBS] program:', e))
+    try {
+      await obsClient.setCurrentProgramScene(liveCamera.obsScene)
+    } catch (e: unknown) {
+      console.error('[OBS] program:', e)
+    }
+  }
+
+  if (transitionMs > 0) {
+    await new Promise<void>((resolve) => setTimeout(resolve, transitionMs))
   }
 
   const hiddenIds = new Set(getLiveQueue().filter((s) => s.hidden).map((s) => s.id))
   const nextVisibleShot = allShots.slice(state.liveIndex + 1).find((s) => !hiddenIds.has(s.id))
-
   if (nextVisibleShot) {
     const nextCamera = getCameraById(database, nextVisibleShot.cameraId)
     if (nextCamera?.obsScene) {
-      const previewScene = nextCamera.obsScene
-      if (transitionMs > 0) {
-        setTimeout(() => {
-          obsClient.setCurrentPreviewScene(previewScene).catch((e: unknown) => console.error('[OBS] preview:', e))
-        }, transitionMs)
-      } else {
-        obsClient.setCurrentPreviewScene(previewScene).catch((e: unknown) => console.error('[OBS] preview:', e))
-      }
+      obsClient.setCurrentPreviewScene(nextCamera.obsScene).catch((e: unknown) => console.error('[OBS] preview:', e))
     }
   }
 }
