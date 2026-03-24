@@ -3,6 +3,8 @@
  *
  * State machine: idle → running → idle
  * All mutations persist to the live_state singleton row in SQLite.
+ * During live, the shots table is never modified — only live_state is written.
+ * An in-memory liveQueue tracks which shots are visible during the session.
  *
  * IPC registration (ipcMain.handle) happens in src/main/index.ts.
  * Socket.io broadcast is initiated in src/main/index.ts after each action.
@@ -36,6 +38,24 @@ interface ShotRow {
   duration_ms: number
 }
 
+interface LiveQueueEntry extends ShotRow {
+  hidden: boolean
+}
+
+// ---------------------------------------------------------------------------
+// In-memory live queue
+// ---------------------------------------------------------------------------
+
+let liveQueue: LiveQueueEntry[] = []
+
+export function getLiveQueue(): LiveQueueEntry[] {
+  return liveQueue
+}
+
+export function getVisibleQueue(): LiveQueueEntry[] {
+  return liveQueue.filter((s) => !s.hidden)
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -62,11 +82,6 @@ function liveShotIdToIndex(shots: ShotRow[], liveShotId: string | null): number 
   return idx === -1 ? null : idx
 }
 
-export function findNext(shots: ShotRow[], fromIndex: number): number | null {
-  const next = fromIndex + 1
-  return next < shots.length ? next : null
-}
-
 // ---------------------------------------------------------------------------
 // Read
 // ---------------------------------------------------------------------------
@@ -75,7 +90,10 @@ export function getLiveState(db: Database.Database): LiveState {
   const row = db.prepare('SELECT * FROM live_state WHERE id = 1').get() as LiveStateRow
   let liveIndex: number | null = null
 
-  if (row.rundown_id && row.live_shot_id) {
+  if (row.running && liveQueue.length > 0) {
+    liveIndex = getVisibleQueue().findIndex((s) => s.id === row.live_shot_id)
+    if (liveIndex === -1) liveIndex = null
+  } else if (row.rundown_id && row.live_shot_id) {
     const shots = getShotsForRundown(db, row.rundown_id)
     liveIndex = liveShotIdToIndex(shots, row.live_shot_id)
   }
@@ -110,6 +128,8 @@ export function startLive(db: Database.Database, rundownId: string): LiveState {
     'UPDATE live_state SET rundown_id = ?, live_shot_id = ?, started_at = ?, running = 1 WHERE id = 1',
   ).run(rundownId, liveShotId, startedAt)
 
+  liveQueue = shots.map((s) => ({ ...s, hidden: false }))
+
   return {
     rundownId,
     projectId: stateRow.project_id,
@@ -125,6 +145,8 @@ export function stopLive(db: Database.Database): LiveState {
   db.prepare(
     'UPDATE live_state SET live_shot_id = NULL, started_at = NULL, running = 0 WHERE id = 1',
   ).run()
+
+  liveQueue = []
 
   return {
     rundownId: row.rundown_id,
@@ -142,16 +164,16 @@ export function nextShot(db: Database.Database): LiveState {
     throw new Error('Cannot advance: not running')
   }
 
-  const shots = getShotsForRundown(db, row.rundown_id)
-  const currentIndex = liveShotIdToIndex(shots, row.live_shot_id) ?? 0
+  const visible = getVisibleQueue()
+  const currentIndex = visible.findIndex((s) => s.id === row.live_shot_id)
+  const nextEntry = visible[currentIndex + 1]
 
-  const nextIndex = findNext(shots, currentIndex)
-
-  if (nextIndex === null) {
+  if (!nextEntry) {
     // Past last shot → transition to idle
     db.prepare(
       'UPDATE live_state SET live_shot_id = NULL, started_at = NULL, running = 0 WHERE id = 1',
     ).run()
+    liveQueue = []
     return {
       rundownId: row.rundown_id,
       projectId: row.project_id,
@@ -161,17 +183,22 @@ export function nextShot(db: Database.Database): LiveState {
     }
   }
 
-  const liveShotId = shots[nextIndex].id
+  // Mark current shot as hidden
+  liveQueue = liveQueue.map((s) => (s.id === row.live_shot_id ? { ...s, hidden: true } : s))
+
+  const newVisible = getVisibleQueue()
+  const newLiveIndex = newVisible.findIndex((s) => s.id === nextEntry.id)
+
   const startedAt = Date.now()
 
   db.prepare(
     'UPDATE live_state SET live_shot_id = ?, started_at = ? WHERE id = 1',
-  ).run(liveShotId, startedAt)
+  ).run(nextEntry.id, startedAt)
 
   return {
     rundownId: row.rundown_id,
     projectId: row.project_id,
-    liveIndex: nextIndex,
+    liveIndex: newLiveIndex === -1 ? null : newLiveIndex,
     startedAt,
     running: true,
   }
@@ -184,35 +211,32 @@ export function skipNext(db: Database.Database): LiveState {
     throw new Error('Cannot skip: not running')
   }
 
-  const shots = getShotsForRundown(db, row.rundown_id)
-  const currentIndex = liveShotIdToIndex(shots, row.live_shot_id) ?? 0
+  const visible = getVisibleQueue()
+  const currentIndex = visible.findIndex((s) => s.id === row.live_shot_id)
 
-  // Find the next shot after current
-  const nextIndex = findNext(shots, currentIndex)
-  if (nextIndex === null) {
-    // Nothing to skip
-    return rowToLiveState(row, currentIndex)
+  const toSkip = visible[currentIndex + 1]
+  if (!toSkip) {
+    // Nothing to skip — return current state unchanged
+    return rowToLiveState(row, currentIndex === -1 ? null : currentIndex)
   }
 
-  const nextShot = shots[nextIndex]
-  const durationMs = nextShot.duration_ms
+  // Mark the next visible shot as hidden (no DB deletion)
+  liveQueue = liveQueue.map((s) => (s.id === toSkip.id ? { ...s, hidden: true } : s))
 
-  // In a transaction: extend current shot's started_at back by next shot's duration,
-  // then delete the next shot
-  const skipTx = db.transaction(() => {
-    db.prepare(
-      'UPDATE live_state SET started_at = started_at - ? WHERE id = 1',
-    ).run(durationMs)
-    db.prepare('DELETE FROM shots WHERE id = ?').run(nextShot.id)
-  })
-  skipTx()
+  // Extend current shot's started_at back by the skipped shot's duration
+  db.prepare(
+    'UPDATE live_state SET started_at = started_at - ? WHERE id = 1',
+  ).run(toSkip.duration_ms)
 
   const updatedRow = db.prepare('SELECT * FROM live_state WHERE id = 1').get() as LiveStateRow
+
+  const newVisible = getVisibleQueue()
+  const newLiveIndex = newVisible.findIndex((s) => s.id === row.live_shot_id)
 
   return {
     rundownId: updatedRow.rundown_id,
     projectId: updatedRow.project_id,
-    liveIndex: currentIndex,
+    liveIndex: newLiveIndex === -1 ? null : newLiveIndex,
     startedAt: updatedRow.started_at,
     running: true,
   }
@@ -229,6 +253,8 @@ export function restartLive(db: Database.Database): LiveState {
   if (shots.length === 0) {
     throw new Error('Cannot restart: rundown has no shots')
   }
+
+  liveQueue = shots.map((s) => ({ ...s, hidden: false }))
 
   const liveShotId = shots[0].id
   const startedAt = Date.now()

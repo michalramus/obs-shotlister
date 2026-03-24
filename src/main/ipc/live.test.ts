@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { applyMigrations } from '../db/index'
-import { getLiveState, startLive, stopLive, nextShot, skipNext, restartLive } from './live'
+import { getLiveState, startLive, stopLive, nextShot, skipNext, restartLive, getLiveQueue, getVisibleQueue } from './live'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -154,14 +154,27 @@ describe('nextShot', () => {
     db.close()
   })
 
-  it('advances liveIndex and resets startedAt', () => {
+  it('advances to next shot and resets startedAt', () => {
     const { rundownId } = seedRundownWithShots(db)
     const started = startLive(db, rundownId)
     const startedAt1 = started.startedAt as number
 
     const state = nextShot(db)
-    expect(state.liveIndex).toBe(1)
+    // current shot is hidden; next shot is now index 0 in visible queue
+    expect(state.liveIndex).toBe(0)
     expect(state.startedAt).toBeGreaterThanOrEqual(startedAt1)
+    expect(state.running).toBe(true)
+  })
+
+  it('hides the current shot in liveQueue when advancing', () => {
+    const { rundownId, shotIds } = seedRundownWithShots(db, 3)
+    startLive(db, rundownId)
+    nextShot(db)
+
+    const visible = getVisibleQueue()
+    expect(visible.map((s) => s.id)).not.toContain(shotIds[0])
+    expect(visible.map((s) => s.id)).toContain(shotIds[1])
+    expect(visible.map((s) => s.id)).toContain(shotIds[2])
   })
 
   it('transitions to idle when advancing past last shot', () => {
@@ -188,7 +201,7 @@ describe('skipNext', () => {
     db.close()
   })
 
-  it('deletes the next shot and extends started_at back by its duration', () => {
+  it('hides the next shot in liveQueue and extends started_at back by its duration', () => {
     const { rundownId, shotIds } = seedRundownWithShots(db, 3, 5000)
     startLive(db, rundownId)
 
@@ -202,11 +215,17 @@ describe('skipNext', () => {
     // started_at moved back by 5000ms (next shot's duration)
     expect(state.startedAt).toBe(beforeStartedAt - 5000)
 
-    // shot-1 (the next shot) should be deleted
+    // shot-1 should be hidden in liveQueue, NOT deleted from DB
     const remaining = getShotIds(db, rundownId)
-    expect(remaining).not.toContain(shotIds[1])
     expect(remaining).toContain(shotIds[0])
+    expect(remaining).toContain(shotIds[1]) // still in DB
     expect(remaining).toContain(shotIds[2])
+
+    // but not visible in the queue
+    const visible = getVisibleQueue()
+    expect(visible.map((s) => s.id)).not.toContain(shotIds[1])
+    expect(visible.map((s) => s.id)).toContain(shotIds[0])
+    expect(visible.map((s) => s.id)).toContain(shotIds[2])
   })
 
   it('does nothing when there is no next shot', () => {
@@ -224,6 +243,20 @@ describe('skipNext', () => {
     // not started
     expect(() => skipNext(db)).toThrow('Cannot skip: not running')
     void rundownId
+  })
+
+  it('liveQueue is populated after startLive', () => {
+    const { rundownId } = seedRundownWithShots(db, 3)
+    startLive(db, rundownId)
+    expect(getLiveQueue()).toHaveLength(3)
+    expect(getVisibleQueue()).toHaveLength(3)
+  })
+
+  it('liveQueue is cleared after stopLive', () => {
+    const { rundownId } = seedRundownWithShots(db, 3)
+    startLive(db, rundownId)
+    stopLive(db)
+    expect(getLiveQueue()).toHaveLength(0)
   })
 })
 
