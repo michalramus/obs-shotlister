@@ -1,7 +1,7 @@
 import { Server } from 'socket.io'
 import type { Server as HttpServer } from 'http'
 import type { Database } from 'better-sqlite3'
-import { getLiveState } from '../ipc/live'
+import { getLiveState, getLiveQueue, getVisibleQueue } from '../ipc/live'
 import { listShots } from '../ipc/shots'
 import { getRundown } from '../ipc/rundowns'
 import { listCameras } from '../ipc/projects'
@@ -13,7 +13,7 @@ export interface RundownStatePayload {
   cameras: Camera[]
 }
 
-function buildRundownState(db: Database): RundownStatePayload {
+function buildRundownState(db: Database, shotsOverride?: Shot[]): RundownStatePayload {
   const liveState = getLiveState(db)
   const rundownId = liveState.rundownId
   if (!rundownId) {
@@ -27,7 +27,7 @@ function buildRundownState(db: Database): RundownStatePayload {
   const rundown = getRundown(db, rundownId)
   if (!rundown) return { rundown: null, shots: [], cameras: [] }
 
-  const shots = listShots(db, rundownId)
+  const shots = shotsOverride ?? listShots(db, rundownId)
   const cameras = listCameras(db, rundown.projectId)
   return { rundown, shots, cameras }
 }
@@ -49,7 +49,13 @@ export function attachSocketServer(httpServer: HttpServer, db?: Database): Serve
           startedAt: liveState.startedAt,
         })
         socket.emit('state:playback', { running: liveState.running })
-        socket.emit('state:rundown', buildRundownState(db))
+
+        let shotsOverride: Shot[] | undefined
+        if (getLiveQueue().length > 0 && liveState.rundownId) {
+          const visibleIds = new Set(getVisibleQueue().map((s) => s.id))
+          shotsOverride = listShots(db, liveState.rundownId).filter((s) => visibleIds.has(s.id))
+        }
+        socket.emit('state:rundown', buildRundownState(db, shotsOverride))
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('[socket.io] error sending initial state:', err)
@@ -65,9 +71,9 @@ export function attachSocketServer(httpServer: HttpServer, db?: Database): Serve
   return io
 }
 
-export function broadcastRundownState(io: Server, db: Database): void {
+export function broadcastRundownState(io: Server, db: Database, shotsOverride?: Shot[]): void {
   try {
-    io.emit('state:rundown', buildRundownState(db))
+    io.emit('state:rundown', buildRundownState(db, shotsOverride))
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[socket.io] broadcastRundownState error:', err)
