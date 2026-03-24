@@ -1,7 +1,7 @@
 import { Server } from 'socket.io'
 import type { Server as HttpServer } from 'http'
 import type { Database } from 'better-sqlite3'
-import { getLiveState, getLiveQueue, getVisibleQueue } from '../ipc/live'
+import { getLiveState, getLiveQueue } from '../ipc/live'
 import { listShots } from '../ipc/shots'
 import { getRundown } from '../ipc/rundowns'
 import { listCameras } from '../ipc/projects'
@@ -52,8 +52,8 @@ export function attachSocketServer(httpServer: HttpServer, db?: Database): Serve
 
         let shotsOverride: Shot[] | undefined
         if (getLiveQueue().length > 0 && liveState.rundownId) {
-          const visibleIds = new Set(getVisibleQueue().map((s) => s.id))
-          shotsOverride = listShots(db, liveState.rundownId).filter((s) => visibleIds.has(s.id))
+          const hiddenIds = new Set(getLiveQueue().filter((s) => s.hidden).map((s) => s.id))
+          shotsOverride = listShots(db, liveState.rundownId).map((s) => ({ ...s, hidden: hiddenIds.has(s.id) }))
         }
         socket.emit('state:rundown', buildRundownState(db, shotsOverride))
       } catch (err) {
