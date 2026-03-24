@@ -107,7 +107,7 @@ export function computeTiming(
   // between liveIndex and nextVisibleIndex (exclusive of both endpoints)
   let intermediateMs = 0
   for (let i = liveIndex + 1; i < nextVisibleIndex; i++) {
-    intermediateMs += shots[i].durationMs
+    if (!shots[i].hidden) intermediateMs += shots[i].durationMs
   }
 
   const timeUntilNextVisibleMs = remainingMs + intermediateMs

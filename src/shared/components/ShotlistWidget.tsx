@@ -221,6 +221,9 @@ export function ShotlistWidget({
 
   const visibleShots = shots.filter((s) => !s.hidden && passesFilter(s))
 
+  const liveShot = timing.liveIndex !== null ? shots[timing.liveIndex] : null
+  const showNextBar = hasFilter && (liveShot == null || !passesFilter(liveShot))
+
   const headerCountdown = timing.remainingMs !== null ? formatMs(timing.remainingMs) : '--:--'
 
   return (
@@ -250,7 +253,7 @@ export function ShotlistWidget({
             if (isLive && timing.remainingMs !== null) {
               timeLabel = formatMs(timing.remainingMs)
               progressPct = 1 - timing.remainingMs / (timing.effectiveDurationMs ?? shot.durationMs)
-            } else if (isNext && timing.timeUntilNextVisibleMs !== null) {
+            } else if (isNext && showNextBar && timing.timeUntilNextVisibleMs !== null) {
               timeLabel = formatMs(timing.timeUntilNextVisibleMs)
               // Use the total wait captured when this shot first became "next".
               // progressPct = 1 - (remaining / original total) so the bar fills
