@@ -62,7 +62,9 @@ export function createOBSClient(): OBSClient {
     },
     async setCurrentSceneTransition(name: string, durationMs: number): Promise<void> {
       await obs.call('SetCurrentSceneTransition', { transitionName: name })
-      await obs.call('SetCurrentSceneTransitionDuration', { transitionDuration: durationMs })
+      if (durationMs > 0) {
+        await obs.call('SetCurrentSceneTransitionDuration', { transitionDuration: durationMs })
+      }
     },
     onStatusChange(cb: (status: OBSConnectionStatus) => void): void {
       listeners.push(cb)
