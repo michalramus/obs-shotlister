@@ -46,7 +46,7 @@ export function attachSocketServer(httpServer: HttpServer, db?: Database): Serve
         const liveState = getLiveState(db)
         socket.emit('state:live', {
           liveIndex: liveState.liveIndex,
-          startedAt: liveState.startedAt,
+          elapsedMs: liveState.startedAt !== null ? Date.now() - liveState.startedAt : null,
         })
         socket.emit('state:playback', { running: liveState.running })
 

@@ -24,7 +24,7 @@ export interface WebStore {
 
   // Actions
   setRundownState: (data: { rundown: Rundown | null; shots: Shot[]; cameras: Camera[] }) => void
-  setLiveState: (data: { liveIndex: number | null; startedAt: number | null }) => void
+  setLiveState: (data: { liveIndex: number | null; elapsedMs: number | null }) => void
   setPlayback: (data: { running: boolean }) => void
   setConnected: (connected: boolean) => void
   setCameraFilter: (num: number | null) => void
@@ -51,11 +51,10 @@ export const useWebStore = create<WebStore>((set) => ({
     })
   },
 
-  setLiveState: (data) =>
-    set({
-      liveIndex: data.liveIndex,
-      startedAt: data.startedAt,
-    }),
+  setLiveState: (data) => {
+    const clientStartedAt = data.elapsedMs !== null ? Date.now() - data.elapsedMs : null
+    set({ liveIndex: data.liveIndex, startedAt: clientStartedAt })
+  },
 
   setPlayback: (data) => set({ running: data.running }),
 

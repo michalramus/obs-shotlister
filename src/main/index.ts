@@ -374,7 +374,7 @@ function broadcastLiveState(state: LiveState): void {
   if (!_io) return
   _io.emit('state:live', {
     liveIndex: state.liveIndex,
-    startedAt: state.startedAt,
+    elapsedMs: state.startedAt !== null ? Date.now() - state.startedAt : null,
   })
   _io.emit('state:playback', { running: state.running })
 }

@@ -104,7 +104,7 @@ export default function App(): React.JSX.Element {
 
     socket.on(
       'state:live',
-      (data: { liveIndex: number | null; startedAt: number | null }) => {
+      (data: { liveIndex: number | null; elapsedMs: number | null }) => {
         setLiveState(data)
       },
     )

@@ -241,6 +241,7 @@ export default function App(): React.JSX.Element {
                   startedAt={startedAt}
                   running={running}
                   showNextBackground
+                  autoScroll
                 />
               </div>
             )}

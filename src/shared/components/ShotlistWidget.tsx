@@ -11,6 +11,7 @@ export interface ShotlistWidgetProps {
   running: boolean
   cameraFilter?: number[]
   showNextBackground?: boolean
+  autoScroll?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -22,7 +23,7 @@ const s = {
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     background: '#1a1a1a',
     borderRadius: '6px',
-    overflow: 'clip', // clip for border-radius but don't intercept scrollIntoView
+    overflow: 'hidden',
   } satisfies React.CSSProperties,
 
   header: {
@@ -191,6 +192,7 @@ export function ShotlistWidget({
   running,
   cameraFilter,
   showNextBackground = false,
+  autoScroll = false,
 }: ShotlistWidgetProps): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now())
   const [headerFlash, setHeaderFlash] = useState(false)
@@ -247,8 +249,9 @@ export function ShotlistWidget({
 
   // Auto-scroll to live shot when displayed index changes (after transition delay)
   useEffect(() => {
+    if (!autoScroll) return
     liveRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [displayedLiveIndex])
+  }, [displayedLiveIndex, autoScroll])
 
   // Flash header white when displayed camera changes (after transition delay)
   useEffect(() => {
