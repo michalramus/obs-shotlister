@@ -13,3 +13,12 @@ export function saveObsSettings(db: Database.Database, url: string, password: st
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('obs_url', url)
   db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('obs_password', password)
 }
+
+export function getObsEnabled(db: Database.Database): boolean {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('obs_enabled') as { value: string } | undefined
+  return row?.value === 'true'
+}
+
+export function setObsEnabled(db: Database.Database, enabled: boolean): void {
+  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('obs_enabled', enabled ? 'true' : 'false')
+}

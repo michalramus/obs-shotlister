@@ -22,7 +22,7 @@ import { parseResolveCSV, confirmResolveImport } from './ipc/resolve-import'
 import type { ConfirmImportInput } from './ipc/resolve-import'
 import { createOBSClient } from './obs/client'
 import type { OBSConnectionStatus } from './obs/client'
-import { getObsSettings, saveObsSettings } from './ipc/settings'
+import { getObsSettings, saveObsSettings, getObsEnabled, setObsEnabled } from './ipc/settings'
 
 const obsClient = createOBSClient()
 let obsAutoReconnect = false
@@ -244,6 +244,21 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('obs:status', () => ({ status: obsClient.status }))
 
+  ipcMain.handle('obs:getEnabled', () => getObsEnabled(db))
+
+  ipcMain.handle('obs:setEnabled', (_e, enabled: boolean) => {
+    setObsEnabled(db, enabled)
+    if (enabled) {
+      obsAutoReconnect = true
+      const { url, password } = getObsSettings(db)
+      obsClient.connect(url, password || undefined).catch(() => {})
+    } else {
+      obsAutoReconnect = false
+      if (obsReconnectTimer) { clearTimeout(obsReconnectTimer); obsReconnectTimer = null }
+      obsClient.disconnect()
+    }
+  })
+
   ipcMain.handle('obs:getTransitions', async () => {
     try { return await obsClient.getTransitionList() } catch { return [] }
   })
@@ -371,6 +386,12 @@ app.whenReady().then(() => {
   const io = startServer(_db)
   if (io) setSocketServer(io)
   createWindow()
+
+  if (getObsEnabled(_db)) {
+    obsAutoReconnect = true
+    const { url, password } = getObsSettings(_db)
+    obsClient.connect(url, password || undefined).catch(() => {})
+  }
 
   obsClient.onStatusChange((status: OBSConnectionStatus) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send('obs:status', { status })

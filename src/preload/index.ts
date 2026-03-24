@@ -111,6 +111,8 @@ const api: ElectronApi = {
     checkScenes: () => ipcRenderer.invoke('obs:checkScenes'),
     getScenes: () => ipcRenderer.invoke('obs:getScenes'),
     getTransitions: () => ipcRenderer.invoke('obs:getTransitions'),
+    getEnabled: () => ipcRenderer.invoke('obs:getEnabled'),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('obs:setEnabled', enabled),
     onStatusChange: (cb) => { ipcRenderer.on('obs:status', (_event, d: { status: OBSConnectionStatus }) => cb(d.status)) },
   },
 }

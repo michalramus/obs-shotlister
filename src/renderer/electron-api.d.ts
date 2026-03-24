@@ -103,6 +103,8 @@ export interface ElectronApi {
     checkScenes: () => Promise<{ allMapped: boolean; missing: string[] }>
     getScenes: () => Promise<string[]>
     getTransitions: () => Promise<string[]>
+    getEnabled: () => Promise<boolean>
+    setEnabled: (enabled: boolean) => Promise<void>
     onStatusChange: (cb: (status: OBSConnectionStatus) => void) => void
   }
 }

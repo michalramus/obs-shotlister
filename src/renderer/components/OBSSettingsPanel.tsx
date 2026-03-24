@@ -102,6 +102,37 @@ const s = {
     color: '#e74c3c',
     fontSize: '13px',
   } satisfies React.CSSProperties,
+
+  toggleRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    fontSize: '14px',
+    color: '#ccc',
+  } satisfies React.CSSProperties,
+
+  toggleTrack: (on: boolean): React.CSSProperties => ({
+    width: '44px',
+    height: '24px',
+    borderRadius: '12px',
+    background: on ? '#27ae60' : '#555',
+    border: 'none',
+    cursor: 'pointer',
+    position: 'relative',
+    flexShrink: 0,
+    transition: 'background 0.2s',
+  }),
+
+  toggleThumb: (on: boolean): React.CSSProperties => ({
+    position: 'absolute',
+    top: '2px',
+    left: on ? '22px' : '2px',
+    width: '20px',
+    height: '20px',
+    borderRadius: '50%',
+    background: '#fff',
+    transition: 'left 0.15s',
+  }),
 }
 
 interface OBSSettingsPanelProps {
@@ -117,6 +148,7 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [scenesResult, setScenesResult] = useState<{ allMapped: boolean; missing: string[] } | null>(null)
+  const [obsEnabled, setObsEnabled] = useState(false)
 
   useEffect(() => {
     window.api.obs.getSettings().then((settings) => {
@@ -124,7 +156,15 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
       setPassword(settings.password)
     }).catch((err: unknown) => console.error('[OBSSettingsPanel] getSettings:', err))
     window.api.obs.getStatus().then((r) => setObsStatus(r.status)).catch(() => {})
+    window.api.obs.getEnabled().then(setObsEnabled).catch(() => {})
   }, [setObsStatus])
+
+  async function handleToggle(enabled: boolean): Promise<void> {
+    setObsEnabled(enabled)
+    setError(null)
+    setScenesResult(null)
+    await window.api.obs.setEnabled(enabled)
+  }
 
   async function handleConnect(): Promise<void> {
     setLoading(true)
@@ -158,6 +198,17 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
           <button style={s.closeBtn} onClick={onClose} aria-label="Close">x</button>
         </div>
 
+        <div style={s.toggleRow}>
+          <button
+            style={s.toggleTrack(obsEnabled)}
+            onClick={() => void handleToggle(!obsEnabled)}
+            aria-label={obsEnabled ? 'Disable OBS' : 'Enable OBS'}
+          >
+            <span style={s.toggleThumb(obsEnabled)} />
+          </button>
+          <span>OBS enabled</span>
+        </div>
+
         <div>
           <label style={s.label}>WebSocket URL</label>
           <input
@@ -165,7 +216,7 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="ws://localhost:4455"
-            disabled={obsStatus === 'connected'}
+            disabled={!obsEnabled || obsStatus === 'connected'}
           />
         </div>
         <div>
@@ -175,7 +226,7 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            disabled={obsStatus === 'connected'}
+            disabled={!obsEnabled || obsStatus === 'connected'}
           />
         </div>
 
