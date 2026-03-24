@@ -219,7 +219,7 @@ export function ShotlistWidget({
     return num !== undefined && cameraFilter!.includes(num)
   }
 
-  const visibleShots = shots.filter(passesFilter)
+  const visibleShots = shots.filter((s) => !s.hidden && passesFilter(s))
 
   const headerCountdown = timing.remainingMs !== null ? formatMs(timing.remainingMs) : '--:--'
 
@@ -249,7 +249,7 @@ export function ShotlistWidget({
 
             if (isLive && timing.remainingMs !== null) {
               timeLabel = formatMs(timing.remainingMs)
-              progressPct = 1 - timing.remainingMs / shot.durationMs
+              progressPct = 1 - timing.remainingMs / (timing.effectiveDurationMs ?? shot.durationMs)
             } else if (isNext && timing.timeUntilNextVisibleMs !== null) {
               timeLabel = formatMs(timing.timeUntilNextVisibleMs)
               // Use the total wait captured when this shot first became "next".
