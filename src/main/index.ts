@@ -177,6 +177,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('live:skip-next', () => {
     const state = skipNext(db)
     broadcastLiveState(state)
+    broadcastRundown()
     switchOBSPreview(state, db).catch(console.error)
     return state
   })
@@ -218,7 +219,11 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('obs:connect', async () => {
     const settings = getObsSettings(db)
-    await obsClient.connect(settings.url, settings.password)
+    try {
+      await obsClient.connect(settings.url, settings.password)
+    } catch (err) {
+      throw new Error(err instanceof Error ? (err.message || 'Connection failed') : String(err))
+    }
   })
 
   ipcMain.handle('obs:disconnect', () => { obsClient.disconnect() })
@@ -248,11 +253,9 @@ function registerIpcHandlers(): void {
 // OBS scene switching helpers
 // ---------------------------------------------------------------------------
 
-function findNextNonSkippedIdx(shots: Array<{ id: string }>, fromIndex: number, skippedIds: string[]): number | null {
-  for (let i = fromIndex + 1; i < shots.length; i++) {
-    if (!skippedIds.includes(shots[i].id)) return i
-  }
-  return null
+function findNextIdx(shots: Array<{ id: string }>, fromIndex: number): number | null {
+  const next = fromIndex + 1
+  return next < shots.length ? next : null
 }
 
 import type { LiveState } from './ipc/live'
@@ -264,7 +267,7 @@ async function switchOBSScenes(state: LiveState, database: ReturnType<typeof get
   if (liveCamera?.obsScene) {
     obsClient.setCurrentProgramScene(liveCamera.obsScene).catch((e: unknown) => console.error('[OBS] program:', e))
   }
-  const nextIdx = findNextNonSkippedIdx(shots, state.liveIndex, state.skippedIds)
+  const nextIdx = findNextIdx(shots, state.liveIndex)
   if (nextIdx !== null) {
     const nextCamera = getCameraById(database, shots[nextIdx].cameraId)
     if (nextCamera?.obsScene) {
@@ -276,7 +279,7 @@ async function switchOBSScenes(state: LiveState, database: ReturnType<typeof get
 async function switchOBSPreview(state: LiveState, database: ReturnType<typeof getDatabase>): Promise<void> {
   if (obsClient.status !== 'connected' || !state.running || state.liveIndex === null || !state.rundownId) return
   const shots = listShots(database, state.rundownId)
-  const nextIdx = findNextNonSkippedIdx(shots, state.liveIndex, state.skippedIds)
+  const nextIdx = findNextIdx(shots, state.liveIndex)
   if (nextIdx !== null) {
     const nextCamera = getCameraById(database, shots[nextIdx].cameraId)
     if (nextCamera?.obsScene) {
@@ -304,7 +307,6 @@ function broadcastLiveState(state: LiveState): void {
   _io.emit('state:live', {
     liveIndex: state.liveIndex,
     startedAt: state.startedAt,
-    skippedIds: state.skippedIds,
   })
   _io.emit('state:playback', { running: state.running })
 }

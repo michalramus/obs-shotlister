@@ -47,7 +47,6 @@ export function attachSocketServer(httpServer: HttpServer, db?: Database): Serve
         socket.emit('state:live', {
           liveIndex: liveState.liveIndex,
           startedAt: liveState.startedAt,
-          skippedIds: liveState.skippedIds,
         })
         socket.emit('state:playback', { running: liveState.running })
         socket.emit('state:rundown', buildRundownState(db))
