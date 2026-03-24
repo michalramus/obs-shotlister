@@ -201,7 +201,7 @@ export function ShotlistWidget({
   // This keeps the bar stable when operator advances filtered-out shots.
   const nextTotalWaitRef = useRef<number | null>(null)
   const prevNextVisibleIndexRef = useRef<number | null | undefined>(undefined)
-  const postTransitionRef = useRef<{
+  const [postTransition, setPostTransition] = useState<{
     shotIndex: number
     startedAt: number
     durationMs: number
@@ -266,13 +266,13 @@ export function ShotlistWidget({
     prevLiveIndexRef.current = liveIndex
 
     if (liveIndex === null || prevIdx === null) {
-      postTransitionRef.current = null
+      setPostTransition(null)
       return
     }
 
     const filter = cameraFilterRef.current
     if (!filter || filter.length === 0) {
-      postTransitionRef.current = null
+      setPostTransition(null)
       return
     }
 
@@ -280,14 +280,14 @@ export function ShotlistWidget({
     const allCameras = camerasRef.current
     const newShot = allShots[liveIndex]
     if (!newShot || newShot.transitionMs === 0) {
-      postTransitionRef.current = null
+      setPostTransition(null)
       return
     }
 
     const camNumById = new Map(allCameras.map((c) => [c.id, c.number]))
     const newShotNum = camNumById.get(newShot.cameraId)
     if (newShotNum !== undefined && filter.includes(newShotNum)) {
-      postTransitionRef.current = null
+      setPostTransition(null)
       return
     }
 
@@ -298,12 +298,12 @@ export function ShotlistWidget({
       else break
     }
 
-    postTransitionRef.current = {
+    setPostTransition({
       shotIndex: prevIdx,
       startedAt: Date.now(),
       durationMs: newShot.transitionMs,
       effectiveDurationMs,
-    }
+    })
   }, [liveIndex])
 
   const timing = computeTiming(shots, cameras, liveIndex, startedAt, now, cameraFilter)
@@ -344,7 +344,7 @@ export function ShotlistWidget({
   const visibleShots = shots.filter((s) => !s.hidden && passesFilter(s))
 
   // Post-transition override: keep previous shot as "live" during transition
-  const postTrans = postTransitionRef.current
+  const postTrans = postTransition
   const isPostTransitionActive = postTrans !== null && (now - postTrans.startedAt) < postTrans.durationMs
   const effectiveLiveIndex = isPostTransitionActive ? postTrans.shotIndex : timing.liveIndex
   // Don't show filteredNextTransitionMs preview while post-transition is already running
