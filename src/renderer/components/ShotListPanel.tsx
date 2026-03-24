@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -293,6 +293,7 @@ interface SortableShotRowProps {
   isLocked: boolean
   isSkipped: boolean
   isLive: boolean
+  liveRefCallback?: (el: HTMLLIElement | null) => void
   onEdit: (shot: Shot) => void
   onDelete: (shot: Shot) => void
 }
@@ -303,6 +304,7 @@ function SortableShotRow({
   isLocked,
   isSkipped,
   isLive,
+  liveRefCallback,
   onEdit,
   onDelete,
 }: SortableShotRowProps): React.JSX.Element {
@@ -324,7 +326,11 @@ function SortableShotRow({
   }
 
   return (
-    <li ref={setNodeRef} style={style} data-testid="shot-row">
+    <li
+      ref={(el) => { setNodeRef(el); liveRefCallback?.(el) }}
+      style={style}
+      data-testid="shot-row"
+    >
       {!isLocked && (
         <span style={s.dragHandle} {...attributes} {...listeners} aria-label="Drag to reorder">
           ⠿
@@ -380,6 +386,13 @@ export function ShotListPanel(): React.JSX.Element {
 
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingShot, setEditingShot] = useState<Shot | null>(null)
+
+  const liveDomRef = useRef<HTMLLIElement | null>(null)
+  const setLiveRef = useCallback((el: HTMLLIElement | null) => { liveDomRef.current = el }, [])
+
+  useEffect(() => {
+    liveDomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [liveIndex])
 
   const sensors = useSensors(useSensor(PointerSensor))
 
@@ -502,6 +515,7 @@ export function ShotListPanel(): React.JSX.Element {
                   isLocked={running}
                   isSkipped={skippedIds.includes(shot.id)}
                   isLive={liveIndex === shots.indexOf(shot)}
+                  liveRefCallback={liveIndex === shots.indexOf(shot) ? setLiveRef : undefined}
                   onEdit={(s) => { setEditingShot(s); setShowAddForm(false) }}
                   onDelete={(s) => void handleDelete(s)}
                 />

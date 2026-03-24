@@ -22,7 +22,7 @@ const s = {
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     background: '#1a1a1a',
     borderRadius: '6px',
-    overflow: 'hidden',
+    overflow: 'clip', // clip for border-radius but don't intercept scrollIntoView
   } satisfies React.CSSProperties,
 
   header: {
@@ -167,6 +167,11 @@ export function ShotlistWidget({
   const [now, setNow] = useState(() => Date.now())
   const rafRef = useRef<number | null>(null)
   const liveRef = useRef<HTMLLIElement | null>(null)
+  // Track total wait for the current "next visible shot" period.
+  // Reset only when nextVisibleIndex changes (not when startedAt changes).
+  // This keeps the bar stable when operator advances filtered-out shots.
+  const nextTotalWaitRef = useRef<number | null>(null)
+  const prevNextVisibleIndexRef = useRef<number | null | undefined>(undefined)
 
   // 60fps ticker when running
   useEffect(() => {
@@ -198,10 +203,17 @@ export function ShotlistWidget({
 
   // Auto-scroll to live shot when liveIndex changes
   useEffect(() => {
-    liveRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    liveRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [liveIndex])
 
   const timing = computeTiming(shots, cameras, liveIndex, startedAt, now, cameraFilter)
+
+  // When the next visible shot changes, capture the total wait for that new period.
+  // Stays fixed while nextVisibleIndex is the same, so the bar never resets mid-wait.
+  if (timing.nextVisibleIndex !== prevNextVisibleIndexRef.current) {
+    prevNextVisibleIndexRef.current = timing.nextVisibleIndex
+    nextTotalWaitRef.current = timing.timeUntilNextVisibleMs
+  }
 
   const cameraById = new Map(cameras.map((c) => [c.id, c]))
   const cameraNumberById = new Map(cameras.map((c) => [c.id, c.number]))
@@ -248,10 +260,13 @@ export function ShotlistWidget({
               progressPct = 1 - timing.remainingMs / shot.durationMs
             } else if (isNext && timing.timeUntilNextVisibleMs !== null) {
               timeLabel = formatMs(timing.timeUntilNextVisibleMs)
-              const liveShot = shots[timing.liveIndex!]
-              const totalWait = liveShot.durationMs + timing.timeUntilNextVisibleMs! - timing.remainingMs!
-              const elapsed = now - (startedAt ?? now)
-              progressPct = Math.min(1, Math.max(0, elapsed / totalWait))
+              // Use the total wait captured when this shot first became "next".
+              // progressPct = 1 - (remaining / original total) so the bar fills
+              // monotonically and never resets when operator advances filtered shots.
+              const totalWait = nextTotalWaitRef.current ?? timing.timeUntilNextVisibleMs
+              progressPct = totalWait > 0
+                ? Math.min(1, Math.max(0, 1 - timing.timeUntilNextVisibleMs / totalWait))
+                : 1
             }
 
             return (
