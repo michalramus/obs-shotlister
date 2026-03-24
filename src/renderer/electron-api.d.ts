@@ -15,6 +15,8 @@ export interface CreateShotInput {
   cameraId: string
   durationMs: number
   label?: string | null
+  transitionName?: string | null
+  transitionMs?: number
 }
 
 export interface UpdateShotInput {
@@ -22,6 +24,8 @@ export interface UpdateShotInput {
   cameraId?: string
   durationMs?: number
   label?: string | null
+  transitionName?: string | null
+  transitionMs?: number
 }
 
 export interface LiveState {
@@ -97,6 +101,8 @@ export interface ElectronApi {
     disconnect: () => Promise<void>
     getStatus: () => Promise<{ status: OBSConnectionStatus }>
     checkScenes: () => Promise<{ allMapped: boolean; missing: string[] }>
+    getScenes: () => Promise<string[]>
+    getTransitions: () => Promise<string[]>
     onStatusChange: (cb: (status: OBSConnectionStatus) => void) => void
   }
 }

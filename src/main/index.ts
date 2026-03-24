@@ -237,6 +237,14 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('obs:status', () => ({ status: obsClient.status }))
 
+  ipcMain.handle('obs:getTransitions', async () => {
+    try { return await obsClient.getTransitionList() } catch { return [] }
+  })
+
+  ipcMain.handle('obs:getScenes', async () => {
+    try { return await obsClient.getSceneList() } catch { return [] }
+  })
+
   ipcMain.handle('obs:checkScenes', async () => {
     const liveState = getLiveState(db)
     if (!liveState.projectId) return { allMapped: false, missing: [] }
@@ -265,16 +273,35 @@ import type { LiveState } from './ipc/live'
 async function switchOBSScenes(state: LiveState, database: ReturnType<typeof getDatabase>): Promise<void> {
   if (obsClient.status !== 'connected' || !state.running || state.liveIndex === null || !state.rundownId) return
   const allShots = listShots(database, state.rundownId)
-  const liveCamera = getCameraById(database, allShots[state.liveIndex].cameraId)
+  const liveShot = allShots[state.liveIndex]
+  const liveCamera = getCameraById(database, liveShot.cameraId)
+
+  const transitionName = liveShot.transitionName ?? 'Cut'
+  const transitionMs = liveShot.transitionMs ?? 0
+
   if (liveCamera?.obsScene) {
+    try {
+      await obsClient.setCurrentSceneTransition(transitionName, transitionMs)
+    } catch (e: unknown) {
+      console.error('[OBS] setTransition:', e)
+    }
     obsClient.setCurrentProgramScene(liveCamera.obsScene).catch((e: unknown) => console.error('[OBS] program:', e))
   }
+
   const hiddenIds = new Set(getLiveQueue().filter((s) => s.hidden).map((s) => s.id))
-  const nextShot = allShots.slice(state.liveIndex + 1).find((s) => !hiddenIds.has(s.id))
-  if (nextShot) {
-    const nextCamera = getCameraById(database, nextShot.cameraId)
+  const nextVisibleShot = allShots.slice(state.liveIndex + 1).find((s) => !hiddenIds.has(s.id))
+
+  if (nextVisibleShot) {
+    const nextCamera = getCameraById(database, nextVisibleShot.cameraId)
     if (nextCamera?.obsScene) {
-      obsClient.setCurrentPreviewScene(nextCamera.obsScene).catch((e: unknown) => console.error('[OBS] preview:', e))
+      const previewScene = nextCamera.obsScene
+      if (transitionMs > 0) {
+        setTimeout(() => {
+          obsClient.setCurrentPreviewScene(previewScene).catch((e: unknown) => console.error('[OBS] preview:', e))
+        }, transitionMs)
+      } else {
+        obsClient.setCurrentPreviewScene(previewScene).catch((e: unknown) => console.error('[OBS] preview:', e))
+      }
     }
   }
 }

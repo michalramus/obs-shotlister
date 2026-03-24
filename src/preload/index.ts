@@ -56,6 +56,8 @@ export interface ElectronApi {
     disconnect: () => Promise<void>
     getStatus: () => Promise<{ status: OBSConnectionStatus }>
     checkScenes: () => Promise<{ allMapped: boolean; missing: string[] }>
+    getScenes: () => Promise<string[]>
+    getTransitions: () => Promise<string[]>
     onStatusChange: (cb: (status: OBSConnectionStatus) => void) => void
   }
 }
@@ -107,6 +109,8 @@ const api: ElectronApi = {
     disconnect: () => ipcRenderer.invoke('obs:disconnect'),
     getStatus: () => ipcRenderer.invoke('obs:status'),
     checkScenes: () => ipcRenderer.invoke('obs:checkScenes'),
+    getScenes: () => ipcRenderer.invoke('obs:getScenes'),
+    getTransitions: () => ipcRenderer.invoke('obs:getTransitions'),
     onStatusChange: (cb) => { ipcRenderer.on('obs:status', (_event, d: { status: OBSConnectionStatus }) => cb(d.status)) },
   },
 }
