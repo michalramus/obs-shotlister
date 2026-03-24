@@ -213,9 +213,10 @@ export function ShotlistWidget({
   const camerasRef = useRef(cameras)
   const cameraFilterRef = useRef(cameraFilter)
 
-  // 60fps ticker when running
+  // 60fps ticker when running OR during post-transition animation
+  const shouldTick = running || postTransition !== null
   useEffect(() => {
-    if (!running) {
+    if (!shouldTick) {
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current)
         rafRef.current = null
@@ -239,7 +240,7 @@ export function ShotlistWidget({
         rafRef.current = null
       }
     }
-  }, [running])
+  }, [shouldTick])
 
   // Auto-scroll to live shot when liveIndex changes
   useEffect(() => {
@@ -304,6 +305,9 @@ export function ShotlistWidget({
       durationMs: newShot.transitionMs,
       effectiveDurationMs,
     })
+
+    const timer = setTimeout(() => setPostTransition(null), newShot.transitionMs)
+    return () => clearTimeout(timer)
   }, [liveIndex])
 
   const timing = computeTiming(shots, cameras, liveIndex, startedAt, now, cameraFilter)
