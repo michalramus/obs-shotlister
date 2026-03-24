@@ -259,11 +259,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
   liveStop: async () => {
     const state = await window.api.live.stop()
     get().setLiveState(state)
+    const { activeRundownId } = get()
+    if (activeRundownId) await get().loadShots(activeRundownId)
   },
 
   liveNext: async () => {
     const state = await window.api.live.next()
     get().setLiveState(state)
+    const { activeRundownId } = get()
+    if (activeRundownId) await get().loadShots(activeRundownId)
   },
 
   liveSkipNext: async () => {
@@ -276,5 +280,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   liveRestart: async () => {
     const state = await window.api.live.restart()
     get().setLiveState(state)
+    const { activeRundownId } = get()
+    if (activeRundownId) await get().loadShots(activeRundownId)
   },
 }))
