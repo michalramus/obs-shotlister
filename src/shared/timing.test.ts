@@ -36,8 +36,8 @@ describe('formatMs', () => {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeShot(id: string, cameraId: string, durationMs: number, orderIndex: number): Shot {
-  return { id, rundownId: 'rd-1', cameraId, durationMs, label: null, orderIndex }
+function makeShot(id: string, cameraId: string, durationMs: number, orderIndex: number, hidden = false): Shot {
+  return { id, rundownId: 'rd-1', cameraId, durationMs, label: null, orderIndex, hidden }
 }
 
 function makeCamera(id: string, number: number): Camera {
@@ -57,6 +57,7 @@ describe('computeTiming — not running', () => {
     expect(result.remainingMs).toBeNull()
     expect(result.nextVisibleIndex).toBeNull()
     expect(result.timeUntilNextVisibleMs).toBeNull()
+    expect(result.effectiveDurationMs).toBeNull()
   })
 })
 
@@ -72,6 +73,7 @@ describe('computeTiming — remaining time', () => {
     const now = 3000 // 2 seconds elapsed
     const result = computeTiming(shots, cameras, 0, startedAt, now)
     expect(result.remainingMs).toBe(8000) // 10000 - 2000
+    expect(result.effectiveDurationMs).toBe(10000)
   })
 
   it('clamps remaining to 0 when time has passed', () => {
@@ -79,6 +81,7 @@ describe('computeTiming — remaining time', () => {
     const cameras = [makeCamera('cam-1', 1)]
     const result = computeTiming(shots, cameras, 0, 0, 10000) // 10 seconds elapsed on 5s shot
     expect(result.remainingMs).toBe(0)
+    expect(result.effectiveDurationMs).toBe(5000)
   })
 })
 
@@ -100,6 +103,7 @@ describe('computeTiming — no filter', () => {
     expect(result.nextVisibleIndex).toBe(1)
     expect(result.remainingMs).toBe(8000)     // 10000 - 2000
     expect(result.timeUntilNextVisibleMs).toBe(8000) // no intermediate shots
+    expect(result.effectiveDurationMs).toBe(10000)
   })
 
   it('includes intermediate shot durations in timeUntilLive', () => {
@@ -161,5 +165,68 @@ describe('computeTiming — with camera filter', () => {
     const result = computeTiming(shots, cameras, 0, 0, 2000, [1])
     // remaining = 8000, intermediates = 3000 + 2000 = 5000
     expect(result.timeUntilNextVisibleMs).toBe(13000)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// computeTiming — effectiveDurationMs (hidden shots)
+// ---------------------------------------------------------------------------
+
+describe('computeTiming — effectiveDurationMs', () => {
+  it('equals live shot duration when no hidden shots follow', () => {
+    const shots = [
+      makeShot('s1', 'cam-1', 10000, 0),
+      makeShot('s2', 'cam-2', 5000, 1),
+    ]
+    const cameras = [makeCamera('cam-1', 1), makeCamera('cam-2', 2)]
+    const result = computeTiming(shots, cameras, 0, 0, 2000)
+    expect(result.effectiveDurationMs).toBe(10000)
+  })
+
+  it('accumulates one consecutive hidden shot', () => {
+    const shots = [
+      makeShot('s1', 'cam-1', 10000, 0),
+      makeShot('s2', 'cam-2', 3000, 1, true), // hidden
+      makeShot('s3', 'cam-1', 5000, 2),
+    ]
+    const cameras = [makeCamera('cam-1', 1), makeCamera('cam-2', 2)]
+    const result = computeTiming(shots, cameras, 0, 0, 2000)
+    expect(result.effectiveDurationMs).toBe(13000) // 10000 + 3000
+    expect(result.remainingMs).toBe(11000)          // 13000 - 2000
+  })
+
+  it('accumulates multiple consecutive hidden shots', () => {
+    const shots = [
+      makeShot('s1', 'cam-1', 10000, 0),
+      makeShot('s2', 'cam-2', 3000, 1, true),
+      makeShot('s3', 'cam-2', 2000, 2, true),
+      makeShot('s4', 'cam-1', 5000, 3),
+    ]
+    const cameras = [makeCamera('cam-1', 1), makeCamera('cam-2', 2)]
+    const result = computeTiming(shots, cameras, 0, 0, 2000)
+    expect(result.effectiveDurationMs).toBe(15000) // 10000 + 3000 + 2000
+  })
+
+  it('stops accumulating at first non-hidden shot', () => {
+    const shots = [
+      makeShot('s1', 'cam-1', 10000, 0),
+      makeShot('s2', 'cam-2', 3000, 1, true),
+      makeShot('s3', 'cam-1', 4000, 2),          // NOT hidden — stop here
+      makeShot('s4', 'cam-2', 2000, 3, true),
+    ]
+    const cameras = [makeCamera('cam-1', 1), makeCamera('cam-2', 2)]
+    const result = computeTiming(shots, cameras, 0, 0, 2000)
+    expect(result.effectiveDurationMs).toBe(13000) // 10000 + 3000 only
+  })
+
+  it('hidden shots are excluded from nextVisibleIndex', () => {
+    const shots = [
+      makeShot('s1', 'cam-1', 10000, 0),
+      makeShot('s2', 'cam-2', 3000, 1, true), // hidden — skip
+      makeShot('s3', 'cam-1', 5000, 2),       // next visible
+    ]
+    const cameras = [makeCamera('cam-1', 1), makeCamera('cam-2', 2)]
+    const result = computeTiming(shots, cameras, 0, 0, 2000)
+    expect(result.nextVisibleIndex).toBe(2)
   })
 })

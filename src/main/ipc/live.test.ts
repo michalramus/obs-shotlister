@@ -160,8 +160,8 @@ describe('nextShot', () => {
     const startedAt1 = started.startedAt as number
 
     const state = nextShot(db)
-    // current shot is hidden; next shot is now index 0 in visible queue
-    expect(state.liveIndex).toBe(0)
+    // current shot is hidden; next shot is index 1 in full liveQueue
+    expect(state.liveIndex).toBe(1)
     expect(state.startedAt).toBeGreaterThanOrEqual(startedAt1)
     expect(state.running).toBe(true)
   })
@@ -201,7 +201,7 @@ describe('skipNext', () => {
     db.close()
   })
 
-  it('hides the next shot in liveQueue and extends started_at back by its duration', () => {
+  it('hides the next shot in liveQueue without modifying started_at', () => {
     const { rundownId, shotIds } = seedRundownWithShots(db, 3, 5000)
     startLive(db, rundownId)
 
@@ -211,9 +211,9 @@ describe('skipNext', () => {
 
     const state = skipNext(db)
 
-    expect(state.liveIndex).toBe(0) // unchanged
-    // started_at moved back by 5000ms (next shot's duration)
-    expect(state.startedAt).toBe(beforeStartedAt - 5000)
+    expect(state.liveIndex).toBe(0) // unchanged (index in full liveQueue)
+    // started_at is NOT modified — frontend computes effective duration from hidden shots
+    expect(state.startedAt).toBe(beforeStartedAt)
 
     // shot-1 should be hidden in liveQueue, NOT deleted from DB
     const remaining = getShotIds(db, rundownId)
