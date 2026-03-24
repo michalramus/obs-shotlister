@@ -16,7 +16,7 @@ import type { CameraUpsertInput } from './ipc/projects'
 import { listRundowns, createRundown, renameRundown, deleteRundown } from './ipc/rundowns'
 import { listShots, createShot, updateShot, deleteShot, reorderShots } from './ipc/shots'
 import type { CreateShotInput, UpdateShotInput } from './ipc/shots'
-import { getLiveState, startLive, stopLive, nextShot, skipNext, restartLive, setActiveRundown, setActiveProject } from './ipc/live'
+import { getLiveState, getLiveQueue, getVisibleQueue, startLive, stopLive, nextShot, skipNext, restartLive, setActiveRundown, setActiveProject } from './ipc/live'
 import { getCameraById } from './ipc/projects'
 import { parseResolveCSV, confirmResolveImport } from './ipc/resolve-import'
 import type { ConfirmImportInput } from './ipc/resolve-import'
@@ -124,9 +124,14 @@ function registerIpcHandlers(): void {
   })
 
   // Shots
-  ipcMain.handle('shots:list', (_event, payload: { rundownId: string }) =>
-    listShots(db, payload.rundownId),
-  )
+  ipcMain.handle('shots:list', (_event, payload: { rundownId: string }) => {
+    const queue = getLiveQueue()
+    if (queue.length > 0) {
+      const visibleIds = new Set(getVisibleQueue().map((s) => s.id))
+      return listShots(db, payload.rundownId).filter((s) => visibleIds.has(s.id))
+    }
+    return listShots(db, payload.rundownId)
+  })
 
   ipcMain.handle('shots:create', (_event, payload: CreateShotInput) => {
     const shot = createShot(db, payload)
@@ -164,12 +169,14 @@ function registerIpcHandlers(): void {
   ipcMain.handle('live:stop', () => {
     const state = stopLive(db)
     broadcastLiveState(state)
+    broadcastRundown()
     return state
   })
 
   ipcMain.handle('live:next', () => {
     const state = nextShot(db)
     broadcastLiveState(state)
+    broadcastRundown()
     switchOBSScenes(state, db).catch(console.error)
     return state
   })
@@ -260,9 +267,19 @@ function findNextIdx(shots: Array<{ id: string }>, fromIndex: number): number | 
 
 import type { LiveState } from './ipc/live'
 
+function getActiveShots(database: ReturnType<typeof getDatabase>, rundownId: string): ReturnType<typeof listShots> {
+  const allShots = listShots(database, rundownId)
+  const queue = getLiveQueue()
+  if (queue.length > 0) {
+    const ids = new Set(getVisibleQueue().map((s) => s.id))
+    return allShots.filter((s) => ids.has(s.id))
+  }
+  return allShots
+}
+
 async function switchOBSScenes(state: LiveState, database: ReturnType<typeof getDatabase>): Promise<void> {
   if (obsClient.status !== 'connected' || !state.running || state.liveIndex === null || !state.rundownId) return
-  const shots = listShots(database, state.rundownId)
+  const shots = getActiveShots(database, state.rundownId)
   const liveCamera = getCameraById(database, shots[state.liveIndex].cameraId)
   if (liveCamera?.obsScene) {
     obsClient.setCurrentProgramScene(liveCamera.obsScene).catch((e: unknown) => console.error('[OBS] program:', e))
@@ -278,7 +295,7 @@ async function switchOBSScenes(state: LiveState, database: ReturnType<typeof get
 
 async function switchOBSPreview(state: LiveState, database: ReturnType<typeof getDatabase>): Promise<void> {
   if (obsClient.status !== 'connected' || !state.running || state.liveIndex === null || !state.rundownId) return
-  const shots = listShots(database, state.rundownId)
+  const shots = getActiveShots(database, state.rundownId)
   const nextIdx = findNextIdx(shots, state.liveIndex)
   if (nextIdx !== null) {
     const nextCamera = getCameraById(database, shots[nextIdx].cameraId)
@@ -312,7 +329,17 @@ function broadcastLiveState(state: LiveState): void {
 }
 
 function broadcastRundown(): void {
-  if (_io && _db) broadcastRundownState(_io, _db)
+  if (!_io || !_db) return
+  if (getLiveQueue().length > 0) {
+    const state = getLiveState(_db)
+    if (state.rundownId) {
+      const visibleIds = new Set(getVisibleQueue().map((s) => s.id))
+      const visible = listShots(_db, state.rundownId).filter((s) => visibleIds.has(s.id))
+      broadcastRundownState(_io, _db, visible)
+      return
+    }
+  }
+  broadcastRundownState(_io, _db)
 }
 
 app.whenReady().then(() => {
