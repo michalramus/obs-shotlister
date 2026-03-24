@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useAppStore } from '../store'
 import type { Camera } from '../../shared/types'
 
@@ -319,6 +319,22 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [obsScenes, setObsScenes] = useState<string[]>([])
+  const [obsConnected, setObsConnected] = useState(false)
+
+  const fetchObsScenes = async (): Promise<void> => {
+    try {
+      const scenes = await window.api.obs.getScenes()
+      setObsScenes(scenes)
+      setObsConnected(true)
+    } catch {
+      setObsConnected(false)
+    }
+  }
+
+  useEffect(() => {
+    void fetchObsScenes()
+  }, [])
 
   // Commit changes on blur from any field
   const handleBlur = async (): Promise<void> => {
@@ -414,16 +430,46 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
         </select>
       </td>
       <td style={s.td}>
-        <input
-          style={s.input}
-          type="text"
-          value={draft.obsScene}
-          aria-label="OBS scene"
-          placeholder="Scene name"
-          onChange={(e) => setDraft((d) => ({ ...d, obsScene: e.target.value }))}
-          onBlur={() => void handleBlur()}
-          disabled={saving}
-        />
+        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+          {obsConnected && obsScenes.length > 0 ? (
+            <select
+              style={s.select}
+              value={draft.obsScene}
+              aria-label="OBS scene"
+              onChange={(e) => setDraft((d) => ({ ...d, obsScene: e.target.value }))}
+              onBlur={() => void handleBlur()}
+              disabled={saving}
+            >
+              <option value="">— None —</option>
+              {obsScenes.map((scene) => (
+                <option key={scene} value={scene}>{scene}</option>
+              ))}
+              {draft.obsScene && !obsScenes.includes(draft.obsScene) && (
+                <option value={draft.obsScene}>{draft.obsScene}</option>
+              )}
+            </select>
+          ) : (
+            <input
+              style={s.input}
+              type="text"
+              value={draft.obsScene}
+              aria-label="OBS scene"
+              placeholder={obsConnected ? 'Scene name' : 'OBS not connected'}
+              onChange={(e) => setDraft((d) => ({ ...d, obsScene: e.target.value }))}
+              onBlur={() => void handleBlur()}
+              disabled={saving}
+            />
+          )}
+          <button
+            style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '14px', padding: '2px' }}
+            onClick={() => void fetchObsScenes()}
+            title="Refresh OBS scenes"
+            aria-label="Refresh OBS scenes"
+            type="button"
+          >
+            ⟳
+          </button>
+        </div>
       </td>
       <td style={{ ...s.td, width: '48px' }}>
         {error !== null && (

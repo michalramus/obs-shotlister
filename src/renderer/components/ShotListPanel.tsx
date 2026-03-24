@@ -210,14 +210,18 @@ function mssToMs(mss: string): number | null {
   return (m * 60 + s) * 1000
 }
 
+function parseTransitionSecs(s: string): number {
+  return Math.round(parseFloat(s) * 1000)
+}
+
 // ---------------------------------------------------------------------------
 // Inline shot form
 // ---------------------------------------------------------------------------
 
 interface ShotFormProps {
   cameras: Camera[]
-  initial?: { cameraId: string; durationMs: number; label: string }
-  onConfirm: (values: { cameraId: string; durationMs: number; label: string }) => void
+  initial?: { cameraId: string; durationMs: number; label: string; transitionName: string | null; transitionMs: number }
+  onConfirm: (values: { cameraId: string; durationMs: number; label: string; transitionName: string | null; transitionMs: number }) => void
   onCancel: () => void
 }
 
@@ -225,11 +229,21 @@ function ShotForm({ cameras, initial, onConfirm, onCancel }: ShotFormProps): Rea
   const [cameraId, setCameraId] = useState(initial?.cameraId ?? cameras[0]?.id ?? '')
   const [duration, setDuration] = useState(initial ? msToMss(initial.durationMs) : '0:30')
   const [label, setLabel] = useState(initial?.label ?? '')
+  const [transitionName, setTransitionName] = useState<string | null>(initial?.transitionName ?? null)
+  const [transitionSecs, setTransitionSecs] = useState<string>(
+    initial?.transitionMs ? (initial.transitionMs / 1000).toString() : '0.5'
+  )
+  const [obsTransitions, setObsTransitions] = useState<string[]>([])
+
+  useEffect(() => {
+    window.api.obs.getTransitions().then((list) => setObsTransitions(list)).catch(() => {/* OBS not connected */})
+  }, [])
 
   function handleConfirm(): void {
     const durationMs = mssToMs(duration)
     if (!cameraId || durationMs === null) return
-    onConfirm({ cameraId, durationMs, label })
+    const transitionMs = transitionName ? parseTransitionSecs(transitionSecs) : 0
+    onConfirm({ cameraId, durationMs, label, transitionName, transitionMs })
   }
 
   function handleKeyDown(e: React.KeyboardEvent): void {
@@ -267,6 +281,32 @@ function ShotForm({ cameras, initial, onConfirm, onCancel }: ShotFormProps): Rea
         placeholder="Label (optional)"
         aria-label="Label"
       />
+
+      <select
+        style={s.select}
+        value={transitionName ?? ''}
+        onChange={(e) => setTransitionName(e.target.value === '' ? null : e.target.value)}
+        aria-label="Transition"
+      >
+        <option value="">— cut / none —</option>
+        {obsTransitions.map((t) => (
+          <option key={t} value={t}>{t}</option>
+        ))}
+        {transitionName && !obsTransitions.includes(transitionName) && (
+          <option value={transitionName}>{transitionName}</option>
+        )}
+      </select>
+
+      {transitionName && (
+        <input
+          style={{ ...s.input, width: '56px' }}
+          value={transitionSecs}
+          onChange={(e) => setTransitionSecs(e.target.value)}
+          placeholder="secs"
+          aria-label="Transition duration (seconds)"
+          title="Transition duration in seconds"
+        />
+      )}
 
       <button style={s.confirmBtn} onClick={handleConfirm} aria-label="Confirm shot">
         ✓
@@ -387,13 +427,15 @@ export function ShotListPanel(): React.JSX.Element {
 
   const sensors = useSensors(useSensor(PointerSensor))
 
-  async function handleAdd(values: { cameraId: string; durationMs: number; label: string }): Promise<void> {
+  async function handleAdd(values: { cameraId: string; durationMs: number; label: string; transitionName: string | null; transitionMs: number }): Promise<void> {
     if (!activeRundownId) return
     const input: CreateShotInput = {
       rundownId: activeRundownId,
       cameraId: values.cameraId,
       durationMs: values.durationMs,
       label: values.label || null,
+      transitionName: values.transitionName,
+      transitionMs: values.transitionMs,
     }
     try {
       await addShot(input)
@@ -403,13 +445,15 @@ export function ShotListPanel(): React.JSX.Element {
     setShowAddForm(false)
   }
 
-  async function handleEdit(values: { cameraId: string; durationMs: number; label: string }): Promise<void> {
+  async function handleEdit(values: { cameraId: string; durationMs: number; label: string; transitionName: string | null; transitionMs: number }): Promise<void> {
     if (!editingShot) return
     const input: UpdateShotInput = {
       id: editingShot.id,
       cameraId: values.cameraId,
       durationMs: values.durationMs,
       label: values.label || null,
+      transitionName: values.transitionName,
+      transitionMs: values.transitionMs,
     }
     try {
       await editShot(input)
@@ -493,6 +537,8 @@ export function ShotListPanel(): React.JSX.Element {
                       cameraId: shot.cameraId,
                       durationMs: shot.durationMs,
                       label: shot.label ?? '',
+                      transitionName: shot.transitionName,
+                      transitionMs: shot.transitionMs,
                     }}
                     onConfirm={(v) => void handleEdit(v)}
                     onCancel={() => setEditingShot(null)}
