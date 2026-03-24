@@ -139,6 +139,7 @@ export default function App(): React.JSX.Element {
   const setObsStatus = useAppStore((s) => s.setObsStatus)
   const obsValidationResult = useAppStore((s) => s.obsValidationResult)
   const setObsValidationResult = useAppStore((s) => s.setObsValidationResult)
+  const uiMode = useAppStore((s) => s.uiMode)
 
   const [showCameraConfig, setShowCameraConfig] = useState(false)
   const [showResolveImport, setShowResolveImport] = useState(false)
@@ -268,13 +269,14 @@ export default function App(): React.JSX.Element {
             <p>No project selected.</p>
             <p>Create a project to get started.</p>
           </div>
-        ) : (
+        ) : uiMode === 'edit' ? (
           <>
             <RundownSidebar />
 
             <div style={styles.center}>
               {activeRundownId !== null && <LiveControls />}
               <ShotListPanel />
+              {/* TODO: TimelineEditor Phase 2 */}
             </div>
 
             {activeRundown !== null && (
@@ -291,6 +293,30 @@ export default function App(): React.JSX.Element {
                 />
               </div>
             )}
+          </>
+        ) : (
+          <>
+            <RundownSidebar />
+
+            <div style={styles.center}>
+              {activeRundownId !== null && <LiveControls />}
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                {activeRundown !== null && (
+                  <ShotlistWidget
+                    rundownName={activeRundown.name}
+                    shots={shots}
+                    cameras={cameras}
+                    liveIndex={liveIndex}
+                    startedAt={startedAt}
+                    running={running}
+                    showNextBackground
+                    autoScroll
+                  />
+                )}
+              </div>
+              {/* TODO: TimelineEditor Phase 2 */}
+              <div style={{ height: '180px', flexShrink: 0, borderTop: '1px solid #2a2a2a', background: '#161616' }} />
+            </div>
           </>
         )}
       </div>

@@ -11,7 +11,7 @@ const s = {
     borderBottom: '1px solid #2a2a2a',
   } satisfies React.CSSProperties,
 
-  btn: (variant: 'primary' | 'danger' | 'secondary'): React.CSSProperties => ({
+  btn: (variant: 'primary' | 'danger' | 'secondary' | 'mode-live' | 'mode-edit'): React.CSSProperties => ({
     padding: '6px 14px',
     borderRadius: '4px',
     border: 'none',
@@ -19,7 +19,15 @@ const s = {
     fontWeight: 600,
     fontSize: '13px',
     background:
-      variant === 'primary' ? '#27ae60' : variant === 'danger' ? '#e74c3c' : '#3a3a3a',
+      variant === 'primary'
+        ? '#27ae60'
+        : variant === 'danger'
+          ? '#e74c3c'
+          : variant === 'mode-live'
+            ? '#2980b9'
+            : variant === 'mode-edit'
+              ? '#3a3a3a'
+              : '#3a3a3a',
     color: '#fff',
   }),
 
@@ -42,6 +50,8 @@ export function LiveControls(): React.JSX.Element {
   const liveSkipNext = useAppStore((s) => s.liveSkipNext)
   const liveRestart = useAppStore((s) => s.liveRestart)
   const liveIndex = useAppStore((s) => s.liveIndex)
+  const uiMode = useAppStore((s) => s.uiMode)
+  const setUiMode = useAppStore((s) => s.setUiMode)
 
   function handleError(label: string, err: unknown): void {
     console.error(`[LiveControls] ${label}:`, err)
@@ -64,6 +74,13 @@ export function LiveControls(): React.JSX.Element {
     return (
       <div style={s.bar} data-testid="live-controls">
         <button
+          style={s.btn(uiMode === 'edit' ? 'mode-live' : 'mode-edit')}
+          onClick={() => setUiMode(uiMode === 'edit' ? 'live' : 'edit')}
+          aria-label={uiMode === 'edit' ? 'Switch to live layout' : 'Switch to edit layout'}
+        >
+          {uiMode === 'edit' ? '→ Live' : '← Edit'}
+        </button>
+        <button
           style={s.btn('primary')}
           disabled={!canStart()}
           onClick={() => {
@@ -81,6 +98,13 @@ export function LiveControls(): React.JSX.Element {
 
   return (
     <div style={s.bar} data-testid="live-controls">
+      <button
+        style={s.btn(uiMode === 'edit' ? 'mode-live' : 'mode-edit')}
+        onClick={() => setUiMode(uiMode === 'edit' ? 'live' : 'edit')}
+        aria-label={uiMode === 'edit' ? 'Switch to live layout' : 'Switch to edit layout'}
+      >
+        {uiMode === 'edit' ? '→ Live' : '← Edit'}
+      </button>
       <button
         style={s.btn('danger')}
         onClick={() => liveStop().catch((err) => handleError('stop', err))}

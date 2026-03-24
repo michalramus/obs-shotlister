@@ -18,6 +18,10 @@ interface AppStore {
   startedAt: number | null // Date.now() when live shot started
   running: boolean // whether rundown is started
 
+  // UI mode
+  uiMode: 'edit' | 'live'
+  setUiMode: (mode: 'edit' | 'live') => void
+
   // OBS state
   obsStatus: OBSConnectionStatus
   obsValidationResult: OBSValidateResult | null
@@ -77,6 +81,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   liveIndex: null,
   startedAt: null,
   running: false,
+
+  // UI mode
+  uiMode: 'edit' as 'edit' | 'live',
+  setUiMode: (mode) => set({ uiMode: mode }),
 
   // OBS state
   obsStatus: 'disconnected',
@@ -258,11 +266,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   liveStart: async (rundownId) => {
     const state = await window.api.live.start({ rundownId })
     get().setLiveState(state)
+    set({ uiMode: 'live' })
   },
 
   liveStop: async () => {
     const state = await window.api.live.stop()
     get().setLiveState(state)
+    set({ uiMode: 'edit' })
     const { activeRundownId } = get()
     if (activeRundownId) await get().loadShots(activeRundownId)
   },
