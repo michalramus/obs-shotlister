@@ -56,6 +56,13 @@ export function getVisibleQueue(): LiveQueueEntry[] {
   return liveQueue.filter((s) => !s.hidden)
 }
 
+export function clearLiveState(db: Database): void {
+  db.prepare(
+    `UPDATE live_state SET rundown_id = NULL, live_shot_id = NULL, started_at = NULL, running = 0 WHERE id = 1`,
+  ).run()
+  liveQueue.length = 0
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

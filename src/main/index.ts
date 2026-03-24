@@ -16,7 +16,7 @@ import type { CameraUpsertInput } from './ipc/projects'
 import { listRundowns, createRundown, renameRundown, deleteRundown } from './ipc/rundowns'
 import { listShots, createShot, updateShot, deleteShot, reorderShots } from './ipc/shots'
 import type { CreateShotInput, UpdateShotInput } from './ipc/shots'
-import { getLiveState, getLiveQueue, startLive, stopLive, nextShot, skipNext, restartLive, setActiveRundown, setActiveProject } from './ipc/live'
+import { getLiveState, getLiveQueue, startLive, stopLive, nextShot, skipNext, restartLive, setActiveRundown, setActiveProject, clearLiveState } from './ipc/live'
 import { getCameraById } from './ipc/projects'
 import { parseResolveCSV, confirmResolveImport } from './ipc/resolve-import'
 import type { ConfirmImportInput } from './ipc/resolve-import'
@@ -25,6 +25,8 @@ import type { OBSConnectionStatus } from './obs/client'
 import { getObsSettings, saveObsSettings } from './ipc/settings'
 
 const obsClient = createOBSClient()
+let obsAutoReconnect = false
+let obsReconnectTimer: ReturnType<typeof setTimeout> | null = null
 
 // --- Global error handlers ---------------------------------------------------
 // These must never crash the process — log and continue.
@@ -228,12 +230,17 @@ function registerIpcHandlers(): void {
     const settings = getObsSettings(db)
     try {
       await obsClient.connect(settings.url, settings.password)
+      obsAutoReconnect = true
     } catch (err) {
       throw new Error(err instanceof Error ? (err.message || 'Connection failed') : String(err))
     }
   })
 
-  ipcMain.handle('obs:disconnect', () => { obsClient.disconnect() })
+  ipcMain.handle('obs:disconnect', () => {
+    obsAutoReconnect = false
+    if (obsReconnectTimer) { clearTimeout(obsReconnectTimer); obsReconnectTimer = null }
+    obsClient.disconnect()
+  })
 
   ipcMain.handle('obs:status', () => ({ status: obsClient.status }))
 
@@ -359,6 +366,7 @@ function broadcastRundown(): void {
 
 app.whenReady().then(() => {
   _db = getDatabase()
+  clearLiveState(_db)
   registerIpcHandlers()
   const io = startServer(_db)
   if (io) setSocketServer(io)
@@ -366,6 +374,17 @@ app.whenReady().then(() => {
 
   obsClient.onStatusChange((status: OBSConnectionStatus) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send('obs:status', { status })
+    if (status === 'disconnected' && obsAutoReconnect) {
+      obsReconnectTimer = setTimeout(async () => {
+        if (!obsAutoReconnect || obsClient.status !== 'disconnected') return
+        const { url, password } = getObsSettings(_db!)
+        try {
+          await obsClient.connect(url, password || undefined)
+        } catch {
+          // ConnectionClosed will fire again → schedules next retry
+        }
+      }, 5000)
+    }
   })
 
   app.on('activate', () => {
