@@ -91,7 +91,7 @@ export function getLiveState(db: Database.Database): LiveState {
   let liveIndex: number | null = null
 
   if (row.running && liveQueue.length > 0) {
-    liveIndex = getVisibleQueue().findIndex((s) => s.id === row.live_shot_id)
+    liveIndex = liveQueue.findIndex((s) => s.id === row.live_shot_id)
     if (liveIndex === -1) liveIndex = null
   } else if (row.rundown_id && row.live_shot_id) {
     const shots = getShotsForRundown(db, row.rundown_id)
@@ -186,8 +186,7 @@ export function nextShot(db: Database.Database): LiveState {
   // Mark current shot as hidden
   liveQueue = liveQueue.map((s) => (s.id === row.live_shot_id ? { ...s, hidden: true } : s))
 
-  const newVisible = getVisibleQueue()
-  const newLiveIndex = newVisible.findIndex((s) => s.id === nextEntry.id)
+  const newLiveIndex = liveQueue.findIndex((s) => s.id === nextEntry.id)
 
   const startedAt = Date.now()
 
@@ -223,23 +222,9 @@ export function skipNext(db: Database.Database): LiveState {
   // Mark the next visible shot as hidden (no DB deletion)
   liveQueue = liveQueue.map((s) => (s.id === toSkip.id ? { ...s, hidden: true } : s))
 
-  // Extend current shot's started_at back by the skipped shot's duration
-  db.prepare(
-    'UPDATE live_state SET started_at = started_at - ? WHERE id = 1',
-  ).run(toSkip.duration_ms)
+  const newLiveIndex = liveQueue.findIndex((s) => s.id === row.live_shot_id)
 
-  const updatedRow = db.prepare('SELECT * FROM live_state WHERE id = 1').get() as LiveStateRow
-
-  const newVisible = getVisibleQueue()
-  const newLiveIndex = newVisible.findIndex((s) => s.id === row.live_shot_id)
-
-  return {
-    rundownId: updatedRow.rundown_id,
-    projectId: updatedRow.project_id,
-    liveIndex: newLiveIndex === -1 ? null : newLiveIndex,
-    startedAt: updatedRow.started_at,
-    running: true,
-  }
+  return rowToLiveState(row, newLiveIndex === -1 ? null : newLiveIndex)
 }
 
 export function restartLive(db: Database.Database): LiveState {
