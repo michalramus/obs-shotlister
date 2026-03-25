@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Shot, Camera, Marker } from '../../shared/types'
 
 interface TimelineEditorProps {
@@ -100,15 +100,16 @@ export function TimelineEditor({
   const [mediaOffsetOverride, setMediaOffsetOverride] = useState<number | null>(null)
   const [mediaHovered, setMediaHovered] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
-  const [snapEnabled, setSnapEnabled] = useState<boolean>(
-    () => localStorage.getItem('obs-queuer-snap') !== 'false',
-  )
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; shotId: string } | null>(null)
   const [flash, setFlash] = useState(false)
   const [currentScrollLeft, setCurrentScrollLeft] = useState(0)
   const [waveformError, setWaveformError] = useState(false)
+  const [containerWidth, setContainerWidth] = useState(800)
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const isPlayingRef = useRef(isPlaying)
+  const runningRef = useRef(running)
+  const isAutoScrollingRef = useRef(false)
   const dragStateRef = useRef<DragState | null>(null)
   const markerDragStateRef = useRef<MarkerDragState | null>(null)
   const mediaDragStateRef = useRef<MediaDragState | null>(null)
@@ -121,6 +122,9 @@ export function TimelineEditor({
   const playheadMsRef = useRef(playheadMs)
   const onAddMarkerRef = useRef(onAddMarker)
   const isFirstLiveRef = useRef(true)
+  const audioPlayRef = useRef<HTMLAudioElement | null>(null)
+  const audioBlobUrlRef = useRef<string | null>(null)
+  const pendingDragClearRef = useRef(false)
 
   // Keep zoomRef in sync
   useEffect(() => {
@@ -141,6 +145,37 @@ export function TimelineEditor({
   useEffect(() => {
     onAddMarkerRef.current = onAddMarker
   }, [onAddMarker])
+
+  // Keep isPlayingRef and runningRef in sync
+  useEffect(() => { isPlayingRef.current = isPlaying }, [isPlaying])
+  useEffect(() => { runningRef.current = running }, [running])
+
+  // Clear dragOverride only after shots prop has updated from IPC response
+  useEffect(() => {
+    if (pendingDragClearRef.current) {
+      pendingDragClearRef.current = false
+      setDragOverride({})
+    }
+  }, [shots])
+
+  useEffect(() => {
+    if (running) {
+      setIsPlaying(false)
+      if (mediaVideoRef.current) mediaVideoRef.current.pause()
+      if (audioPlayRef.current) audioPlayRef.current.pause()
+    }
+  }, [running]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Inject scrollbar-hide CSS
+  useEffect(() => {
+    const style = document.createElement('style')
+    style.textContent = `
+      @keyframes pulse-live { 0%,100% { opacity:1 } 50% { opacity:0.4 } }
+      .timeline-scroll::-webkit-scrollbar { display: none }
+      .timeline-scroll { scrollbar-width: none; }
+    `
+    document.head.appendChild(style)
+  }, [])
 
   // Flash on liveIndex change
   useEffect(() => {
@@ -167,11 +202,19 @@ export function TimelineEditor({
     async function decode(): Promise<void> {
       try {
         const buf = await window.api.mediaReadFile(rundownMedia!.filePath)
-        const arrayBuffer = buf instanceof ArrayBuffer ? buf : (buf as Buffer).buffer
+        // Save a copy of raw bytes BEFORE decodeAudioData detaches the ArrayBuffer
+        const srcBuffer: ArrayBuffer = buf instanceof ArrayBuffer
+          ? buf
+          : (buf as Buffer).buffer.slice(
+              (buf as Buffer).byteOffset,
+              (buf as Buffer).byteOffset + (buf as Buffer).byteLength,
+            )
+        // Give decodeAudioData its own copy (it will consume/detach it)
+        const arrayBufferForDecode = srcBuffer.slice(0)
         const audioCtx = new AudioContext()
         let audioBuffer: AudioBuffer
         try {
-          audioBuffer = await audioCtx.decodeAudioData(arrayBuffer as ArrayBuffer)
+          audioBuffer = await audioCtx.decodeAudioData(arrayBufferForDecode)
         } catch (decodeErr) {
           console.error('[TimelineEditor] decodeAudioData error:', decodeErr)
           await audioCtx.close()
@@ -195,7 +238,24 @@ export function TimelineEditor({
           }
           peaks.push(max)
         }
-        if (!cancelled) setWaveformData(peaks)
+        if (!cancelled) {
+          setWaveformData(peaks)
+          // Create audio element for non-video files
+          const VIDEO_EXTS = ['.mp4', '.mov', '.webm', '.avi', '.mkv']
+          const isVideoFile = VIDEO_EXTS.some((ext) => rundownMedia!.filePath.toLowerCase().endsWith(ext))
+          if (!isVideoFile) {
+            const ext = rundownMedia!.filePath.toLowerCase().split('.').pop() ?? ''
+            const mimeMap: Record<string, string> = {
+              mp3: 'audio/mpeg', wav: 'audio/wav', aac: 'audio/aac',
+              ogg: 'audio/ogg', flac: 'audio/flac', m4a: 'audio/mp4',
+            }
+            const blob = new Blob([srcBuffer], { type: mimeMap[ext] ?? 'audio/mpeg' })
+            if (audioBlobUrlRef.current) URL.revokeObjectURL(audioBlobUrlRef.current)
+            audioBlobUrlRef.current = URL.createObjectURL(blob)
+            if (audioPlayRef.current) audioPlayRef.current.pause()
+            audioPlayRef.current = new Audio(audioBlobUrlRef.current)
+          }
+        }
       } catch (err) {
         console.error('[TimelineEditor] waveform decode error:', err)
       }
@@ -203,6 +263,14 @@ export function TimelineEditor({
     void decode()
     return () => {
       cancelled = true
+      if (audioBlobUrlRef.current) {
+        URL.revokeObjectURL(audioBlobUrlRef.current)
+        audioBlobUrlRef.current = null
+      }
+      if (audioPlayRef.current) {
+        audioPlayRef.current.pause()
+        audioPlayRef.current = null
+      }
     }
   }, [rundownMedia?.filePath]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -223,15 +291,12 @@ export function TimelineEditor({
       const elapsed = performance.now() - playStartRef.current.wallMs
       const newMs = Math.min(playStartRef.current.headMs + elapsed, totalMs)
       setPlayheadMs(newMs)
-      if (scrollContainerRef.current) {
-        scrollContainerRef.current.scrollLeft = (newMs / 1000) * zoomPxPerSec - PLAYHEAD_FIXED_PX
-      }
+      autoScroll(newMs)
       // Media sync
-      const vid = mediaVideoRef.current
+      const vid = getMediaEl()
       if (vid && rundownMedia) {
         const mediaTime = (newMs - rundownMedia.offsetMs) / 1000
         if (mediaTime >= 0) {
-          if (vid.paused) void vid.play().catch(() => {})
           if (Math.abs(vid.currentTime - mediaTime) > 0.15) vid.currentTime = mediaTime
         } else {
           if (!vid.paused) vid.pause()
@@ -239,7 +304,7 @@ export function TimelineEditor({
       }
       if (newMs >= totalMs) {
         setIsPlaying(false)
-        if (mediaVideoRef.current) mediaVideoRef.current.pause()
+        getMediaEl()?.pause()
         return
       }
       editRafRef.current = requestAnimationFrame(tick)
@@ -265,11 +330,9 @@ export function TimelineEditor({
     function tick(): void {
       const shotStartMs = shots.slice(0, liveIndex!).reduce((s, sh) => s + sh.durationMs, 0)
       const elapsed = Date.now() - startedAt!
-      const newMs = shotStartMs + elapsed
+      const newMs = Math.min(shotStartMs + elapsed, totalMs)
       setPlayheadMs(newMs)
-      if (scrollContainerRef.current) {
-        scrollContainerRef.current.scrollLeft = (newMs / 1000) * zoomPxPerSec - PLAYHEAD_FIXED_PX
-      }
+      autoScroll(newMs)
       liveRafRef.current = requestAnimationFrame(tick)
     }
     liveRafRef.current = requestAnimationFrame(tick)
@@ -286,11 +349,48 @@ export function TimelineEditor({
     const el = scrollContainerRef.current
     if (!el) return
     function onScroll(): void {
-      setCurrentScrollLeft(el.scrollLeft)
+      const sl = el.scrollLeft
+      setCurrentScrollLeft(sl)
+      if (!isAutoScrollingRef.current && !isPlayingRef.current && !runningRef.current
+          && !dragStateRef.current && !markerDragStateRef.current && !mediaDragStateRef.current) {
+        setPlayheadMs(Math.max(0, (sl / zoomRef.current) * 1000))
+      }
     }
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
   }, [])
+
+  useLayoutEffect(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => { setContainerWidth(el.clientWidth) })
+    ro.observe(el)
+    setContainerWidth(el.clientWidth)
+    return () => ro.disconnect()
+  }, [])
+
+  useEffect(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    function onWheel(e: WheelEvent): void {
+      if (isPlayingRef.current || runningRef.current) e.preventDefault()
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
+  function autoScroll(ms: number): void {
+    if (!isPlayingRef.current && !runningRef.current) return
+    const el = scrollContainerRef.current
+    if (!el) return
+    isAutoScrollingRef.current = true
+    el.scrollLeft = (ms / 1000) * zoomRef.current
+    setTimeout(() => { isAutoScrollingRef.current = false }, 0)
+  }
+
+  function getMediaEl(): HTMLVideoElement | HTMLAudioElement | null {
+    return (mediaVideoRef.current as HTMLVideoElement | null) ?? audioPlayRef.current
+  }
 
   function zoomIn(): void {
     setZoomPxPerSec((z) => Math.min(2000, Math.round(z * 1.4)))
@@ -299,29 +399,10 @@ export function TimelineEditor({
     setZoomPxPerSec((z) => Math.max(5, Math.round(z / 1.4)))
   }
 
-  function snapMs(rawMs: number): number {
-    if (!snapEnabled) return rawMs
-    const thresholdMs = (10 / zoomPxPerSec) * 1000
-    let accSnap = 0
-    const snapTargets: number[] = [0]
-    for (const shot of shots) {
-      accSnap += shot.durationMs
-      snapTargets.push(accSnap)
-    }
-    for (const m of markers) snapTargets.push(m.positionMs)
-    const nearest = snapTargets.reduce(
-      (best, t) => (Math.abs(t - rawMs) < Math.abs(best - rawMs) ? t : best),
-      rawMs,
-    )
-    return Math.abs(nearest - rawMs) <= thresholdMs ? nearest : rawMs
-  }
-
   function movePlayhead(deltaMs: number): void {
-    const n = snapMs(Math.max(0, Math.min(playheadMsRef.current + deltaMs, totalMs)))
+    const n = Math.max(0, Math.min(playheadMsRef.current + deltaMs, totalMs))
     setPlayheadMs(n)
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollLeft = (n / 1000) * zoomPxPerSec - PLAYHEAD_FIXED_PX
-    }
+    autoScroll(n)
   }
 
   // Keyboard shortcuts
@@ -335,8 +416,16 @@ export function TimelineEditor({
         setIsPlaying((prev) => {
           if (!prev) {
             playStartRef.current = { wallMs: performance.now(), headMs: playheadMsRef.current }
+            const vid = getMediaEl()
+            if (vid && rundownMedia) {
+              const mediaTime = (playheadMsRef.current - rundownMedia.offsetMs) / 1000
+              if (mediaTime >= 0) {
+                vid.currentTime = mediaTime
+                vid.play().catch((err: unknown) => { console.error('[TimelineEditor] play() failed:', err) })
+              }
+            }
           } else {
-            if (mediaVideoRef.current) mediaVideoRef.current.pause()
+            getMediaEl()?.pause()
           }
           return !prev
         })
@@ -373,13 +462,13 @@ export function TimelineEditor({
 
   function handleTrackClick(e: React.MouseEvent<HTMLDivElement>): void {
     const rect = e.currentTarget.getBoundingClientRect()
-    const x = e.clientX - rect.left + (scrollContainerRef.current?.scrollLeft ?? 0)
-    const ms = (x / zoomPxPerSec) * 1000
-    const snapped = snapMs(Math.max(0, Math.min(ms, totalMs)))
-    setPlayheadMs(snapped)
-    if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollLeft = (snapped / 1000) * zoomPxPerSec - PLAYHEAD_FIXED_PX
-    }
+    const clickX = e.clientX - rect.left
+    const scrollLeft = scrollContainerRef.current?.scrollLeft ?? 0
+    const contentPx = clickX + scrollLeft - PLAYHEAD_FIXED_PX
+    const ms = (contentPx / zoomPxPerSec) * 1000
+    const clamped = Math.max(0, Math.min(ms, totalMs))
+    setPlayheadMs(clamped)
+    autoScroll(clamped)
   }
 
   function handleBlockClick(e: React.MouseEvent, shotId: string): void {
@@ -415,22 +504,28 @@ export function TimelineEditor({
     function onMouseMove(ev: MouseEvent): void {
       const ds = dragStateRef.current
       if (!ds) return
-      const deltaMs = ((ev.clientX - ds.startX) / zoomRef.current) * 1000
-      const newDurA = Math.max(1000, ds.origDurA + deltaMs)
-      const newDurB = Math.max(1000, ds.origDurB - deltaMs)
-      setDragOverride({ [ds.shotA.id]: newDurA, [ds.shotB.id]: newDurB })
+      const rawDeltaMs = ((ev.clientX - ds.startX) / zoomRef.current) * 1000
+      const newDurA = Math.max(1000, ds.origDurA + rawDeltaMs)
+      const maxDurA = ds.origDurA + ds.origDurB - 1000
+      const clampedDurA = Math.min(maxDurA, newDurA)
+      const newDurB = Math.max(1000, ds.origDurA + ds.origDurB - clampedDurA)
+      setDragOverride({ [ds.shotA.id]: clampedDurA, [ds.shotB.id]: newDurB })
     }
 
     function onMouseUp(ev: MouseEvent): void {
       const ds = dragStateRef.current
       if (ds) {
-        const deltaMs = ((ev.clientX - ds.startX) / zoomRef.current) * 1000
-        const newDurA = Math.max(1000, ds.origDurA + deltaMs)
-        const newDurB = Math.max(1000, ds.origDurB - deltaMs)
+        const rawDeltaMs = ((ev.clientX - ds.startX) / zoomRef.current) * 1000
+        const newDurA = Math.max(1000, Math.min(ds.origDurA + ds.origDurB - 1000, ds.origDurA + rawDeltaMs))
+        const newDurB = Math.max(1000, ds.origDurA + ds.origDurB - newDurA)
         onResizeShots(ds.shotA.id, newDurA, ds.shotB.id, newDurB)
+        // Keep dragOverride at final values until shots prop updates from IPC
+        setDragOverride({ [ds.shotA.id]: newDurA, [ds.shotB.id]: newDurB })
+        pendingDragClearRef.current = true
         dragStateRef.current = null
+      } else {
+        setDragOverride({})
       }
-      setDragOverride({})
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
     }
@@ -442,7 +537,8 @@ export function TimelineEditor({
   function handleMarkerTrackDblClick(e: React.MouseEvent<HTMLDivElement>): void {
     const rect = e.currentTarget.getBoundingClientRect()
     const scrollLeft = scrollContainerRef.current?.scrollLeft ?? 0
-    const posMs = Math.round(((e.clientX - rect.left + scrollLeft) / zoomPxPerSec) * 1000)
+    const contentPx = e.clientX - rect.left + scrollLeft - PLAYHEAD_FIXED_PX
+    const posMs = Math.round((contentPx / zoomPxPerSec) * 1000)
     onAddMarker(posMs)
   }
 
@@ -536,11 +632,9 @@ export function TimelineEditor({
     const startX = e.clientX
     function onMM(ev: MouseEvent): void {
       const deltaMs = ((ev.clientX - startX) / zoomRef.current) * 1000
-      const newMs = snapMs(Math.max(0, Math.min(origMs + deltaMs, totalMs)))
+      const newMs = Math.max(0, Math.min(origMs + deltaMs, totalMs))
       setPlayheadMs(newMs)
-      if (scrollContainerRef.current) {
-        scrollContainerRef.current.scrollLeft = (newMs / 1000) * zoomRef.current - PLAYHEAD_FIXED_PX
-      }
+      autoScroll(newMs)
     }
     function onMU(): void {
       window.removeEventListener('mousemove', onMM)
@@ -623,10 +717,19 @@ export function TimelineEditor({
           onClick={() => {
             if (isPlaying) {
               setIsPlaying(false)
-              if (mediaVideoRef.current) mediaVideoRef.current.pause()
+              getMediaEl()?.pause()
             } else {
               playStartRef.current = { wallMs: performance.now(), headMs: playheadMs }
               setIsPlaying(true)
+              console.log('[TimelineEditor] play clicked: mediaVideoRef=', mediaVideoRef.current, 'audioPlayRef=', audioPlayRef.current)
+              const vid = getMediaEl()
+              if (vid && rundownMedia) {
+                const mediaTime = (playheadMs - rundownMedia.offsetMs) / 1000
+                if (mediaTime >= 0) {
+                  vid.currentTime = mediaTime
+                  vid.play().catch((err: unknown) => { console.error('[TimelineEditor] play() failed:', err) })
+                }
+              }
             }
           }}
           title="Play/Pause (Space)"
@@ -654,20 +757,6 @@ export function TimelineEditor({
         >
           {formatPlayhead(playheadMs)}
         </span>
-
-        {/* Snap toggle */}
-        <button
-          style={{ ...btnStyle, width: 'auto', padding: '0 6px', fontSize: '11px' }}
-          onClick={() => {
-            setSnapEnabled((v) => {
-              localStorage.setItem('obs-queuer-snap', String(!v))
-              return !v
-            })
-          }}
-          title="Toggle snap"
-        >
-          {snapEnabled ? '🧲' : '🚫'}
-        </button>
 
         {/* Zoom out */}
         <button style={btnStyle} onClick={zoomOut} title="Zoom out (Ctrl/Cmd -)">
@@ -701,6 +790,7 @@ export function TimelineEditor({
       {/* Scrollable area: ruler + camera track + marker track + media track */}
       <div
         ref={scrollContainerRef}
+        className="timeline-scroll"
         style={{
           overflowX: 'auto',
           overflowY: 'hidden',
@@ -759,6 +849,9 @@ export function TimelineEditor({
             <polygon points="6,10 0,0 12,0" fill="#e74c3c" />
           </svg>
         </div>
+
+        {/* Explicit width = totalPx + containerWidth so max scrollLeft = totalPx (playhead reaches end) */}
+        <div style={{ paddingLeft: PLAYHEAD_FIXED_PX, width: totalPx + containerWidth }}>
 
         {/* Row 2: Time ruler */}
         <div
@@ -1284,9 +1377,126 @@ export function TimelineEditor({
             </div>
           )
         })()}
+
+        {/* Spacer: ensures the timeline can scroll far enough right for the playhead to reach the end of the last clip */}
+        <div style={{ width: totalPx + Math.max(0, containerWidth), height: 0, flexShrink: 0 }} />
+        </div>{/* end content wrapper */}
       </div>
 
-      {/* Row 6: Camera buttons */}
+      {/* Row 6: Mini overview */}
+      <div
+        ref={overviewRef}
+        style={{
+          height: OVERVIEW_HEIGHT,
+          background: '#111',
+          flexShrink: 0,
+          position: 'relative',
+          borderTop: '1px solid #333',
+          cursor: 'pointer',
+          overflow: 'hidden',
+        }}
+        onClick={(e) => {
+          const ow = overviewRef.current?.clientWidth ?? 1
+          const containerWidth = scrollContainerRef.current?.clientWidth ?? 0
+          const targetScrollLeft =
+            ((e.clientX - (overviewRef.current?.getBoundingClientRect().left ?? 0)) / ow) *
+              totalPx -
+            containerWidth / 2
+          if (scrollContainerRef.current) {
+            const el2 = scrollContainerRef.current
+            isAutoScrollingRef.current = true
+            el2.scrollLeft = Math.max(0, targetScrollLeft)
+            setTimeout(() => { isAutoScrollingRef.current = false }, 0)
+          }
+        }}
+      >
+        {/* Shot blocks in overview */}
+        {shots.map((shot, i) => {
+          const cam = cameraMap.get(shot.cameraId)
+          const ow = overviewRef.current?.clientWidth ?? 300
+          const left = (shotOffsets[i] / totalPx) * ow
+          const width =
+            ((dragOverride[shot.id] ?? shot.durationMs) / 1000) * zoomPxPerSec * (ow / totalPx)
+          return (
+            <div
+              key={shot.id}
+              style={{
+                position: 'absolute',
+                left,
+                top: 0,
+                width: Math.max(1, width),
+                height: OVERVIEW_HEIGHT,
+                background: cam?.color ?? '#555',
+              }}
+            />
+          )
+        })}
+
+        {/* Playhead line in overview */}
+        {totalMs > 0 && (
+          <div
+            style={{
+              position: 'absolute',
+              left: (playheadMs / totalMs) * (overviewRef.current?.clientWidth ?? 300),
+              top: 0,
+              width: 1,
+              height: OVERVIEW_HEIGHT,
+              background: '#e74c3c',
+              pointerEvents: 'none',
+              zIndex: 5,
+            }}
+          />
+        )}
+
+        {/* Viewport rect */}
+        {totalPx > 0 &&
+          (() => {
+            const ow = overviewRef.current?.clientWidth ?? 300
+            const containerWidth = scrollContainerRef.current?.clientWidth ?? 200
+            const vpLeft = (currentScrollLeft / totalPx) * ow
+            const vpRight = Math.min(ow, vpLeft + (containerWidth / totalPx) * ow)
+            const vpWidth = Math.max(4, vpRight - vpLeft)
+            return (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: vpLeft,
+                  top: 0,
+                  width: vpWidth,
+                  height: OVERVIEW_HEIGHT,
+                  border: '2px solid white',
+                  background: 'rgba(255,255,255,0.1)',
+                  boxSizing: 'border-box',
+                  cursor: 'ew-resize',
+                  zIndex: 10,
+                }}
+                onMouseDown={(e) => {
+                  e.stopPropagation()
+                  const startX = e.clientX
+                  const origScroll = scrollContainerRef.current?.scrollLeft ?? 0
+                  const ow2 = overviewRef.current?.clientWidth ?? 300
+                  function onMM(ev: MouseEvent): void {
+                    const delta = ev.clientX - startX
+                    if (scrollContainerRef.current) {
+                      scrollContainerRef.current.scrollLeft = Math.max(
+                        0,
+                        origScroll + (delta * totalPx) / ow2,
+                      )
+                    }
+                  }
+                  function onMU(): void {
+                    window.removeEventListener('mousemove', onMM)
+                    window.removeEventListener('mouseup', onMU)
+                  }
+                  window.addEventListener('mousemove', onMM)
+                  window.addEventListener('mouseup', onMU)
+                }}
+              />
+            )
+          })()}
+      </div>
+
+      {/* Row 7: Camera buttons */}
       <div
         style={{
           height: CAM_BUTTONS_HEIGHT,
@@ -1335,114 +1545,6 @@ export function TimelineEditor({
         {sortedCameras.length === 0 && (
           <span style={{ color: '#444', fontSize: '11px' }}>No cameras configured</span>
         )}
-      </div>
-
-      {/* Row 7: Mini overview */}
-      <div
-        ref={overviewRef}
-        style={{
-          height: OVERVIEW_HEIGHT,
-          background: '#111',
-          flexShrink: 0,
-          position: 'relative',
-          borderTop: '1px solid #333',
-          cursor: 'pointer',
-          overflow: 'hidden',
-        }}
-        onClick={(e) => {
-          const ow = overviewRef.current?.clientWidth ?? 1
-          const containerWidth = scrollContainerRef.current?.clientWidth ?? 0
-          const targetScrollLeft =
-            ((e.clientX - (overviewRef.current?.getBoundingClientRect().left ?? 0)) / ow) *
-              totalPx -
-            containerWidth / 2
-          if (scrollContainerRef.current)
-            scrollContainerRef.current.scrollLeft = Math.max(0, targetScrollLeft)
-        }}
-      >
-        {/* Shot blocks in overview */}
-        {shots.map((shot, i) => {
-          const cam = cameraMap.get(shot.cameraId)
-          const ow = overviewRef.current?.clientWidth ?? 300
-          const left = (shotOffsets[i] / totalPx) * ow
-          const width =
-            ((dragOverride[shot.id] ?? shot.durationMs) / 1000) * zoomPxPerSec * (ow / totalPx)
-          return (
-            <div
-              key={shot.id}
-              style={{
-                position: 'absolute',
-                left,
-                top: 0,
-                width: Math.max(1, width),
-                height: OVERVIEW_HEIGHT,
-                background: cam?.color ?? '#555',
-              }}
-            />
-          )
-        })}
-
-        {/* Playhead line in overview */}
-        {totalMs > 0 && (
-          <div
-            style={{
-              position: 'absolute',
-              left: (playheadMs / totalMs) * (overviewRef.current?.clientWidth ?? 300),
-              top: 0,
-              width: 1,
-              height: OVERVIEW_HEIGHT,
-              background: '#e74c3c',
-              pointerEvents: 'none',
-              zIndex: 5,
-            }}
-          />
-        )}
-
-        {/* Viewport rect */}
-        {totalPx > 0 &&
-          (() => {
-            const ow = overviewRef.current?.clientWidth ?? 300
-            const containerWidth = scrollContainerRef.current?.clientWidth ?? 200
-            const vpWidth = Math.max(8, (containerWidth / totalPx) * ow)
-            const vpLeft = Math.min((currentScrollLeft / totalPx) * ow, ow - vpWidth)
-            return (
-              <div
-                style={{
-                  position: 'absolute',
-                  left: vpLeft,
-                  top: 0,
-                  width: vpWidth,
-                  height: OVERVIEW_HEIGHT,
-                  border: '2px solid white',
-                  background: 'rgba(255,255,255,0.1)',
-                  boxSizing: 'border-box',
-                  cursor: 'ew-resize',
-                  zIndex: 10,
-                }}
-                onMouseDown={(e) => {
-                  e.stopPropagation()
-                  const startX = e.clientX
-                  const origScroll = scrollContainerRef.current?.scrollLeft ?? 0
-                  const ow2 = overviewRef.current?.clientWidth ?? 300
-                  function onMM(ev: MouseEvent): void {
-                    const delta = ev.clientX - startX
-                    if (scrollContainerRef.current) {
-                      scrollContainerRef.current.scrollLeft = Math.max(
-                        0,
-                        origScroll + (delta * totalPx) / ow2,
-                      )
-                    }
-                  }
-                  function onMU(): void {
-                    window.removeEventListener('mousemove', onMM)
-                    window.removeEventListener('mouseup', onMU)
-                  }
-                  window.addEventListener('mousemove', onMM)
-                  window.addEventListener('mouseup', onMU)
-                }}
-              />
-            )
-          })()}
       </div>
 
       {/* Context menu */}

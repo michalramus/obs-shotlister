@@ -192,7 +192,8 @@ export default function App(): React.JSX.Element {
       if (e.code === 'Space') {
         e.preventDefault()
         if (running) liveNext().catch((err: unknown) => console.error('[App] liveNext:', err))
-        else if (shots.length > 0 && activeRundownId) liveStart(activeRundownId).catch((err: unknown) => console.error('[App] liveStart:', err))
+        else if (uiMode === 'live' && shots.length > 0 && activeRundownId) liveStart(activeRundownId).catch((err: unknown) => console.error('[App] liveStart:', err))
+        // If uiMode === 'edit', do nothing — TimelineEditor handles Space
       }
       if (e.code === 'ArrowRight' && running) {
         e.preventDefault()
@@ -201,7 +202,7 @@ export default function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [running, shots, activeRundownId, liveNext, liveStart, liveSkipNext])
+  }, [running, shots, activeRundownId, liveNext, liveStart, liveSkipNext, uiMode])
 
   // When the active project changes, load its cameras + rundowns
   useEffect(() => {
@@ -308,7 +309,7 @@ export default function App(): React.JSX.Element {
                   <div style={{ flex: 1, overflow: 'hidden', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <video
                       ref={videoRef}
-                      src={`file://${rundownMedia!.filePath}`}
+                      src={`media://localhost${rundownMedia!.filePath}`}
                       controls
                       style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
                     />
