@@ -40,7 +40,13 @@ export const useWebStore = create<WebStore>((set) => ({
 
   setLiveState: (data) => {
     const clientStartedAt = data.elapsedMs !== null ? Date.now() - data.elapsedMs : null
-    set({ liveIndex: data.liveIndex, startedAt: clientStartedAt })
+    set((s) => {
+      const shots =
+        data.liveIndex !== null
+          ? s.shots.map((shot, i) => (i < data.liveIndex! && !shot.hidden ? { ...shot, hidden: true } : shot))
+          : s.shots
+      return { liveIndex: data.liveIndex, startedAt: clientStartedAt, shots }
+    })
   },
 
   setPlayback: (data) => set({ running: data.running }),

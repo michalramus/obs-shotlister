@@ -122,11 +122,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
     })
   },
   setLiveState: (state) =>
-    set({
+    set((s) => ({
       liveIndex: state.liveIndex,
       startedAt: state.startedAt,
       running: state.running,
-    }),
+      shots:
+        state.liveIndex !== null
+          ? s.shots.map((shot, i) => (i < state.liveIndex! && !shot.hidden ? { ...shot, hidden: true } : shot))
+          : s.shots,
+    })),
 
   setObsStatus: (status) => set({ obsStatus: status }),
   setObsValidationResult: (result) => set({ obsValidationResult: result }),
