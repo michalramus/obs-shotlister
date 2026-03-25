@@ -83,6 +83,7 @@ export interface ElectronApi {
     clear: (payload: { rundownId: string }) => Promise<void>
     openDialog: () => Promise<{ canceled: boolean; filePaths: string[] }>
   }
+  mediaReadFile: (filePath: string) => Promise<Buffer>
 }
 
 const api: ElectronApi = {
@@ -159,6 +160,7 @@ const api: ElectronApi = {
     clear: (payload) => ipcRenderer.invoke('rundown:media:clear', payload),
     openDialog: () => ipcRenderer.invoke('rundown:media:open-dialog'),
   },
+  mediaReadFile: (filePath) => ipcRenderer.invoke('media:read-file', filePath),
 }
 
 contextBridge.exposeInMainWorld('api', api)

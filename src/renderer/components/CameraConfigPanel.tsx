@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react'
+import React, { useState } from 'react'
 import { useAppStore } from '../store'
 import type { Camera } from '../../shared/types'
-import type { TransitionMapping } from '../electron-api.d'
 
 // ---------------------------------------------------------------------------
 // Resolve marker color options
@@ -562,232 +561,6 @@ function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): Rea
 }
 
 // ---------------------------------------------------------------------------
-// Transition Mappings section
-// ---------------------------------------------------------------------------
-
-const BUILTIN_TRANSITIONS = ['cut', 'fade', 'stinger'] as const
-
-interface TransitionMappingsSectionProps {
-  obsConnected: boolean
-}
-
-function TransitionMappingsSection({ obsConnected }: TransitionMappingsSectionProps): React.JSX.Element {
-  const [mappings, setMappings] = useState<TransitionMapping[]>([])
-  const [obsTransitions, setObsTransitions] = useState<string[]>([])
-  const [savingMap, setSavingMap] = useState<Record<string, boolean>>({})
-  const [error, setError] = useState<string | null>(null)
-
-  // New mapping form state
-  const [newLogicalName, setNewLogicalName] = useState('')
-  const [newObsName, setNewObsName] = useState('')
-  const [addingNew, setAddingNew] = useState(false)
-
-  useEffect(() => {
-    void fetchAll()
-  }, [])
-
-  async function fetchAll(): Promise<void> {
-    try {
-      const [maps, transitions] = await Promise.all([
-        window.api.obs.listTransitionMappings(),
-        window.api.obs.getTransitions(),
-      ])
-      setMappings(maps)
-      setObsTransitions(transitions)
-    } catch {
-      /* ignore */
-    }
-  }
-
-  async function handleObsNameChange(logicalName: string, obsName: string): Promise<void> {
-    setSavingMap((prev) => ({ ...prev, [logicalName]: true }))
-    setError(null)
-    try {
-      await window.api.obs.upsertTransitionMapping({ logicalName, obsTransitionName: obsName })
-      setMappings((prev) =>
-        prev.map((m) => (m.logicalName === logicalName ? { ...m, obsTransitionName: obsName } : m)),
-      )
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed.')
-    } finally {
-      setSavingMap((prev) => ({ ...prev, [logicalName]: false }))
-    }
-  }
-
-  async function handleDelete(logicalName: string): Promise<void> {
-    setSavingMap((prev) => ({ ...prev, [logicalName]: true }))
-    setError(null)
-    try {
-      await window.api.obs.deleteTransitionMapping({ logicalName })
-      setMappings((prev) => prev.filter((m) => m.logicalName !== logicalName))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Delete failed.')
-    } finally {
-      setSavingMap((prev) => ({ ...prev, [logicalName]: false }))
-    }
-  }
-
-  async function handleAddMapping(): Promise<void> {
-    if (!newLogicalName.trim() || !newObsName) return
-    setError(null)
-    try {
-      await window.api.obs.upsertTransitionMapping({
-        logicalName: newLogicalName.trim(),
-        obsTransitionName: newObsName,
-      })
-      await fetchAll()
-      setNewLogicalName('')
-      setNewObsName('')
-      setAddingNew(false)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add mapping.')
-    }
-  }
-
-  return (
-    <div>
-      <p style={s.sectionTitle}>Transition Mappings</p>
-      {error !== null && <p style={s.errorText}>{error}</p>}
-      <table style={s.table}>
-        <thead>
-          <tr>
-            <th style={s.th}>Logical name</th>
-            <th style={s.th}>OBS transition</th>
-            <th style={s.th} />
-          </tr>
-        </thead>
-        <tbody>
-          {mappings.map((m) => {
-            const isBuiltin = (BUILTIN_TRANSITIONS as readonly string[]).includes(m.logicalName)
-            const isSaving = savingMap[m.logicalName] === true
-            return (
-              <tr key={m.logicalName}>
-                <td style={s.td}>
-                  <span style={{ color: isBuiltin ? '#888' : '#ddd' }}>{m.logicalName}</span>
-                </td>
-                <td style={s.td}>
-                  {obsConnected && obsTransitions.length > 0 ? (
-                    <select
-                      style={s.select}
-                      value={m.obsTransitionName}
-                      aria-label={`OBS transition for ${m.logicalName}`}
-                      disabled={isSaving}
-                      onChange={(e) => void handleObsNameChange(m.logicalName, e.target.value)}
-                    >
-                      {obsTransitions.map((t) => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
-                      {!obsTransitions.includes(m.obsTransitionName) && (
-                        <option value={m.obsTransitionName}>{m.obsTransitionName}</option>
-                      )}
-                    </select>
-                  ) : (
-                    <input
-                      style={s.input}
-                      type="text"
-                      value={m.obsTransitionName}
-                      aria-label={`OBS transition for ${m.logicalName}`}
-                      disabled={isSaving}
-                      onChange={(e) => {
-                        const val = e.target.value
-                        setMappings((prev) =>
-                          prev.map((mp) =>
-                            mp.logicalName === m.logicalName ? { ...mp, obsTransitionName: val } : mp,
-                          ),
-                        )
-                      }}
-                      onBlur={(e) => void handleObsNameChange(m.logicalName, e.target.value)}
-                    />
-                  )}
-                </td>
-                <td style={{ ...s.td, width: '40px' }}>
-                  {!isBuiltin && (
-                    <button
-                      style={s.iconBtn}
-                      onClick={() => void handleDelete(m.logicalName)}
-                      title="Delete mapping"
-                      aria-label={`Delete mapping ${m.logicalName}`}
-                      disabled={isSaving}
-                    >
-                      ✕
-                    </button>
-                  )}
-                </td>
-              </tr>
-            )
-          })}
-          {addingNew && (
-            <tr>
-              <td style={s.td}>
-                <input
-                  autoFocus
-                  style={s.input}
-                  type="text"
-                  placeholder="Logical name"
-                  value={newLogicalName}
-                  aria-label="New logical name"
-                  onChange={(e) => setNewLogicalName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Escape') setAddingNew(false)
-                  }}
-                />
-              </td>
-              <td style={s.td}>
-                {obsConnected && obsTransitions.length > 0 ? (
-                  <select
-                    style={s.select}
-                    value={newObsName}
-                    aria-label="New OBS transition"
-                    onChange={(e) => setNewObsName(e.target.value)}
-                  >
-                    <option value="">— Select —</option>
-                    {obsTransitions.map((t) => (
-                      <option key={t} value={t}>{t}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    style={s.input}
-                    type="text"
-                    placeholder="OBS transition name"
-                    value={newObsName}
-                    aria-label="New OBS transition"
-                    onChange={(e) => setNewObsName(e.target.value)}
-                  />
-                )}
-              </td>
-              <td style={{ ...s.td, width: '72px', whiteSpace: 'nowrap' }}>
-                <button
-                  style={{ ...s.iconBtn, color: '#4a90d9' }}
-                  onClick={() => void handleAddMapping()}
-                  title="Save mapping"
-                  aria-label="Save new mapping"
-                >
-                  ✓
-                </button>
-                <button
-                  style={s.iconBtn}
-                  onClick={() => setAddingNew(false)}
-                  title="Cancel"
-                  aria-label="Cancel new mapping"
-                >
-                  ✕
-                </button>
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-      {!addingNew && (
-        <button style={{ ...s.addBtn, marginTop: '8px' }} onClick={() => setAddingNew(true)}>
-          + Add mapping
-        </button>
-      )}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // CameraConfigPanel — modal
 // ---------------------------------------------------------------------------
 
@@ -798,7 +571,6 @@ interface CameraConfigPanelProps {
 export function CameraConfigPanel({ onClose }: CameraConfigPanelProps): React.JSX.Element {
   const cameras = useAppStore((st) => st.cameras)
   const activeProjectId = useAppStore((st) => st.activeProjectId)
-  const obsStatus = useAppStore((st) => st.obsStatus)
   const removeCamera = useAppStore((st) => st.removeCamera)
 
   const [addingNew, setAddingNew] = useState(false)
@@ -860,8 +632,6 @@ export function CameraConfigPanel({ onClose }: CameraConfigPanelProps): React.JS
               + Add camera
             </button>
           )}
-
-          <TransitionMappingsSection obsConnected={obsStatus === 'connected'} />
         </div>
       </div>
 

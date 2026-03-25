@@ -342,13 +342,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   liveStart: async (rundownId) => {
     const state = await window.api.live.start({ rundownId })
     get().setLiveState(state)
-    set({ uiMode: 'live' })
   },
 
   liveStop: async () => {
     const state = await window.api.live.stop()
     get().setLiveState(state)
-    set({ uiMode: 'edit' })
     const { activeRundownId } = get()
     if (activeRundownId) await get().loadShots(activeRundownId)
   },

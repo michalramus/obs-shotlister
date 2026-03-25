@@ -139,6 +139,7 @@ export interface ElectronApi {
     clear: (payload: { rundownId: string }) => Promise<void>
     openDialog: () => Promise<{ canceled: boolean; filePaths: string[] }>
   }
+  mediaReadFile: (filePath: string) => Promise<ArrayBuffer>
 }
 
 declare global {

@@ -443,6 +443,10 @@ function registerIpcHandlers(): void {
     db.prepare("DELETE FROM settings WHERE key = ?").run(`rundown_media_offset_${payload.rundownId}`)
   })
 
+  ipcMain.handle('media:read-file', (_e, filePath: string) => {
+    return readFileSync(filePath)
+  })
+
   ipcMain.handle('rundown:media:open-dialog', async () => {
     const result = await dialog.showOpenDialog({
       properties: ['openFile'],

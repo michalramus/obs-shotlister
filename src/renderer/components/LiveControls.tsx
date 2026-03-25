@@ -1,22 +1,23 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { useAppStore } from '../store'
 
 const s = {
-  bar: {
+  bar: (uiMode: 'edit' | 'live'): React.CSSProperties => ({
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
     padding: '10px 16px',
     background: '#1a1a1a',
     borderBottom: '1px solid #2a2a2a',
-  } satisfies React.CSSProperties,
+    borderLeft: uiMode === 'edit' ? '4px solid #2980b9' : '4px solid #e74c3c',
+  }),
 
   btn: (variant: 'primary' | 'danger' | 'secondary' | 'mode-live' | 'mode-edit'): React.CSSProperties => ({
-    padding: '6px 14px',
+    padding: '6px 16px',
     borderRadius: '4px',
     border: 'none',
     cursor: 'pointer',
-    fontWeight: 600,
+    fontWeight: 700,
     fontSize: '13px',
     background:
       variant === 'primary'
@@ -24,16 +25,16 @@ const s = {
         : variant === 'danger'
           ? '#e74c3c'
           : variant === 'mode-live'
-            ? '#2980b9'
+            ? '#e74c3c'
             : variant === 'mode-edit'
-              ? '#3a3a3a'
+              ? '#2980b9'
               : '#3a3a3a',
     color: '#fff',
   }),
 
   liveBadge: {
     marginLeft: 'auto',
-    fontSize: '12px',
+    fontSize: '14px',
     color: '#e74c3c',
     fontWeight: 700,
     letterSpacing: '0.05em',
@@ -52,6 +53,12 @@ export function LiveControls(): React.JSX.Element {
   const liveIndex = useAppStore((s) => s.liveIndex)
   const uiMode = useAppStore((s) => s.uiMode)
   const setUiMode = useAppStore((s) => s.setUiMode)
+
+  useEffect(() => {
+    const style = document.createElement('style')
+    style.textContent = `@keyframes pulse-live { 0%,100% { opacity:1 } 50% { opacity:0.4 } }`
+    document.head.appendChild(style)
+  }, [])
 
   function handleError(label: string, err: unknown): void {
     console.error(`[LiveControls] ${label}:`, err)
@@ -72,13 +79,13 @@ export function LiveControls(): React.JSX.Element {
 
   if (!running) {
     return (
-      <div style={s.bar} data-testid="live-controls">
+      <div style={s.bar(uiMode)} data-testid="live-controls">
         <button
-          style={s.btn(uiMode === 'edit' ? 'mode-live' : 'mode-edit')}
+          style={s.btn(uiMode === 'live' ? 'mode-live' : 'mode-edit')}
           onClick={() => setUiMode(uiMode === 'edit' ? 'live' : 'edit')}
           aria-label={uiMode === 'edit' ? 'Switch to live layout' : 'Switch to edit layout'}
         >
-          {uiMode === 'edit' ? '→ Live' : '← Edit'}
+          {uiMode === 'edit' ? 'EDIT MODE' : 'LIVE MODE'}
         </button>
         <button
           style={s.btn('primary')}
@@ -97,13 +104,13 @@ export function LiveControls(): React.JSX.Element {
   }
 
   return (
-    <div style={s.bar} data-testid="live-controls">
+    <div style={s.bar(uiMode)} data-testid="live-controls">
       <button
-        style={s.btn(uiMode === 'edit' ? 'mode-live' : 'mode-edit')}
+        style={s.btn(uiMode === 'live' ? 'mode-live' : 'mode-edit')}
         onClick={() => setUiMode(uiMode === 'edit' ? 'live' : 'edit')}
         aria-label={uiMode === 'edit' ? 'Switch to live layout' : 'Switch to edit layout'}
       >
-        {uiMode === 'edit' ? '→ Live' : '← Edit'}
+        {uiMode === 'edit' ? 'EDIT MODE' : 'LIVE MODE'}
       </button>
       <button
         style={s.btn('danger')}
@@ -142,7 +149,7 @@ export function LiveControls(): React.JSX.Element {
         <span style={{ fontSize: '12px', color: '#888' }}>last shot</span>
       )}
 
-      <span style={s.liveBadge}>● LIVE</span>
+      <span style={{ ...s.liveBadge, animation: 'pulse-live 1.2s ease-in-out infinite' }}>● LIVE</span>
     </div>
   )
 }
