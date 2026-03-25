@@ -123,7 +123,6 @@ export function TimelineEditor({
   const onAddMarkerRef = useRef(onAddMarker)
   const isFirstLiveRef = useRef(true)
   const audioPlayRef = useRef<HTMLAudioElement | null>(null)
-  const audioBlobUrlRef = useRef<string | null>(null)
   const pendingDragClearRef = useRef(false)
 
   // Keep zoomRef in sync
@@ -199,6 +198,17 @@ export function TimelineEditor({
     }
     setWaveformError(false)
     let cancelled = false
+
+    // Create audio playback element immediately (before waveform decode) so play() is ready
+    const VIDEO_EXTS = ['.mp4', '.mov', '.webm', '.avi', '.mkv']
+    const isVideoFile = VIDEO_EXTS.some((ext) => rundownMedia.filePath.toLowerCase().endsWith(ext))
+    if (!isVideoFile) {
+      audioPlayRef.current?.pause()
+      const audio = new Audio('media://localhost' + rundownMedia.filePath)
+      audio.preload = 'auto'
+      audioPlayRef.current = audio
+    }
+
     async function decode(): Promise<void> {
       try {
         const buf = await window.api.mediaReadFile(rundownMedia!.filePath)
@@ -238,24 +248,7 @@ export function TimelineEditor({
           }
           peaks.push(max)
         }
-        if (!cancelled) {
-          setWaveformData(peaks)
-          // Create audio element for non-video files
-          const VIDEO_EXTS = ['.mp4', '.mov', '.webm', '.avi', '.mkv']
-          const isVideoFile = VIDEO_EXTS.some((ext) => rundownMedia!.filePath.toLowerCase().endsWith(ext))
-          if (!isVideoFile) {
-            const ext = rundownMedia!.filePath.toLowerCase().split('.').pop() ?? ''
-            const mimeMap: Record<string, string> = {
-              mp3: 'audio/mpeg', wav: 'audio/wav', aac: 'audio/aac',
-              ogg: 'audio/ogg', flac: 'audio/flac', m4a: 'audio/mp4',
-            }
-            const blob = new Blob([srcBuffer], { type: mimeMap[ext] ?? 'audio/mpeg' })
-            if (audioBlobUrlRef.current) URL.revokeObjectURL(audioBlobUrlRef.current)
-            audioBlobUrlRef.current = URL.createObjectURL(blob)
-            if (audioPlayRef.current) audioPlayRef.current.pause()
-            audioPlayRef.current = new Audio(audioBlobUrlRef.current)
-          }
-        }
+        if (!cancelled) setWaveformData(peaks)
       } catch (err) {
         console.error('[TimelineEditor] waveform decode error:', err)
       }
@@ -263,10 +256,6 @@ export function TimelineEditor({
     void decode()
     return () => {
       cancelled = true
-      if (audioBlobUrlRef.current) {
-        URL.revokeObjectURL(audioBlobUrlRef.current)
-        audioBlobUrlRef.current = null
-      }
       if (audioPlayRef.current) {
         audioPlayRef.current.pause()
         audioPlayRef.current = null
@@ -286,20 +275,30 @@ export function TimelineEditor({
       }
       return
     }
+    // Seek + start media once when playback begins
+    const startMs = playStartRef.current?.headMs ?? playheadMsRef.current
+    const vid = getMediaEl()
+    if (vid && rundownMedia) {
+      const mediaTime = (startMs - rundownMedia.offsetMs) / 1000
+      if (mediaTime >= 0) {
+        vid.currentTime = mediaTime
+        void vid.play().catch((err: unknown) => { console.error('[TimelineEditor] play():', err) })
+      }
+    }
     function tick(): void {
       if (!playStartRef.current) return
       const elapsed = performance.now() - playStartRef.current.wallMs
       const newMs = Math.min(playStartRef.current.headMs + elapsed, totalMs)
       setPlayheadMs(newMs)
       autoScroll(newMs)
-      // Media sync
-      const vid = getMediaEl()
-      if (vid && rundownMedia) {
-        const mediaTime = (newMs - rundownMedia.offsetMs) / 1000
-        if (mediaTime >= 0) {
-          if (Math.abs(vid.currentTime - mediaTime) > 0.15) vid.currentTime = mediaTime
+      // Drift correction only for large discrepancies — trust media element's own clock
+      const v = getMediaEl()
+      if (v && rundownMedia) {
+        const mt = (newMs - rundownMedia.offsetMs) / 1000
+        if (mt >= 0) {
+          if (Math.abs(v.currentTime - mt) > 1.0) v.currentTime = mt
         } else {
-          if (!vid.paused) vid.pause()
+          if (!v.paused) v.pause()
         }
       }
       if (newMs >= totalMs) {
@@ -425,14 +424,7 @@ export function TimelineEditor({
         setIsPlaying((prev) => {
           if (!prev) {
             playStartRef.current = { wallMs: performance.now(), headMs: playheadMsRef.current }
-            const vid = getMediaEl()
-            if (vid && rundownMedia) {
-              const mediaTime = (playheadMsRef.current - rundownMedia.offsetMs) / 1000
-              if (mediaTime >= 0) {
-                vid.currentTime = mediaTime
-                vid.play().catch((err: unknown) => { console.error('[TimelineEditor] play() failed:', err) })
-              }
-            }
+            // RAF effect handles seek + play()
           } else {
             getMediaEl()?.pause()
             seekMediaToMs(playheadMsRef.current)
@@ -734,14 +726,7 @@ export function TimelineEditor({
             } else {
               playStartRef.current = { wallMs: performance.now(), headMs: playheadMs }
               setIsPlaying(true)
-              const vid = getMediaEl()
-              if (vid && rundownMedia) {
-                const mediaTime = (playheadMs - rundownMedia.offsetMs) / 1000
-                if (mediaTime >= 0) {
-                  vid.currentTime = mediaTime
-                  vid.play().catch((err: unknown) => { console.error('[TimelineEditor] play() failed:', err) })
-                }
-              }
+              // RAF effect handles seek + play()
             }
           }}
           title="Play/Pause (Space)"
