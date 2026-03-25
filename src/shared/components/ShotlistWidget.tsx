@@ -179,6 +179,7 @@ export function ShotlistWidget({
   const [headerFlash, setHeaderFlash] = useState(false)
   const rafRef = useRef<number | null>(null)
   const liveRef = useRef<HTMLLIElement | null>(null)
+  const waitStartRef = useRef<{ startTime: number; totalMs: number } | null>(null)
 
   // 60fps ticker while running
   useEffect(() => {
@@ -240,9 +241,22 @@ export function ShotlistWidget({
   const liveCam = liveShot ? cameraById.get(liveShot.cameraId) : undefined
   const isWaiting = hasFilter && liveCam !== undefined && !cameraFilter!.includes(liveCam.number)
 
+  // Capture wait start once; clear when no longer waiting.
+  // Uses wall-clock time so bar continues through overruns and shot transitions.
+  if (!isWaiting) {
+    waitStartRef.current = null
+  } else if (
+    waitStartRef.current === null &&
+    timing.totalTimeUntilNextVisibleMs !== null &&
+    timing.timeUntilNextVisibleMs !== null
+  ) {
+    const elapsed = timing.totalTimeUntilNextVisibleMs - timing.timeUntilNextVisibleMs
+    waitStartRef.current = { startTime: now - elapsed, totalMs: timing.totalTimeUntilNextVisibleMs }
+  }
+
   const waitingPct =
-    isWaiting && timing.timeUntilNextVisibleMs !== null && timing.totalTimeUntilNextVisibleMs
-      ? Math.min(1, Math.max(0, 1 - timing.timeUntilNextVisibleMs / timing.totalTimeUntilNextVisibleMs))
+    waitStartRef.current !== null
+      ? Math.min(1, Math.max(0, (now - waitStartRef.current.startTime) / waitStartRef.current.totalMs))
       : null
 
   const headerCountdown = isWaiting && timing.timeUntilNextVisibleMs !== null
@@ -254,15 +268,12 @@ export function ShotlistWidget({
       <div
         style={{
           ...s.header,
-          position: 'relative',
-          overflow: 'hidden',
           background: headerFlash ? '#666' : '#222',
           transition: 'background 0.35s ease-out',
         }}
       >
-        {waitingPct !== null && <div style={s.waitingBar(waitingPct)} />}
-        <span style={{ ...s.rundownName, position: 'relative' }}>{rundownName}</span>
-        <span style={{ ...s.countdown, color: isWaiting ? '#2ecc71' : '#ff3b30', position: 'relative' }}>
+        <span style={s.rundownName}>{rundownName}</span>
+        <span style={{ ...s.countdown, color: isWaiting ? '#2ecc71' : '#ff3b30' }}>
           {running && <span style={{ fontSize: '12px', marginRight: '4px' }}>▶</span>}
           {headerCountdown}
         </span>
@@ -288,6 +299,12 @@ export function ShotlistWidget({
               progressPct = 1 - timing.remainingMs / effectiveDur
             }
 
+            // Waiting bar: on the next-visible shot when operator is waiting for their camera
+            const showWaitingBar = isWaiting && isNext && waitingPct !== null
+            if (showWaitingBar && timing.timeUntilNextVisibleMs !== null) {
+              timeLabel = formatMs(timing.timeUntilNextVisibleMs)
+            }
+
             const effectiveDuration = timing.effectiveDurationMs ?? shot.durationMs
             const transitionPct =
               shot.transitionMs > 0 && (isLive || isNext)
@@ -302,11 +319,14 @@ export function ShotlistWidget({
                 data-testid={isLive ? 'shot-live' : isNext ? 'shot-next' : 'shot-row'}
                 data-shot-id={isLive ? shot.id : undefined}
               >
-                {(transitionPct > 0 || progressPct !== null) && (
+                {(transitionPct > 0 || progressPct !== null || showWaitingBar) && (
                   <div
                     style={s.progressTrack()}
                     data-testid={isLive ? 'progress-live' : isNext ? 'progress-next' : undefined}
                   >
+                    {showWaitingBar && waitingPct !== null && (
+                      <div style={s.waitingBar(waitingPct)} />
+                    )}
                     {transitionPct > 0 && (
                       <div style={s.transitionBar(transitionPct)} data-testid="progress-transition" />
                     )}
