@@ -179,7 +179,7 @@ export function ShotlistWidget({
   const [headerFlash, setHeaderFlash] = useState(false)
   const rafRef = useRef<number | null>(null)
   const liveRef = useRef<HTMLLIElement | null>(null)
-  const waitStartRef = useRef<{ startTime: number; totalMs: number } | null>(null)
+  const waitStartRef = useRef<{ totalMs: number } | null>(null)
 
   // 60fps ticker while running
   useEffect(() => {
@@ -241,22 +241,18 @@ export function ShotlistWidget({
   const liveCam = liveShot ? cameraById.get(liveShot.cameraId) : undefined
   const isWaiting = hasFilter && liveCam !== undefined && !cameraFilter!.includes(liveCam.number)
 
-  // Capture wait start once; clear when no longer waiting.
-  // Uses wall-clock time so bar continues through overruns and shot transitions.
+  // Capture totalMs once when waiting begins; clear when no longer waiting.
+  // Progress is derived from timeUntilNextVisibleMs (not wall-clock) so the bar
+  // naturally freezes when the live shot overruns and resumes on the next advance.
   if (!isWaiting) {
     waitStartRef.current = null
-  } else if (
-    waitStartRef.current === null &&
-    timing.totalTimeUntilNextVisibleMs !== null &&
-    timing.timeUntilNextVisibleMs !== null
-  ) {
-    const elapsed = timing.totalTimeUntilNextVisibleMs - timing.timeUntilNextVisibleMs
-    waitStartRef.current = { startTime: now - elapsed, totalMs: timing.totalTimeUntilNextVisibleMs }
+  } else if (waitStartRef.current === null && timing.totalTimeUntilNextVisibleMs !== null) {
+    waitStartRef.current = { totalMs: timing.totalTimeUntilNextVisibleMs }
   }
 
   const waitingPct =
-    waitStartRef.current !== null
-      ? Math.min(1, Math.max(0, (now - waitStartRef.current.startTime) / waitStartRef.current.totalMs))
+    waitStartRef.current !== null && timing.timeUntilNextVisibleMs !== null
+      ? Math.min(1, Math.max(0, 1 - timing.timeUntilNextVisibleMs / waitStartRef.current.totalMs))
       : null
 
   const headerCountdown = isWaiting && timing.timeUntilNextVisibleMs !== null
