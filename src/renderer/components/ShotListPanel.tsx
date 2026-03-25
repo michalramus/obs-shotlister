@@ -335,7 +335,9 @@ interface SortableShotRowProps {
   cameras: Camera[]
   isLocked: boolean
   isLive: boolean
+  isSelected: boolean
   liveRefCallback?: (el: HTMLLIElement | null) => void
+  selectedRefCallback?: (el: HTMLLIElement | null) => void
   onEdit: (shot: Shot) => void
   onDelete: (shot: Shot) => void
 }
@@ -345,7 +347,9 @@ function SortableShotRow({
   cameras,
   isLocked,
   isLive,
+  isSelected,
   liveRefCallback,
+  selectedRefCallback,
   onEdit,
   onDelete,
 }: SortableShotRowProps): React.JSX.Element {
@@ -363,11 +367,13 @@ function SortableShotRow({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
+    outline: isSelected ? '2px solid #4a90d9' : undefined,
+    outlineOffset: isSelected ? '-2px' : undefined,
   }
 
   return (
     <li
-      ref={(el) => { setNodeRef(el); liveRefCallback?.(el) }}
+      ref={(el) => { setNodeRef(el); liveRefCallback?.(el); selectedRefCallback?.(el) }}
       style={style}
       data-testid="shot-row"
     >
@@ -415,7 +421,11 @@ function SortableShotRow({
 // ShotListPanel
 // ---------------------------------------------------------------------------
 
-export function ShotListPanel(): React.JSX.Element {
+interface ShotListPanelProps {
+  selectedShotId: string | null
+}
+
+export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX.Element {
   const shots = useAppStore((s) => s.shots)
   const cameras = useAppStore((s) => s.cameras)
   const running = useAppStore((s) => s.running)
@@ -435,6 +445,14 @@ export function ShotListPanel(): React.JSX.Element {
   useEffect(() => {
     liveDomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [liveIndex])
+
+  const selectedRowRef = useRef<HTMLLIElement | null>(null)
+
+  useEffect(() => {
+    if (selectedShotId !== null) {
+      selectedRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [selectedShotId])
 
   const sensors = useSensors(useSensor(PointerSensor))
 
@@ -562,7 +580,9 @@ export function ShotListPanel(): React.JSX.Element {
                   cameras={cameras}
                   isLocked={running}
                   isLive={liveIndex === shots.indexOf(shot)}
+                  isSelected={shot.id === selectedShotId}
                   liveRefCallback={liveIndex === shots.indexOf(shot) ? setLiveRef : undefined}
+                  selectedRefCallback={shot.id === selectedShotId ? (el) => { selectedRowRef.current = el } : undefined}
                   onEdit={(s) => { setEditingShot(s); setShowAddForm(false) }}
                   onDelete={(s) => void handleDelete(s)}
                 />

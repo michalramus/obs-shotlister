@@ -138,6 +138,7 @@ export default function App(): React.JSX.Element {
   const liveSkipNext = useAppStore((s) => s.liveSkipNext)
   const editShot = useAppStore((s) => s.editShot)
   const splitShot = useAppStore((s) => s.splitShot)
+  const removeShot = useAppStore((s) => s.removeShot)
   const obsStatus = useAppStore((s) => s.obsStatus)
   const setObsStatus = useAppStore((s) => s.setObsStatus)
   const obsValidationResult = useAppStore((s) => s.obsValidationResult)
@@ -150,6 +151,9 @@ export default function App(): React.JSX.Element {
   const rundownMedia = useAppStore((s) => s.rundownMedia)
   const saveRundownMedia = useAppStore((s) => s.saveRundownMedia)
   const clearRundownMedia = useAppStore((s) => s.clearRundownMedia)
+
+  const [selectedShotId, setSelectedShotId] = useState<string | null>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
 
   const [showCameraConfig, setShowCameraConfig] = useState(false)
   const [showResolveImport, setShowResolveImport] = useState(false)
@@ -303,6 +307,7 @@ export default function App(): React.JSX.Element {
                   {activeRundownId !== null && <LiveControls />}
                   <div style={{ flex: 1, overflow: 'hidden', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <video
+                      ref={videoRef}
                       src={`file://${rundownMedia!.filePath}`}
                       controls
                       style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
@@ -313,9 +318,9 @@ export default function App(): React.JSX.Element {
                     cameras={cameras}
                     liveIndex={liveIndex}
                     running={running}
+                    startedAt={startedAt}
                     markers={markers}
-                    rundownMedia={rundownMedia}
-                    onShotClick={(_id) => { console.log('[App] shot clicked:', _id) }}
+                    onShotClick={(id) => setSelectedShotId(id)}
                     onSplitShot={(shotId, atMs, newCameraId) => {
                       if (atMs <= 0) {
                         editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) => console.error('[App] editShot:', err))
@@ -329,6 +334,17 @@ export default function App(): React.JSX.Element {
                         editShot({ id: idB, durationMs: Math.round(durB) }),
                       ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
                     }}
+                    onExtendLastShot={(id, dur) => {
+                      editShot({ id, durationMs: Math.round(dur) }).catch((err: unknown) => console.error('[App] extendLastShot:', err))
+                    }}
+                    onDeleteShot={(id) => {
+                      removeShot(id).catch((err: unknown) => console.error('[App] deleteShot:', err))
+                    }}
+                    onChangeShotCamera={(id, camId) => {
+                      editShot({ id, cameraId: camId }).catch((err: unknown) => console.error('[App] changeShotCamera:', err))
+                    }}
+                    mediaVideoRef={videoRef}
+                    rundownMedia={rundownMedia}
                     onAddMarker={(posMs) => {
                       if (activeRundownId) addMarker(activeRundownId, posMs).catch((err: unknown) => console.error('[App] addMarker:', err))
                     }}
@@ -348,7 +364,7 @@ export default function App(): React.JSX.Element {
 
                 {activeRundown !== null && (
                   <div style={styles.right}>
-                    <ShotListPanel />
+                    <ShotListPanel selectedShotId={selectedShotId} />
                   </div>
                 )}
               </>
@@ -356,15 +372,15 @@ export default function App(): React.JSX.Element {
               <>
                 <div style={styles.center}>
                   {activeRundownId !== null && <LiveControls />}
-                  <ShotListPanel />
+                  <ShotListPanel selectedShotId={selectedShotId} />
                   <TimelineEditor
                     shots={shots}
                     cameras={cameras}
                     liveIndex={liveIndex}
                     running={running}
+                    startedAt={startedAt}
                     markers={markers}
-                    rundownMedia={rundownMedia}
-                    onShotClick={(_id) => { console.log('[App] shot clicked:', _id) }}
+                    onShotClick={(id) => setSelectedShotId(id)}
                     onSplitShot={(shotId, atMs, newCameraId) => {
                       if (atMs <= 0) {
                         editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) => console.error('[App] editShot:', err))
@@ -378,6 +394,17 @@ export default function App(): React.JSX.Element {
                         editShot({ id: idB, durationMs: Math.round(durB) }),
                       ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
                     }}
+                    onExtendLastShot={(id, dur) => {
+                      editShot({ id, durationMs: Math.round(dur) }).catch((err: unknown) => console.error('[App] extendLastShot:', err))
+                    }}
+                    onDeleteShot={(id) => {
+                      removeShot(id).catch((err: unknown) => console.error('[App] deleteShot:', err))
+                    }}
+                    onChangeShotCamera={(id, camId) => {
+                      editShot({ id, cameraId: camId }).catch((err: unknown) => console.error('[App] changeShotCamera:', err))
+                    }}
+                    mediaVideoRef={videoRef}
+                    rundownMedia={rundownMedia}
                     onAddMarker={(posMs) => {
                       if (activeRundownId) addMarker(activeRundownId, posMs).catch((err: unknown) => console.error('[App] addMarker:', err))
                     }}
@@ -437,9 +464,9 @@ export default function App(): React.JSX.Element {
                 cameras={cameras}
                 liveIndex={liveIndex}
                 running={running}
+                startedAt={startedAt}
                 markers={markers}
-                rundownMedia={null}
-                onShotClick={(_id) => { console.log('[App] shot clicked:', _id) }}
+                onShotClick={(id) => setSelectedShotId(id)}
                 onSplitShot={(shotId, atMs, newCameraId) => {
                   if (atMs <= 0) {
                     editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) => console.error('[App] editShot:', err))
@@ -453,6 +480,17 @@ export default function App(): React.JSX.Element {
                     editShot({ id: idB, durationMs: Math.round(durB) }),
                   ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
                 }}
+                onExtendLastShot={(id, dur) => {
+                  editShot({ id, durationMs: Math.round(dur) }).catch((err: unknown) => console.error('[App] extendLastShot:', err))
+                }}
+                onDeleteShot={(id) => {
+                  removeShot(id).catch((err: unknown) => console.error('[App] deleteShot:', err))
+                }}
+                onChangeShotCamera={(id, camId) => {
+                  editShot({ id, cameraId: camId }).catch((err: unknown) => console.error('[App] changeShotCamera:', err))
+                }}
+                mediaVideoRef={videoRef}
+                rundownMedia={null}
                 onAddMarker={(posMs) => {
                   if (activeRundownId) addMarker(activeRundownId, posMs).catch((err: unknown) => console.error('[App] addMarker:', err))
                 }}
