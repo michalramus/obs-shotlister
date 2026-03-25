@@ -1,6 +1,8 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
 import { join } from 'path'
-import { readFileSync } from 'fs'
+import { readFileSync, createReadStream, promises as fsPromises } from 'fs'
+import { extname } from 'path'
+import { Readable } from 'stream'
 import { startServer } from './server'
 import { getDatabase } from './db/index'
 import {
@@ -33,6 +35,11 @@ import {
 import type { TransitionMapping } from './ipc/transitions'
 import { listMarkers, upsertMarker, deleteMarker } from './ipc/markers'
 import type { UpsertMarkerInput } from './ipc/markers'
+
+// Must be called before app is ready — allows media:// URLs in the renderer
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'media', privileges: { secure: true, standard: true, stream: true, supportFetchAPI: true } },
+])
 
 const obsClient = createOBSClient()
 let obsAutoReconnect = false
@@ -578,6 +585,54 @@ function broadcastRundown(): void {
 }
 
 app.whenReady().then(() => {
+  // Serve local media files via media:// protocol (avoids cross-origin issues in dev mode)
+  protocol.handle('media', async (request) => {
+    const filePath = decodeURIComponent(new URL(request.url).pathname)
+    let stat: Awaited<ReturnType<typeof fsPromises.stat>>
+    try {
+      stat = await fsPromises.stat(filePath)
+    } catch {
+      return new Response('Not found', { status: 404 })
+    }
+    const fileSize = stat.size
+    const ext = extname(filePath).toLowerCase().slice(1)
+    const mimeTypes: Record<string, string> = {
+      mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm',
+      mkv: 'video/x-matroska', avi: 'video/x-msvideo',
+      mp3: 'audio/mpeg', wav: 'audio/wav', aac: 'audio/aac',
+      ogg: 'audio/ogg', flac: 'audio/flac', m4a: 'audio/mp4',
+    }
+    const contentType = mimeTypes[ext] ?? 'application/octet-stream'
+    const rangeHeader = request.headers.get('range')
+
+    if (!rangeHeader) {
+      return new Response(Readable.toWeb(createReadStream(filePath)) as ReadableStream, {
+        headers: {
+          'Content-Length': fileSize.toString(),
+          'Content-Type': contentType,
+          'Accept-Ranges': 'bytes',
+        },
+      })
+    }
+
+    const match = rangeHeader.match(/bytes=(\d+)-(\d*)/)
+    if (!match) return new Response('Bad Range', { status: 400 })
+
+    const start = parseInt(match[1], 10)
+    const end = match[2] ? parseInt(match[2], 10) : fileSize - 1
+    const chunkSize = end - start + 1
+
+    return new Response(Readable.toWeb(createReadStream(filePath, { start, end })) as ReadableStream, {
+      status: 206,
+      headers: {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize.toString(),
+        'Content-Type': contentType,
+      },
+    })
+  })
+
   _db = getDatabase()
   clearLiveState(_db)
   registerIpcHandlers()
