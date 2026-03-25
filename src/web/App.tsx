@@ -65,6 +65,31 @@ const s = {
     fontSize: '14px',
   } satisfies React.CSSProperties,
 
+  filterBar: {
+    display: 'flex',
+    gap: '8px',
+    padding: '8px 14px',
+    background: '#161616',
+    borderBottom: '1px solid #2a2a2a',
+    overflowX: 'auto' as const,
+    flexShrink: 0,
+  } satisfies React.CSSProperties,
+
+  filterBadge: (color: string, active: boolean): React.CSSProperties => ({
+    background: color,
+    color: '#fff',
+    fontSize: '12px',
+    fontWeight: 700,
+    padding: '4px 10px',
+    borderRadius: '4px',
+    whiteSpace: 'nowrap' as const,
+    cursor: 'pointer',
+    border: active ? '2px solid #fff' : '2px solid transparent',
+    opacity: active ? 1 : 0.4,
+    flexShrink: 0,
+    userSelect: 'none' as const,
+  }),
+
   zoomBtn: {
     background: '#2a2a2a',
     border: '1px solid #444',
@@ -83,6 +108,23 @@ export default function App(): React.JSX.Element {
     const parsed = stored !== null ? parseFloat(stored) : NaN
     return isNaN(parsed) ? 1.0 : parsed
   })
+
+  const [selectedCameras, setSelectedCameras] = useState<number[]>(() => {
+    try {
+      const stored = localStorage.getItem('obs-queuer-camera-filter')
+      return stored !== null ? (JSON.parse(stored) as number[]) : []
+    } catch {
+      return []
+    }
+  })
+
+  function toggleCamera(num: number): void {
+    setSelectedCameras((prev) => {
+      const next = prev.includes(num) ? prev.filter((n) => n !== num) : [...prev, num]
+      try { localStorage.setItem('obs-queuer-camera-filter', JSON.stringify(next)) } catch {}
+      return next
+    })
+  }
 
   function adjustZoom(delta: number): void {
     setZoom((prev) => {
@@ -171,6 +213,21 @@ export default function App(): React.JSX.Element {
         </span>
       </header>
 
+      {cameras.length > 0 && (
+        <div style={s.filterBar}>
+          {cameras.map((cam) => (
+            <button
+              key={cam.id}
+              style={s.filterBadge(cam.color, selectedCameras.includes(cam.number))}
+              onClick={() => toggleCamera(cam.number)}
+              aria-pressed={selectedCameras.includes(cam.number)}
+            >
+              CAM{cam.number} {cam.name}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div style={{ ...s.content, zoom: zoom }}>
         {rundown === null ? (
           <div style={s.noRundown}>
@@ -184,6 +241,7 @@ export default function App(): React.JSX.Element {
             liveIndex={liveIndex}
             startedAt={startedAt}
             running={running}
+            cameraFilter={selectedCameras}
           />
         )}
       </div>
