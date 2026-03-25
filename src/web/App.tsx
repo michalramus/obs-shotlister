@@ -65,30 +65,17 @@ const s = {
     fontSize: '14px',
   } satisfies React.CSSProperties,
 
-  filterBar: {
-    display: 'flex',
-    gap: '8px',
-    padding: '8px 14px',
-    background: '#161616',
-    borderBottom: '1px solid #2a2a2a',
-    overflowX: 'auto' as const,
-    flexShrink: 0,
-  } satisfies React.CSSProperties,
-
-  filterBadge: (color: string, active: boolean): React.CSSProperties => ({
-    background: color,
-    color: '#fff',
-    fontSize: '12px',
-    fontWeight: 700,
-    padding: '4px 10px',
+  cameraSelect: {
+    background: '#2a2a2a',
+    border: '1px solid #444',
     borderRadius: '4px',
-    whiteSpace: 'nowrap' as const,
+    color: '#fff',
+    fontSize: '13px',
+    padding: '3px 6px',
     cursor: 'pointer',
-    border: active ? '2px solid #fff' : '2px solid transparent',
-    opacity: active ? 1 : 0.4,
-    flexShrink: 0,
-    userSelect: 'none' as const,
-  }),
+    flex: 1,
+    minWidth: 0,
+  } satisfies React.CSSProperties,
 
   zoomBtn: {
     background: '#2a2a2a',
@@ -109,21 +96,19 @@ export default function App(): React.JSX.Element {
     return isNaN(parsed) ? 1.0 : parsed
   })
 
-  const [selectedCameras, setSelectedCameras] = useState<number[]>(() => {
+  const [selectedCamera, setSelectedCamera] = useState<number | null>(() => {
     try {
       const stored = localStorage.getItem('obs-queuer-camera-filter')
-      return stored !== null ? (JSON.parse(stored) as number[]) : []
+      const parsed = stored !== null ? parseInt(stored, 10) : NaN
+      return isNaN(parsed) ? null : parsed
     } catch {
-      return []
+      return null
     }
   })
 
-  function toggleCamera(num: number): void {
-    setSelectedCameras((prev) => {
-      const next = prev.includes(num) ? prev.filter((n) => n !== num) : [...prev, num]
-      try { localStorage.setItem('obs-queuer-camera-filter', JSON.stringify(next)) } catch {}
-      return next
-    })
+  function handleCameraChange(num: number | null): void {
+    setSelectedCamera(num)
+    try { localStorage.setItem('obs-queuer-camera-filter', num !== null ? String(num) : '') } catch {}
   }
 
   function adjustZoom(delta: number): void {
@@ -207,26 +192,25 @@ export default function App(): React.JSX.Element {
           +
         </button>
 
+        {cameras.length > 0 && (
+          <select
+            style={s.cameraSelect}
+            value={selectedCamera ?? ''}
+            onChange={(e) => handleCameraChange(e.target.value === '' ? null : parseInt(e.target.value, 10))}
+            aria-label="Filter by camera"
+          >
+            <option value="">All cameras</option>
+            {cameras.map((cam) => (
+              <option key={cam.id} value={cam.number}>CAM{cam.number} {cam.name}</option>
+            ))}
+          </select>
+        )}
+
         <span style={s.statusText}>
           <span style={s.statusDot(connected)} />
           {connected ? 'Connected' : 'Disconnected'}
         </span>
       </header>
-
-      {cameras.length > 0 && (
-        <div style={s.filterBar}>
-          {cameras.map((cam) => (
-            <button
-              key={cam.id}
-              style={s.filterBadge(cam.color, selectedCameras.includes(cam.number))}
-              onClick={() => toggleCamera(cam.number)}
-              aria-pressed={selectedCameras.includes(cam.number)}
-            >
-              CAM{cam.number} {cam.name}
-            </button>
-          ))}
-        </div>
-      )}
 
       <div style={{ ...s.content, zoom: zoom }}>
         {rundown === null ? (
@@ -241,7 +225,7 @@ export default function App(): React.JSX.Element {
             liveIndex={liveIndex}
             startedAt={startedAt}
             running={running}
-            cameraFilter={selectedCameras}
+            cameraFilter={selectedCamera !== null ? [selectedCamera] : []}
           />
         )}
       </div>
