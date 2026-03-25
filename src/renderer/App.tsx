@@ -310,7 +310,6 @@ export default function App(): React.JSX.Element {
                     <video
                       ref={videoRef}
                       src={`media://localhost${rundownMedia!.filePath}`}
-                      controls
                       style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
                     />
                   </div>

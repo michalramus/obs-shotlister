@@ -392,6 +392,14 @@ export function TimelineEditor({
     return (mediaVideoRef.current as HTMLVideoElement | null) ?? audioPlayRef.current
   }
 
+  function seekMediaToMs(ms: number): void {
+    if (!rundownMedia) return
+    const vid = getMediaEl()
+    if (!vid) return
+    const mediaTime = (ms - rundownMedia.offsetMs) / 1000
+    vid.currentTime = Math.max(0, mediaTime)
+  }
+
   function zoomIn(): void {
     setZoomPxPerSec((z) => Math.min(2000, Math.round(z * 1.4)))
   }
@@ -403,6 +411,7 @@ export function TimelineEditor({
     const n = Math.max(0, Math.min(playheadMsRef.current + deltaMs, totalMs))
     setPlayheadMs(n)
     autoScroll(n)
+    if (!isPlayingRef.current) seekMediaToMs(n)
   }
 
   // Keyboard shortcuts
@@ -426,6 +435,7 @@ export function TimelineEditor({
             }
           } else {
             getMediaEl()?.pause()
+            seekMediaToMs(playheadMsRef.current)
           }
           return !prev
         })
@@ -469,6 +479,7 @@ export function TimelineEditor({
     const clamped = Math.max(0, Math.min(ms, totalMs))
     setPlayheadMs(clamped)
     autoScroll(clamped)
+    if (!isPlayingRef.current) seekMediaToMs(clamped)
   }
 
   function handleBlockClick(e: React.MouseEvent, shotId: string): void {
@@ -635,6 +646,7 @@ export function TimelineEditor({
       const newMs = Math.max(0, Math.min(origMs + deltaMs, totalMs))
       setPlayheadMs(newMs)
       autoScroll(newMs)
+      if (!isPlayingRef.current) seekMediaToMs(newMs)
     }
     function onMU(): void {
       window.removeEventListener('mousemove', onMM)
@@ -718,10 +730,10 @@ export function TimelineEditor({
             if (isPlaying) {
               setIsPlaying(false)
               getMediaEl()?.pause()
+              seekMediaToMs(playheadMsRef.current)
             } else {
               playStartRef.current = { wallMs: performance.now(), headMs: playheadMs }
               setIsPlaying(true)
-              console.log('[TimelineEditor] play clicked: mediaVideoRef=', mediaVideoRef.current, 'audioPlayRef=', audioPlayRef.current)
               const vid = getMediaEl()
               if (vid && rundownMedia) {
                 const mediaTime = (playheadMs - rundownMedia.offsetMs) / 1000
