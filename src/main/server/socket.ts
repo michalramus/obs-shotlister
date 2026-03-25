@@ -71,6 +71,15 @@ export function attachSocketServer(httpServer: HttpServer, db?: Database): Serve
   return io
 }
 
+export function broadcastShotHidden(io: Server, shotId: string): void {
+  try {
+    io.emit('state:shot:hidden', { shotId })
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[socket.io] broadcastShotHidden error:', err)
+  }
+}
+
 export function broadcastRundownState(io: Server, db: Database, shotsOverride?: Shot[]): void {
   try {
     io.emit('state:rundown', buildRundownState(db, shotsOverride))

@@ -121,9 +121,9 @@ function runValidation(database: ReturnType<typeof getDatabase>): void {
 function handleOscNext(): void {
   try {
     const db = getDatabase()
-    const state = nextShot(db)
+    const { state, hiddenShotId } = nextShot(db)
     broadcastLiveState(state)
-    broadcastRundown()
+    if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
     switchOBSScenes(state, db).catch(console.error)
   } catch (err) {
     console.error('[osc] next error:', err)
@@ -133,9 +133,9 @@ function handleOscNext(): void {
 function handleOscSkip(): void {
   try {
     const db = getDatabase()
-    const state = skipNext(db)
+    const { state, hiddenShotId } = skipNext(db)
     broadcastLiveState(state)
-    broadcastRundown()
+    if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
     switchOBSPreview(state, db).catch(console.error)
   } catch (err) {
     console.error('[osc] skip error:', err)
@@ -282,17 +282,17 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('live:next', () => {
-    const state = nextShot(db)
+    const { state, hiddenShotId } = nextShot(db)
     broadcastLiveState(state)
-    broadcastRundown()
+    if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
     switchOBSScenes(state, db).catch(console.error)
     return state
   })
 
   ipcMain.handle('live:skip-next', () => {
-    const state = skipNext(db)
+    const { state, hiddenShotId } = skipNext(db)
     broadcastLiveState(state)
-    broadcastRundown()
+    if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
     switchOBSPreview(state, db).catch(console.error)
     return state
   })
@@ -551,7 +551,7 @@ async function switchOBSPreview(state: LiveState, database: ReturnType<typeof ge
 // ---------------------------------------------------------------------------
 
 import type { Server as SocketServer } from 'socket.io'
-import { broadcastRundownState } from './server/socket'
+import { broadcastRundownState, broadcastShotHidden } from './server/socket'
 
 let _io: SocketServer | null = null
 let _db: ReturnType<typeof getDatabase> | null = null

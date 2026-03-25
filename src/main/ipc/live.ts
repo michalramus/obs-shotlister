@@ -164,7 +164,12 @@ export function stopLive(db: Database.Database): LiveState {
   }
 }
 
-export function nextShot(db: Database.Database): LiveState {
+export interface NextShotResult {
+  state: LiveState
+  hiddenShotId: string | null
+}
+
+export function nextShot(db: Database.Database): NextShotResult {
   const row = db.prepare('SELECT * FROM live_state WHERE id = 1').get() as LiveStateRow
 
   if (!row.running || !row.rundown_id) {
@@ -182,13 +187,18 @@ export function nextShot(db: Database.Database): LiveState {
     ).run()
     liveQueue = []
     return {
-      rundownId: row.rundown_id,
-      projectId: row.project_id,
-      liveIndex: null,
-      startedAt: null,
-      running: false,
+      state: {
+        rundownId: row.rundown_id,
+        projectId: row.project_id,
+        liveIndex: null,
+        startedAt: null,
+        running: false,
+      },
+      hiddenShotId: null,
     }
   }
+
+  const hiddenShotId = row.live_shot_id
 
   // Mark current shot as hidden
   liveQueue = liveQueue.map((s) => (s.id === row.live_shot_id ? { ...s, hidden: true } : s))
@@ -202,15 +212,23 @@ export function nextShot(db: Database.Database): LiveState {
   ).run(nextEntry.id, startedAt)
 
   return {
-    rundownId: row.rundown_id,
-    projectId: row.project_id,
-    liveIndex: newLiveIndex === -1 ? null : newLiveIndex,
-    startedAt,
-    running: true,
+    state: {
+      rundownId: row.rundown_id,
+      projectId: row.project_id,
+      liveIndex: newLiveIndex === -1 ? null : newLiveIndex,
+      startedAt,
+      running: true,
+    },
+    hiddenShotId,
   }
 }
 
-export function skipNext(db: Database.Database): LiveState {
+export interface SkipNextResult {
+  state: LiveState
+  hiddenShotId: string | null
+}
+
+export function skipNext(db: Database.Database): SkipNextResult {
   const row = db.prepare('SELECT * FROM live_state WHERE id = 1').get() as LiveStateRow
 
   if (!row.running || !row.rundown_id) {
@@ -223,7 +241,7 @@ export function skipNext(db: Database.Database): LiveState {
   const toSkip = visible[currentIndex + 1]
   if (!toSkip) {
     // Nothing to skip — return current state unchanged
-    return rowToLiveState(row, currentIndex === -1 ? null : currentIndex)
+    return { state: rowToLiveState(row, currentIndex === -1 ? null : currentIndex), hiddenShotId: null }
   }
 
   // Mark the next visible shot as hidden (no DB deletion)
@@ -231,7 +249,7 @@ export function skipNext(db: Database.Database): LiveState {
 
   const newLiveIndex = liveQueue.findIndex((s) => s.id === row.live_shot_id)
 
-  return rowToLiveState(row, newLiveIndex === -1 ? null : newLiveIndex)
+  return { state: rowToLiveState(row, newLiveIndex === -1 ? null : newLiveIndex), hiddenShotId: toSkip.id }
 }
 
 export function restartLive(db: Database.Database): LiveState {

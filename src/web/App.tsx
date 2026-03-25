@@ -65,15 +65,6 @@ const s = {
     fontSize: '14px',
   } satisfies React.CSSProperties,
 
-  select: {
-    background: '#2a2a2a',
-    border: '1px solid #444',
-    borderRadius: '4px',
-    color: '#fff',
-    fontSize: '12px',
-    padding: '4px 8px',
-  } satisfies React.CSSProperties,
-
   zoomBtn: {
     background: '#2a2a2a',
     border: '1px solid #444',
@@ -106,7 +97,7 @@ export default function App(): React.JSX.Element {
   const setLiveState = useWebStore((s) => s.setLiveState)
   const setPlayback = useWebStore((s) => s.setPlayback)
   const setConnected = useWebStore((s) => s.setConnected)
-  const setCameraFilter = useWebStore((s) => s.setCameraFilter)
+  const setShotHidden = useWebStore((s) => s.setShotHidden)
 
   const connected = useWebStore((s) => s.connected)
   const rundown = useWebStore((s) => s.rundown)
@@ -115,7 +106,6 @@ export default function App(): React.JSX.Element {
   const liveIndex = useWebStore((s) => s.liveIndex)
   const startedAt = useWebStore((s) => s.startedAt)
   const running = useWebStore((s) => s.running)
-  const cameraFilter = useWebStore((s) => s.cameraFilter)
 
   useEffect(() => {
     socket.on('connect', () => setConnected(true))
@@ -139,50 +129,24 @@ export default function App(): React.JSX.Element {
       setPlayback(data)
     })
 
+    socket.on('state:shot:hidden', (data: { shotId: string }) => {
+      setShotHidden(data.shotId)
+    })
+
     return () => {
       socket.off('connect')
       socket.off('disconnect')
       socket.off('state:rundown')
       socket.off('state:live')
       socket.off('state:playback')
+      socket.off('state:shot:hidden')
     }
-  }, [setRundownState, setLiveState, setPlayback, setConnected])
-
-  function getCamerasToShow(): Camera[] {
-    if (cameras.length > 0) return cameras
-    try {
-      const saved = localStorage.getItem('obs-queuer-cameras')
-      if (saved) return JSON.parse(saved) as Camera[]
-    } catch {}
-    return []
-  }
-
-  const camerasToShow = getCamerasToShow()
-  const selectedCam = cameraFilter.length === 0 ? 'all' : cameraFilter[0].toString()
-
-  // "All cameras" when filter is empty = show all
-  const effectiveFilter = cameraFilter.length === 0 ? undefined : cameraFilter
+  }, [setRundownState, setLiveState, setPlayback, setConnected, setShotHidden])
 
   return (
     <div style={s.root}>
       <header style={s.header}>
         <span style={s.title}>OBS Queuer</span>
-
-        {camerasToShow.length > 0 && (
-          <select
-            style={s.select}
-            value={selectedCam}
-            onChange={(e) => setCameraFilter(e.target.value === 'all' ? null : parseInt(e.target.value, 10))}
-            aria-label="Camera filter"
-          >
-            <option value="all">All cameras</option>
-            {camerasToShow.map((cam) => (
-              <option key={cam.id} value={cam.number}>
-                CAM{cam.number} - {cam.name}
-              </option>
-            ))}
-          </select>
-        )}
 
         <button
           style={s.zoomBtn}
@@ -220,7 +184,6 @@ export default function App(): React.JSX.Element {
             liveIndex={liveIndex}
             startedAt={startedAt}
             running={running}
-            cameraFilter={effectiveFilter}
           />
         )}
       </div>

@@ -159,11 +159,12 @@ describe('nextShot', () => {
     const started = startLive(db, rundownId)
     const startedAt1 = started.startedAt as number
 
-    const state = nextShot(db)
+    const { state, hiddenShotId } = nextShot(db)
     // current shot is hidden; next shot is index 1 in full liveQueue
     expect(state.liveIndex).toBe(1)
     expect(state.startedAt).toBeGreaterThanOrEqual(startedAt1)
     expect(state.running).toBe(true)
+    expect(hiddenShotId).not.toBeNull()
   })
 
   it('hides the current shot in liveQueue when advancing', () => {
@@ -180,9 +181,10 @@ describe('nextShot', () => {
   it('transitions to idle when advancing past last shot', () => {
     const { rundownId } = seedRundownWithShots(db, 1) // only 1 shot
     startLive(db, rundownId)
-    const state = nextShot(db)
+    const { state, hiddenShotId } = nextShot(db)
     expect(state.running).toBe(false)
     expect(state.liveIndex).toBeNull()
+    expect(hiddenShotId).toBeNull()
   })
 })
 
@@ -209,11 +211,12 @@ describe('skipNext', () => {
     const before = getLiveState(db)
     const beforeStartedAt = before.startedAt as number
 
-    const state = skipNext(db)
+    const { state, hiddenShotId } = skipNext(db)
 
     expect(state.liveIndex).toBe(0) // unchanged (index in full liveQueue)
     // started_at is NOT modified — frontend computes effective duration from hidden shots
     expect(state.startedAt).toBe(beforeStartedAt)
+    expect(hiddenShotId).toBe(shotIds[1])
 
     // shot-1 should be hidden in liveQueue, NOT deleted from DB
     const remaining = getShotIds(db, rundownId)
@@ -232,10 +235,11 @@ describe('skipNext', () => {
     const { rundownId } = seedRundownWithShots(db, 1)
     startLive(db, rundownId)
     const before = getLiveState(db)
-    const state = skipNext(db)
+    const { state, hiddenShotId } = skipNext(db)
     expect(state.liveIndex).toBe(0)
     expect(state.startedAt).toBe(before.startedAt)
     expect(getShotIds(db, rundownId)).toHaveLength(1)
+    expect(hiddenShotId).toBeNull()
   })
 
   it('throws when not running', () => {

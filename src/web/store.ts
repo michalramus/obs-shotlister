@@ -1,17 +1,6 @@
 import { create } from 'zustand'
 import type { Rundown, Shot, Camera } from '../shared/types'
 
-function initialCameraFilter(): number[] {
-  try {
-    const saved = localStorage.getItem('obs-queuer-camera-filter')
-    if (!saved || saved === 'all') return []
-    const num = parseInt(saved, 10)
-    return isNaN(num) ? [] : [num]
-  } catch {
-    return []
-  }
-}
-
 export interface WebStore {
   rundown: Rundown | null
   shots: Shot[]
@@ -19,7 +8,6 @@ export interface WebStore {
   liveIndex: number | null
   startedAt: number | null
   running: boolean
-  cameraFilter: number[] // empty = show all
   connected: boolean
 
   // Actions
@@ -27,7 +15,7 @@ export interface WebStore {
   setLiveState: (data: { liveIndex: number | null; elapsedMs: number | null }) => void
   setPlayback: (data: { running: boolean }) => void
   setConnected: (connected: boolean) => void
-  setCameraFilter: (num: number | null) => void
+  setShotHidden: (shotId: string) => void
 }
 
 export const useWebStore = create<WebStore>((set) => ({
@@ -37,7 +25,6 @@ export const useWebStore = create<WebStore>((set) => ({
   liveIndex: null,
   startedAt: null,
   running: false,
-  cameraFilter: initialCameraFilter(),
   connected: false,
 
   setRundownState: (data) => {
@@ -60,10 +47,6 @@ export const useWebStore = create<WebStore>((set) => ({
 
   setConnected: (connected) => set({ connected }),
 
-  setCameraFilter: (num) => {
-    set({ cameraFilter: num === null ? [] : [num] })
-    try {
-      localStorage.setItem('obs-queuer-camera-filter', num === null ? 'all' : num.toString())
-    } catch {}
-  },
+  setShotHidden: (shotId) =>
+    set((s) => ({ shots: s.shots.map((shot) => (shot.id === shotId ? { ...shot, hidden: true } : shot)) })),
 }))
