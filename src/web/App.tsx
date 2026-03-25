@@ -156,8 +156,15 @@ export default function App(): React.JSX.Element {
       setPlayback(data)
     })
 
-    socket.on('state:shot:hidden', (data: { shotId: string }) => {
-      setShotHidden(data.shotId)
+    socket.on('state:shot:hidden', ({ shotId }: { shotId: string }) => {
+      const { shots, liveIndex } = useWebStore.getState()
+      const liveShot = liveIndex !== null ? shots[liveIndex] : null
+      const transitionMs = liveShot?.transitionMs ?? 0
+      if (transitionMs > 0) {
+        setTimeout(() => setShotHidden(shotId), transitionMs)
+      } else {
+        setShotHidden(shotId)
+      }
     })
 
     return () => {

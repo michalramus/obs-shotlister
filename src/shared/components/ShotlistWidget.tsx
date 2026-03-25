@@ -131,6 +131,18 @@ const s = {
     transition: 'none',
   }),
 
+  outTransitionBar: (pct: number): React.CSSProperties => ({
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    right: 0,
+    width: `${pct * 100}%`,
+    background: '#9b59b6',
+    opacity: 0.5,
+    pointerEvents: 'none',
+    transition: 'none',
+  }),
+
   rowContent: {
     position: 'relative',
     zIndex: 1,
@@ -180,6 +192,9 @@ export function ShotlistWidget({
   const rafRef = useRef<number | null>(null)
   const liveRef = useRef<HTMLLIElement | null>(null)
   const waitStartRef = useRef<{ totalMs: number } | null>(null)
+  const prevEffectiveDurRef = useRef<number | null>(null)
+  const prevLiveIndexRef = useRef<number | null>(null)
+  const capturedTransEffectiveDurRef = useRef<number | null>(null)
 
   // 60fps ticker while running
   useEffect(() => {
@@ -255,6 +270,31 @@ export function ShotlistWidget({
       ? Math.min(1, Math.max(0, 1 - timing.timeUntilNextVisibleMs / waitStartRef.current.totalMs))
       : null
 
+  // Capture effectiveDurationMs of the previous live shot for transitioning-out animation
+  if (liveIndex !== prevLiveIndexRef.current) {
+    capturedTransEffectiveDurRef.current = prevEffectiveDurRef.current
+    prevLiveIndexRef.current = liveIndex
+    if (liveIndex === null) capturedTransEffectiveDurRef.current = null
+  }
+  prevEffectiveDurRef.current = timing.effectiveDurationMs
+
+  // Next non-hidden shot's transitionMs — extends live shot's visual row
+  let nextNonHiddenTransitionMs = 0
+  if (liveIndex !== null) {
+    for (let i = liveIndex + 1; i < shots.length; i++) {
+      if (!shots[i].hidden) { nextNonHiddenTransitionMs = shots[i].transitionMs; break }
+    }
+  }
+
+  // Last non-hidden shot before live — show red bar continuing through its out-transition zone
+  const liveTransitionMs = liveIndex !== null && shots[liveIndex] ? shots[liveIndex].transitionMs : 0
+  let transitioningOutIndex = -1
+  if (liveTransitionMs > 0 && liveIndex !== null) {
+    for (let i = liveIndex - 1; i >= 0; i--) {
+      if (!shots[i].hidden) { transitioningOutIndex = i; break }
+    }
+  }
+
   const headerCountdown = isWaiting && timing.timeUntilNextVisibleMs !== null
     ? formatMs(timing.timeUntilNextVisibleMs)
     : timing.remainingMs !== null ? formatMs(timing.remainingMs) : '--:--'
@@ -289,10 +329,21 @@ export function ShotlistWidget({
             let timeLabel = formatMs(shot.durationMs)
             let progressPct: number | null = null
 
+            const isTransitioningOut = shotIndexInAll === transitioningOutIndex
+
             if (isLive && timing.remainingMs !== null) {
               const effectiveDur = timing.effectiveDurationMs ?? shot.durationMs
+              const totalVisual = effectiveDur + nextNonHiddenTransitionMs
               timeLabel = formatMs(timing.remainingMs)
-              progressPct = 1 - timing.remainingMs / effectiveDur
+              progressPct = totalVisual > 0 ? (effectiveDur - timing.remainingMs) / totalVisual : 0
+            }
+
+            if (isTransitioningOut && capturedTransEffectiveDurRef.current !== null && startedAt !== null) {
+              const transEffectiveDur = capturedTransEffectiveDurRef.current
+              const transitionElapsed = Math.min(now - startedAt, liveTransitionMs)
+              const totalVisual = transEffectiveDur + liveTransitionMs
+              progressPct = totalVisual > 0 ? (transEffectiveDur + transitionElapsed) / totalVisual : 1
+              timeLabel = formatMs(Math.max(0, liveTransitionMs - transitionElapsed))
             }
 
             // Waiting bar: on the next-visible shot when operator is waiting for their camera
@@ -307,6 +358,11 @@ export function ShotlistWidget({
                 ? Math.min(1, shot.transitionMs / (isLive ? effectiveDuration : shot.durationMs))
                 : 0
 
+            // Out-transition zone: right-anchored purple on live shot (next shot's transitionMs)
+            const outTransitionPct = isLive && nextNonHiddenTransitionMs > 0
+              ? nextNonHiddenTransitionMs / (effectiveDuration + nextNonHiddenTransitionMs)
+              : 0
+
             return (
               <li
                 key={shot.id}
@@ -315,10 +371,10 @@ export function ShotlistWidget({
                 data-testid={isLive ? 'shot-live' : isNext ? 'shot-next' : 'shot-row'}
                 data-shot-id={isLive ? shot.id : undefined}
               >
-                {(transitionPct > 0 || progressPct !== null || showWaitingBar) && (
+                {(transitionPct > 0 || outTransitionPct > 0 || progressPct !== null || showWaitingBar) && (
                   <div
                     style={s.progressTrack()}
-                    data-testid={isLive ? 'progress-live' : isNext ? 'progress-next' : undefined}
+                    data-testid={isLive ? 'progress-live' : isNext ? 'progress-next' : isTransitioningOut ? 'progress-transitioning-out' : undefined}
                   >
                     {showWaitingBar && waitingPct !== null && (
                       <div style={s.waitingBar(waitingPct)} />
@@ -326,8 +382,11 @@ export function ShotlistWidget({
                     {transitionPct > 0 && (
                       <div style={s.transitionBar(transitionPct)} data-testid="progress-transition" />
                     )}
+                    {outTransitionPct > 0 && (
+                      <div style={s.outTransitionBar(outTransitionPct)} data-testid="progress-out-transition" />
+                    )}
                     {progressPct !== null && (
-                      <div style={s.progressBar(Math.min(1, Math.max(0, progressPct)), isLive)} />
+                      <div style={s.progressBar(Math.min(1, Math.max(0, progressPct)), isLive || isTransitioningOut)} />
                     )}
                   </div>
                 )}

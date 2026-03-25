@@ -41,10 +41,26 @@ export const useWebStore = create<WebStore>((set) => ({
   setLiveState: (data) => {
     const clientStartedAt = data.elapsedMs !== null ? Date.now() - data.elapsedMs : null
     set((s) => {
-      const shots =
-        data.liveIndex !== null
-          ? s.shots.map((shot, i) => (i < data.liveIndex! && !shot.hidden ? { ...shot, hidden: true } : shot))
-          : s.shots
+      if (data.liveIndex === null) {
+        return { liveIndex: null, startedAt: clientStartedAt }
+      }
+      const newLiveShot = s.shots[data.liveIndex]
+      const transitionMs = newLiveShot?.transitionMs ?? 0
+
+      // Find last non-hidden shot before liveIndex — preserve it during transition
+      let preserveIndex = -1
+      if (transitionMs > 0) {
+        for (let i = data.liveIndex - 1; i >= 0; i--) {
+          if (!s.shots[i].hidden) { preserveIndex = i; break }
+        }
+      }
+
+      const shots = s.shots.map((shot, i) => {
+        if (i >= data.liveIndex!) return shot
+        if (shot.hidden) return shot
+        if (i === preserveIndex) return shot // delayed hide via state:shot:hidden
+        return { ...shot, hidden: true }
+      })
       return { liveIndex: data.liveIndex, startedAt: clientStartedAt, shots }
     })
   },
