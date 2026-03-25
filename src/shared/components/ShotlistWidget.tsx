@@ -140,6 +140,18 @@ const s = {
     width: '100%',
   } satisfies React.CSSProperties,
 
+  waitingBar: (pct: number): React.CSSProperties => ({
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    right: 0,
+    width: `${pct * 100}%`,
+    background: '#2ecc71',
+    opacity: 0.25,
+    pointerEvents: 'none',
+    transition: 'none',
+  }),
+
   emptyState: {
     padding: '24px',
     textAlign: 'center' as const,
@@ -223,19 +235,34 @@ export function ShotlistWidget({
     return true
   })
 
-  const headerCountdown = timing.remainingMs !== null ? formatMs(timing.remainingMs) : '--:--'
+  // Waiting: filter is active and the live shot is not for our camera
+  const liveShot = liveIndex !== null ? shots[liveIndex] : null
+  const liveCam = liveShot ? cameraById.get(liveShot.cameraId) : undefined
+  const isWaiting = hasFilter && liveCam !== undefined && !cameraFilter!.includes(liveCam.number)
+
+  const waitingPct =
+    isWaiting && timing.timeUntilNextVisibleMs !== null && timing.totalTimeUntilNextVisibleMs
+      ? Math.min(1, Math.max(0, 1 - timing.timeUntilNextVisibleMs / timing.totalTimeUntilNextVisibleMs))
+      : null
+
+  const headerCountdown = isWaiting && timing.timeUntilNextVisibleMs !== null
+    ? formatMs(timing.timeUntilNextVisibleMs)
+    : timing.remainingMs !== null ? formatMs(timing.remainingMs) : '--:--'
 
   return (
     <div style={s.widget} data-testid="shotlist-widget">
       <div
         style={{
           ...s.header,
+          position: 'relative',
+          overflow: 'hidden',
           background: headerFlash ? '#666' : '#222',
           transition: 'background 0.35s ease-out',
         }}
       >
-        <span style={s.rundownName}>{rundownName}</span>
-        <span style={s.countdown}>
+        {waitingPct !== null && <div style={s.waitingBar(waitingPct)} />}
+        <span style={{ ...s.rundownName, position: 'relative' }}>{rundownName}</span>
+        <span style={{ ...s.countdown, color: isWaiting ? '#2ecc71' : '#ff3b30', position: 'relative' }}>
           {running && <span style={{ fontSize: '12px', marginRight: '4px' }}>▶</span>}
           {headerCountdown}
         </span>

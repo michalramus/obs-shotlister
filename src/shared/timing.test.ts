@@ -57,6 +57,7 @@ describe('computeTiming — not running', () => {
     expect(result.remainingMs).toBeNull()
     expect(result.nextVisibleIndex).toBeNull()
     expect(result.timeUntilNextVisibleMs).toBeNull()
+    expect(result.totalTimeUntilNextVisibleMs).toBeNull()
     expect(result.effectiveDurationMs).toBeNull()
   })
 })
@@ -103,6 +104,7 @@ describe('computeTiming — no filter', () => {
     expect(result.nextVisibleIndex).toBe(1)
     expect(result.remainingMs).toBe(8000)     // 10000 - 2000
     expect(result.timeUntilNextVisibleMs).toBe(8000) // no intermediate shots
+    expect(result.totalTimeUntilNextVisibleMs).toBe(10000) // effectiveDuration(10000) + intermediate(0)
     expect(result.effectiveDurationMs).toBe(10000)
   })
 
@@ -141,6 +143,8 @@ describe('computeTiming — with camera filter', () => {
     expect(result.nextVisibleIndex).toBe(2) // s3
     // timeUntilLive = remaining (8000) + intermediate s2 duration (3000) = 11000
     expect(result.timeUntilNextVisibleMs).toBe(11000)
+    // totalTimeUntilNextVisibleMs = effectiveDuration(10000) + intermediate(3000) = 13000
+    expect(result.totalTimeUntilNextVisibleMs).toBe(13000)
   })
 
   it('returns null nextVisibleIndex when no visible shots remain', () => {
@@ -152,6 +156,7 @@ describe('computeTiming — with camera filter', () => {
     const result = computeTiming(shots, cameras, 0, 0, 2000, [1])
     expect(result.nextVisibleIndex).toBeNull()
     expect(result.timeUntilNextVisibleMs).toBeNull()
+    expect(result.totalTimeUntilNextVisibleMs).toBeNull()
   })
 
   it('counts multiple hidden shots in timeUntilLive', () => {
@@ -165,6 +170,8 @@ describe('computeTiming — with camera filter', () => {
     const result = computeTiming(shots, cameras, 0, 0, 2000, [1])
     // remaining = 8000, intermediates = 3000 + 2000 = 5000
     expect(result.timeUntilNextVisibleMs).toBe(13000)
+    // totalTimeUntilNextVisibleMs = effectiveDuration(10000) + intermediates(5000) = 15000
+    expect(result.totalTimeUntilNextVisibleMs).toBe(15000)
   })
 })
 
