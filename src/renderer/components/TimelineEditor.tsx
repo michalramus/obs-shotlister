@@ -149,6 +149,12 @@ export function TimelineEditor({
   useEffect(() => { isPlayingRef.current = isPlaying }, [isPlaying])
   useEffect(() => { runningRef.current = running }, [running])
 
+  // Sync media currentTime to playhead while stopped
+  useEffect(() => {
+    if (isPlaying || running) return
+    seekMediaToMs(playheadMs)
+  }, [playheadMs, isPlaying, running]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Clear dragOverride only after shots prop has updated from IPC response
   useEffect(() => {
     if (pendingDragClearRef.current) {
@@ -204,7 +210,9 @@ export function TimelineEditor({
     const isVideoFile = VIDEO_EXTS.some((ext) => rundownMedia.filePath.toLowerCase().endsWith(ext))
     if (!isVideoFile) {
       audioPlayRef.current?.pause()
-      const audio = new Audio('media://localhost' + rundownMedia.filePath)
+      const audioSrc = 'media://localhost' + rundownMedia.filePath
+      console.log('[TimelineEditor] creating audio element:', audioSrc)
+      const audio = new Audio(audioSrc)
       audio.preload = 'auto'
       audioPlayRef.current = audio
     }
@@ -275,15 +283,13 @@ export function TimelineEditor({
       }
       return
     }
-    // Seek + start media once when playback begins
-    const startMs = playStartRef.current?.headMs ?? playheadMsRef.current
+    // currentTime is already synced by the stopped-state useEffect.
+    // Reset wallMs to now so elapsed starts from when play() is actually called.
+    if (playStartRef.current) playStartRef.current.wallMs = performance.now()
     const vid = getMediaEl()
-    if (vid && rundownMedia) {
-      const mediaTime = (startMs - rundownMedia.offsetMs) / 1000
-      if (mediaTime >= 0) {
-        vid.currentTime = mediaTime
-        void vid.play().catch((err: unknown) => { console.error('[TimelineEditor] play():', err) })
-      }
+    console.log('[TimelineEditor] play() on:', vid?.nodeName, vid?.src, 'readyState:', vid?.readyState, 'currentTime:', vid?.currentTime)
+    if (vid) {
+      void vid.play().catch((err: unknown) => { console.error('[TimelineEditor] play() failed:', err) })
     }
     function tick(): void {
       if (!playStartRef.current) return
