@@ -292,24 +292,35 @@ export function TimelineEditor({
       void vid.play().catch((err: unknown) => { console.error('[TimelineEditor] play() failed:', err) })
     }
     function tick(): void {
-      if (!playStartRef.current) return
-      const elapsed = performance.now() - playStartRef.current.wallMs
-      const newMs = Math.min(playStartRef.current.headMs + elapsed, totalMs)
+      let newMs: number
+      const vid = getMediaEl()
+      if (vid && rundownMedia) {
+        const mediaTimeMs = vid.currentTime * 1000 + rundownMedia.offsetMs
+        if (mediaTimeMs >= 0) {
+          // Media is past its start offset — its clock is the source of truth (zero drift)
+          newMs = Math.min(mediaTimeMs, totalMs)
+        } else {
+          // Playhead is before media start — fall back to wall clock
+          if (!playStartRef.current) return
+          newMs = Math.min(
+            playStartRef.current.headMs + (performance.now() - playStartRef.current.wallMs),
+            totalMs,
+          )
+        }
+      } else if (playStartRef.current) {
+        // No media — wall clock
+        newMs = Math.min(
+          playStartRef.current.headMs + (performance.now() - playStartRef.current.wallMs),
+          totalMs,
+        )
+      } else {
+        return
+      }
       setPlayheadMs(newMs)
       autoScroll(newMs)
-      // Drift correction only for large discrepancies — trust media element's own clock
-      const v = getMediaEl()
-      if (v && rundownMedia) {
-        const mt = (newMs - rundownMedia.offsetMs) / 1000
-        if (mt >= 0) {
-          if (Math.abs(v.currentTime - mt) > 1.0) v.currentTime = mt
-        } else {
-          if (!v.paused) v.pause()
-        }
-      }
       if (newMs >= totalMs) {
         setIsPlaying(false)
-        getMediaEl()?.pause()
+        vid?.pause()
         return
       }
       editRafRef.current = requestAnimationFrame(tick)
