@@ -124,6 +124,7 @@ export function TimelineEditor({
   const isFirstLiveRef = useRef(true)
   const audioPlayRef = useRef<HTMLAudioElement | null>(null)
   const pendingDragClearRef = useRef(false)
+  const rundownMediaRef = useRef(rundownMedia)
 
   // Keep zoomRef in sync
   useEffect(() => {
@@ -148,6 +149,7 @@ export function TimelineEditor({
   // Keep isPlayingRef and runningRef in sync
   useEffect(() => { isPlayingRef.current = isPlaying }, [isPlaying])
   useEffect(() => { runningRef.current = running }, [running])
+  useEffect(() => { rundownMediaRef.current = rundownMedia }, [rundownMedia])
 
   // Sync media currentTime to playhead while stopped
   useEffect(() => {
@@ -369,7 +371,14 @@ export function TimelineEditor({
       setCurrentScrollLeft(sl)
       if (!isAutoScrollingRef.current && !isPlayingRef.current && !runningRef.current
           && !dragStateRef.current && !markerDragStateRef.current && !mediaDragStateRef.current) {
-        setPlayheadMs(Math.max(0, (sl / zoomRef.current) * 1000))
+        const ms = Math.max(0, (sl / zoomRef.current) * 1000)
+        setPlayheadMs(ms)
+        // Seek media directly — bypasses React render cycle for immediate response
+        const media = rundownMediaRef.current
+        const vid = (mediaVideoRef?.current as HTMLVideoElement | null) ?? audioPlayRef.current
+        if (media && vid) {
+          vid.currentTime = Math.max(0, (ms - media.offsetMs) / 1000)
+        }
       }
     }
     el.addEventListener('scroll', onScroll, { passive: true })
