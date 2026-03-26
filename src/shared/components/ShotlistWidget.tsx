@@ -273,14 +273,11 @@ export function ShotlistWidget({
           playAudio(`${words[prevSec]}.opus`)
         }
 
-        // Beep at expiry: fire once ~1 second after remainingMs reaches 0
-        // (one second after 'one', when progress bar has been at 100% for 1s)
+        // Beep at expiry: fire once when remainingMs reaches 0 (progress bar at 100%)
+        // 'one' fires at 1→0 transition; beep fires on the same tick
         if (!muteBeep && !beepFiredRef.current && remainingMs !== null) {
           if (remainingMs === 0 && prevMs !== null && prevMs > 0) {
-            // Record the moment we first hit 0
             reachedZeroAtRef.current = tickNow
-          }
-          if (reachedZeroAtRef.current !== null && tickNow - reachedZeroAtRef.current >= 1000) {
             beepFiredRef.current = true
             playAudio('beep.opus')
           }
