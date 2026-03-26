@@ -139,6 +139,9 @@ export interface ElectronApi {
     clear: (payload: { rundownId: string }) => Promise<void>
     openDialog: () => Promise<{ canceled: boolean; filePaths: string[] }>
   }
+  ui: {
+    setMode: (mode: 'edit' | 'live') => Promise<void>
+  }
   mediaReadFile: (filePath: string) => Promise<ArrayBuffer>
 }
 

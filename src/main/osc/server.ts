@@ -13,8 +13,8 @@ export function startOscServer(
     })
     oscServer.on('message', (msg: unknown[]) => {
       const address = msg[0] as string
-      if (address === '/next') on.next()
-      else if (address === '/skip') on.skip()
+      if (address === '/obsque/next') on.next()
+      else if (address === '/obsque/skip') on.skip()
     })
   } catch (err) {
     console.error('[osc] failed to start server:', err)

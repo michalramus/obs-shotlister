@@ -44,6 +44,7 @@ protocol.registerSchemesAsPrivileged([
 const obsClient = createOBSClient()
 let obsAutoReconnect = false
 let obsReconnectTimer: ReturnType<typeof setTimeout> | null = null
+let currentUiMode: 'edit' | 'live' = 'edit'
 
 // --- Global error handlers ---------------------------------------------------
 // These must never crash the process — log and continue.
@@ -118,9 +119,34 @@ function runValidation(database: ReturnType<typeof getDatabase>): void {
 
 // --- OSC helpers -------------------------------------------------------------
 
+interface LiveStateRow {
+  live_shot_id: string | null
+  started_at: number | null
+  running: number
+}
+
+interface ShotTransitionRow {
+  transition_ms: number
+}
+
+function isOscInTransition(db: ReturnType<typeof getDatabase>): boolean {
+  try {
+    const row = db.prepare('SELECT live_shot_id, started_at, running FROM live_state WHERE id = 1').get() as LiveStateRow | undefined
+    if (!row || !row.running || !row.live_shot_id || row.started_at === null) return false
+    const shot = db.prepare('SELECT transition_ms FROM shots WHERE id = ?').get(row.live_shot_id) as ShotTransitionRow | undefined
+    if (!shot || shot.transition_ms <= 0) return false
+    return (Date.now() - row.started_at) < shot.transition_ms
+  } catch (err) {
+    console.error('[osc] isOscInTransition error:', err)
+    return false
+  }
+}
+
 function handleOscNext(): void {
+  if (currentUiMode !== 'live') return
   try {
     const db = getDatabase()
+    if (isOscInTransition(db)) return
     const { state, hiddenShotId } = nextShot(db)
     broadcastLiveState(state)
     if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
@@ -131,8 +157,10 @@ function handleOscNext(): void {
 }
 
 function handleOscSkip(): void {
+  if (currentUiMode !== 'live') return
   try {
     const db = getDatabase()
+    if (isOscInTransition(db)) return
     const { state, hiddenShotId } = skipNext(db)
     broadcastLiveState(state)
     if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
@@ -473,6 +501,11 @@ function registerIpcHandlers(): void {
     } else {
       stopOscServer()
     }
+  })
+
+  // UI mode
+  ipcMain.handle('ui:setMode', (_e: Electron.IpcMainInvokeEvent, mode: 'edit' | 'live') => {
+    currentUiMode = mode
   })
 }
 

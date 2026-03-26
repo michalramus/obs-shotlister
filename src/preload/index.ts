@@ -83,6 +83,9 @@ export interface ElectronApi {
     clear: (payload: { rundownId: string }) => Promise<void>
     openDialog: () => Promise<{ canceled: boolean; filePaths: string[] }>
   }
+  ui: {
+    setMode: (mode: 'edit' | 'live') => Promise<void>
+  }
   mediaReadFile: (filePath: string) => Promise<Buffer>
 }
 
@@ -148,6 +151,9 @@ const api: ElectronApi = {
   osc: {
     getSettings: () => ipcRenderer.invoke('osc:settings:get'),
     saveSettings: (payload) => ipcRenderer.invoke('osc:settings:save', payload),
+  },
+  ui: {
+    setMode: (mode: 'edit' | 'live') => ipcRenderer.invoke('ui:setMode', mode),
   },
   markers: {
     list: (payload) => ipcRenderer.invoke('markers:list', payload),

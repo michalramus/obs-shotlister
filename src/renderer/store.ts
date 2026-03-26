@@ -102,7 +102,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   // UI mode
   uiMode: 'edit' as 'edit' | 'live',
-  setUiMode: (mode) => set({ uiMode: mode }),
+  setUiMode: (mode) => {
+    set({ uiMode: mode })
+    window.api.ui.setMode(mode).catch((err: unknown) => console.error('[store] setUiMode:', err))
+  },
 
   // OBS state
   obsStatus: 'disconnected',
