@@ -986,6 +986,7 @@ app.whenReady().then(() => {
       wav: 'audio/wav',
       aac: 'audio/aac',
       ogg: 'audio/ogg',
+      opus: 'audio/ogg; codecs=opus',
       flac: 'audio/flac',
       m4a: 'audio/mp4',
     }
