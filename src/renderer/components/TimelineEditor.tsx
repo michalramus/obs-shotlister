@@ -104,6 +104,7 @@ export function TimelineEditor({
   const [flash, setFlash] = useState(false)
   const [currentScrollLeft, setCurrentScrollLeft] = useState(0)
   const [waveformError, setWaveformError] = useState(false)
+  const [mediaFileNotFound, setMediaFileNotFound] = useState(false)
   const [containerWidth, setContainerWidth] = useState(800)
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -202,24 +203,32 @@ export function TimelineEditor({
       setWaveformData(null)
       setMediaDurationMs(0)
       setWaveformError(false)
+      setMediaFileNotFound(false)
       return
     }
     setWaveformError(false)
+    setMediaFileNotFound(false)
     let cancelled = false
 
-    // Create audio playback element immediately (before waveform decode) so play() is ready
-    const VIDEO_EXTS = ['.mp4', '.mov', '.webm', '.avi', '.mkv']
-    const isVideoFile = VIDEO_EXTS.some((ext) => rundownMedia.filePath.toLowerCase().endsWith(ext))
-    if (!isVideoFile) {
-      audioPlayRef.current?.pause()
-      const audioSrc = 'media://localhost' + rundownMedia.filePath
-      console.log('[TimelineEditor] creating audio element:', audioSrc)
-      const audio = new Audio(audioSrc)
-      audio.preload = 'auto'
-      audioPlayRef.current = audio
-    }
-
     async function decode(): Promise<void> {
+      // Check file exists before attempting to load
+      const exists = await window.api.mediaFileExists(rundownMedia!.filePath)
+      if (!exists) {
+        if (!cancelled) setMediaFileNotFound(true)
+        return
+      }
+
+      // Create audio playback element immediately (before waveform decode) so play() is ready
+      const VIDEO_EXTS = ['.mp4', '.mov', '.webm', '.avi', '.mkv']
+      const isVideoFile = VIDEO_EXTS.some((ext) => rundownMedia!.filePath.toLowerCase().endsWith(ext))
+      if (!isVideoFile) {
+        audioPlayRef.current?.pause()
+        const audioSrc = 'media://localhost' + rundownMedia!.filePath
+        const audio = new Audio(audioSrc)
+        audio.preload = 'auto'
+        audioPlayRef.current = audio
+      }
+
       try {
         const buf = await window.api.mediaReadFile(rundownMedia!.filePath)
         // Save a copy of raw bytes BEFORE decodeAudioData detaches the ArrayBuffer
@@ -1303,7 +1312,22 @@ export function TimelineEditor({
                     transform: `translateX(${offsetPx}px)`,
                   }}
                 >
-                  {waveformError ? (
+                  {mediaFileNotFound ? (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        left: '8px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        color: '#e67e22',
+                        fontSize: '10px',
+                        fontFamily: 'monospace',
+                        pointerEvents: 'none',
+                      }}
+                    >
+                      Media file not found — relink or clear
+                    </span>
+                  ) : waveformError ? (
                     <span
                       style={{
                         position: 'absolute',

@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
 import { join } from 'path'
-import { readFileSync, createReadStream, promises as fsPromises } from 'fs'
+import { readFileSync, existsSync, createReadStream, promises as fsPromises } from 'fs'
 import { extname } from 'path'
 import { Readable } from 'stream'
 import { startServer } from './server'
@@ -492,6 +492,10 @@ function registerIpcHandlers(): void {
   ipcMain.handle('rundown:media:clear', (_e, payload: { rundownId: string }) => {
     db.prepare("DELETE FROM settings WHERE key = ?").run(`rundown_media_path_${payload.rundownId}`)
     db.prepare("DELETE FROM settings WHERE key = ?").run(`rundown_media_offset_${payload.rundownId}`)
+  })
+
+  ipcMain.handle('media:file-exists', (_e, filePath: string) => {
+    try { return existsSync(filePath) } catch { return false }
   })
 
   ipcMain.handle('media:read-file', (_e, filePath: string) => {
