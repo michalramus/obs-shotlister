@@ -31,6 +31,7 @@ import {
   upsertTransitionMapping,
   deleteTransitionMapping,
   resolveTransition,
+  resolveTransitionFull,
 } from './ipc/transitions'
 import type { TransitionMapping } from './ipc/transitions'
 import { listMarkers, upsertMarker, deleteMarker } from './ipc/markers'
@@ -168,7 +169,6 @@ function handleOscSkip(): void {
   if (currentUiMode !== 'live') return
   try {
     const db = getDatabase()
-    if (isOscInTransition(db)) return
     const { state, hiddenShotId } = skipNext(db)
     broadcastLiveState(state)
     if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
@@ -314,7 +314,9 @@ function registerIpcHandlers(): void {
     const state = startLive(db, payload.rundownId)
     broadcastLiveState(state)
     broadcastRundown()
-    switchOBSScenes(state, db).catch(console.error)
+    setOBSPreviewForStart(state, db)
+      .then(() => switchOBSScenes(state, db))
+      .catch(console.error)
     return state
   })
 
@@ -453,9 +455,9 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(
     'obs:transitions:upsert',
-    (_event, payload: { logicalName: string; obsTransitionName: string }) => {
+    (_event, payload: { logicalName: string; obsTransitionName: string; constLengthMs?: number | null }) => {
       try {
-        upsertTransitionMapping(db, payload.logicalName, payload.obsTransitionName)
+        upsertTransitionMapping(db, payload.logicalName, payload.obsTransitionName, payload.constLengthMs ?? null)
       } catch (err) {
         throw new Error(err instanceof Error ? err.message : String(err))
       }
@@ -625,13 +627,13 @@ async function switchOBSScenes(state: LiveState, database: ReturnType<typeof get
   const liveShot = allShots[liveShotIdx]
   const liveCamera = getCameraById(database, liveShot.cameraId)
 
-  const resolvedName = resolveTransition(database, liveShot.transitionName ?? 'cut')
-  const transitionMs = liveShot.transitionMs ?? 0
+  const { obsName, constLengthMs } = resolveTransitionFull(database, liveShot.transitionName ?? 'cut')
+  const effectiveTransitionMs = constLengthMs ?? (liveShot.transitionMs ?? 0)
 
   // 1+2. Configure transition, then trigger studio mode transition (preview→program)
   if (liveCamera?.obsScene) {
     try {
-      await obsClient.setCurrentSceneTransition(resolvedName, transitionMs)
+      await obsClient.setCurrentSceneTransition(obsName, constLengthMs !== null ? 0 : effectiveTransitionMs)
     } catch (e: unknown) { console.error('[OBS] setTransition:', e) }
     try {
       await obsClient.triggerStudioModeTransition()
@@ -639,7 +641,7 @@ async function switchOBSScenes(state: LiveState, database: ReturnType<typeof get
   }
 
   // 3. Wait for transition to finish + 50ms buffer before touching preview
-  await new Promise<void>((resolve) => setTimeout(resolve, transitionMs + 50))
+  await new Promise<void>((resolve) => setTimeout(resolve, effectiveTransitionMs + 50))
 
   // 4. Set next camera to preview
   const hiddenIds = new Set(queue.filter((s) => s.hidden).map((s) => s.id))
@@ -649,6 +651,17 @@ async function switchOBSScenes(state: LiveState, database: ReturnType<typeof get
     if (nextCamera?.obsScene) {
       obsClient.setCurrentPreviewScene(nextCamera.obsScene).catch((e: unknown) => console.error('[OBS] preview:', e))
     }
+  }
+}
+
+async function setOBSPreviewForStart(state: LiveState, database: ReturnType<typeof getDatabase>): Promise<void> {
+  if (obsClient.status !== 'connected' || !state.rundownId) return
+  const queue = getLiveQueue()
+  const firstShot = queue[0]
+  if (!firstShot) return
+  const camera = getCameraById(database, firstShot.cameraId)
+  if (camera?.obsScene) {
+    await obsClient.setCurrentPreviewScene(camera.obsScene)
   }
 }
 

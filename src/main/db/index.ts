@@ -69,6 +69,7 @@ export function applyMigrations(database: Database.Database): void {
   try { database.exec('ALTER TABLE shots ADD COLUMN transition_ms INTEGER NOT NULL DEFAULT 0') } catch (_) { /* column exists */ }
   try { database.exec('ALTER TABLE rundowns ADD COLUMN order_index INTEGER NOT NULL DEFAULT 0') } catch (_) { /* column exists */ }
   try { database.exec('ALTER TABLE rundowns ADD COLUMN folder TEXT') } catch (_) { /* column exists */ }
+  try { database.exec('ALTER TABLE transition_mappings ADD COLUMN const_length_ms INTEGER') } catch (_) { /* column exists */ }
   database.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       key   TEXT PRIMARY KEY,
@@ -77,7 +78,8 @@ export function applyMigrations(database: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS transition_mappings (
       logical_name        TEXT PRIMARY KEY,
-      obs_transition_name TEXT NOT NULL
+      obs_transition_name TEXT NOT NULL,
+      const_length_ms     INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS markers (
@@ -89,8 +91,7 @@ export function applyMigrations(database: Database.Database): void {
 
     INSERT OR IGNORE INTO transition_mappings (logical_name, obs_transition_name) VALUES
       ('cut', 'Cut'),
-      ('fade', 'Fade'),
-      ('stinger', 'Stinger');
+      ('fade', 'Fade');
   `)
 }
 
