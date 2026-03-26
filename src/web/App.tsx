@@ -160,11 +160,22 @@ export default function App(): React.JSX.Element {
       const { shots, liveIndex } = useWebStore.getState()
       const liveShot = liveIndex !== null ? shots[liveIndex] : null
       const transitionMs = liveShot?.transitionMs ?? 0
+
       if (transitionMs > 0) {
-        setTimeout(() => setShotHidden(shotId), transitionMs)
-      } else {
-        setShotHidden(shotId)
+        // Only delay for the transitioning-out shot (previous live shot).
+        // Skip events for future shots must fire immediately.
+        let prevNonHiddenId: string | null = null
+        if (liveIndex !== null) {
+          for (let i = liveIndex - 1; i >= 0; i--) {
+            if (!shots[i].hidden) { prevNonHiddenId = shots[i].id; break }
+          }
+        }
+        if (prevNonHiddenId === shotId) {
+          setTimeout(() => setShotHidden(shotId), transitionMs)
+          return
+        }
       }
+      setShotHidden(shotId)
     })
 
     return () => {
