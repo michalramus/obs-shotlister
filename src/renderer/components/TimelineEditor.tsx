@@ -997,20 +997,14 @@ export function TimelineEditor({
                     title={cam ? `${cam.name} (${shot.durationMs}ms)` : shot.id}
                   >
                     {widthPx > 20 && (
-                      <span
-                        style={{
-                          color: 'white',
-                          fontSize: '11px',
-                          paddingLeft: '4px',
-                          lineHeight: `${TRACK_HEIGHT}px`,
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          display: 'block',
-                          textOverflow: 'ellipsis',
-                        }}
-                      >
-                        {cam ? `${cam.number}` : '?'}
-                      </span>
+                      <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', height: '100%', justifyContent: 'center', gap: 1, paddingLeft: '4px' }}>
+                        <strong style={{ fontSize: '11px', lineHeight: 1.2, color: 'white' }}>CAM{cam ? cam.number : '?'}</strong>
+                        {shot.label && widthPx > 60 && (
+                          <span style={{ fontSize: '9px', opacity: 0.7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.2, color: 'white' }}>
+                            {shot.label}
+                          </span>
+                        )}
+                      </div>
                     )}
                   </div>
 
