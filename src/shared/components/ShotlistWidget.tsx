@@ -12,6 +12,9 @@ export interface ShotlistWidgetProps {
   showNextBackground?: boolean
   autoScroll?: boolean
   cameraFilter?: number[]
+  audioBaseUrl?: string
+  muteCount?: boolean
+  muteBeep?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -186,6 +189,9 @@ export function ShotlistWidget({
   showNextBackground = false,
   autoScroll = false,
   cameraFilter,
+  audioBaseUrl,
+  muteCount = false,
+  muteBeep = false,
 }: ShotlistWidgetProps): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now())
   const [headerFlash, setHeaderFlash] = useState(false)
@@ -195,6 +201,10 @@ export function ShotlistWidget({
   const prevEffectiveDurRef = useRef<number | null>(null)
   const prevLiveIndexRef = useRef<number | null>(null)
   const capturedTransEffectiveDurRef = useRef<number | null>(null)
+  const prevRemainingSecRef = useRef<number | null>(null)
+  const beepFiredRef = useRef<boolean>(false)
+  const prevLiveIndexForAudioRef = useRef<number | null>(null)
+  const prevLiveIndexForFilterBeepRef = useRef<number | null>(null)
 
   // 60fps ticker while running
   useEffect(() => {
@@ -209,7 +219,38 @@ export function ShotlistWidget({
     let active = true
     function tick(): void {
       if (!active) return
-      setNow(Date.now())
+      const tickNow = Date.now()
+      setNow(tickNow)
+
+      // Countdown and natural beep (unfiltered mode only)
+      const hasFilterNow = cameraFilter !== undefined && cameraFilter.length > 0
+      if (!hasFilterNow && liveIndex !== null && audioBaseUrl) {
+        // Reset state on liveIndex change
+        if (liveIndex !== prevLiveIndexForAudioRef.current) {
+          beepFiredRef.current = false
+          prevRemainingSecRef.current = null
+          prevLiveIndexForAudioRef.current = liveIndex
+        }
+
+        const timingNow = computeTiming(shots, cameras, liveIndex, startedAt, tickNow, cameraFilter)
+        const remainingSec = timingNow.remainingMs !== null ? Math.floor(timingNow.remainingMs / 1000) : null
+
+        // Countdown 5→1
+        if (!muteCount && remainingSec !== null && prevRemainingSecRef.current !== null &&
+            remainingSec !== prevRemainingSecRef.current && remainingSec >= 1 && remainingSec <= 5) {
+          const audio = new Audio(`${audioBaseUrl}/count-${remainingSec}.mp3`)
+          audio.play().catch((err: unknown) => console.error('[ShotlistWidget] count audio error:', err))
+        }
+        if (remainingSec !== null) prevRemainingSecRef.current = remainingSec
+
+        // Natural expiry beep
+        if (!muteBeep && !beepFiredRef.current && timingNow.remainingMs !== null && timingNow.remainingMs <= 0) {
+          beepFiredRef.current = true
+          const audio = new Audio(`${audioBaseUrl}/beep.mp3`)
+          audio.play().catch((err: unknown) => console.error('[ShotlistWidget] beep error:', err))
+        }
+      }
+
       rafRef.current = requestAnimationFrame(tick)
     }
 
@@ -222,7 +263,7 @@ export function ShotlistWidget({
         rafRef.current = null
       }
     }
-  }, [running])
+  }, [running, liveIndex, shots, cameras, startedAt, cameraFilter, audioBaseUrl, muteCount, muteBeep])
 
   // Auto-scroll to live shot when live index changes
   useEffect(() => {
@@ -237,6 +278,21 @@ export function ShotlistWidget({
     const t = setTimeout(() => setHeaderFlash(false), 350)
     return () => clearTimeout(t)
   }, [liveIndex])
+
+  // Filtered beep: play beep when the filtered camera goes live
+  const hasFilterForEffect = cameraFilter !== undefined && cameraFilter.length > 0
+  useEffect(() => {
+    if (!audioBaseUrl || !running || !hasFilterForEffect || muteBeep || liveIndex === null) return
+    if (liveIndex === prevLiveIndexForFilterBeepRef.current) return
+    prevLiveIndexForFilterBeepRef.current = liveIndex
+    const liveShot = shots[liveIndex]
+    if (!liveShot) return
+    const liveCam = cameras.find((c) => c.id === liveShot.cameraId)
+    if (liveCam && cameraFilter && cameraFilter.includes(liveCam.number)) {
+      const audio = new Audio(`${audioBaseUrl}/beep.mp3`)
+      audio.play().catch((err: unknown) => console.error('[ShotlistWidget] beep error:', err))
+    }
+  }, [liveIndex, running, audioBaseUrl, hasFilterForEffect, muteBeep, shots, cameras, cameraFilter])
 
   const timing = computeTiming(shots, cameras, liveIndex, startedAt, now, cameraFilter)
 

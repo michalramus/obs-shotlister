@@ -153,6 +153,9 @@ export interface ElectronApi {
     importRundown: (args: { projectId: string }) => Promise<string | null>
     importDatabase: () => Promise<boolean>
   }
+  assets: {
+    getAudioDir: () => Promise<string>
+  }
 }
 
 declare global {

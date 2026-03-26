@@ -187,6 +187,9 @@ export default function App(): React.JSX.Element {
 
   const [selectedShotId, setSelectedShotId] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const [muteCount, setMuteCount] = useState(() => localStorage.getItem('obs-queuer-mute-count') === 'true')
+  const [muteBeep, setMuteBeep] = useState(() => localStorage.getItem('obs-queuer-mute-beep') === 'true')
+  const [audioBaseUrl, setAudioBaseUrl] = useState<string | undefined>()
 
   const [showCameraConfig, setShowCameraConfig] = useState(false)
   const [showResolveImport, setShowResolveImport] = useState(false)
@@ -217,6 +220,9 @@ export default function App(): React.JSX.Element {
     window.api.obs.getStatus().then((r) => setObsStatus(r.status)).catch(() => {})
     window.api.obs.onStatusChange(setObsStatus)
     window.api.obs.onValidationResult(setObsValidationResult)
+    window.api.assets.getAudioDir().then((dir) => {
+      setAudioBaseUrl(`media://localhost${dir}`)
+    }).catch((err: unknown) => console.error('[App] getAudioDir:', err))
   }, [loadProjects, loadLiveState, setObsStatus, setObsValidationResult])
 
   // Keyboard shortcuts
@@ -335,6 +341,20 @@ export default function App(): React.JSX.Element {
           </select>
         )}
         <div style={styles.headerActions}>
+          <button
+            onClick={() => { const v = !muteCount; setMuteCount(v); localStorage.setItem('obs-queuer-mute-count', String(v)) }}
+            style={{ ...styles.importBtn, color: muteCount ? '#555' : '#888' }}
+            title={muteCount ? 'Unmute countdown' : 'Mute countdown'}
+          >
+            {muteCount ? '🔇 Count' : '🔊 Count'}
+          </button>
+          <button
+            onClick={() => { const v = !muteBeep; setMuteBeep(v); localStorage.setItem('obs-queuer-mute-beep', String(v)) }}
+            style={{ ...styles.importBtn, color: muteBeep ? '#555' : '#888' }}
+            title={muteBeep ? 'Unmute beep' : 'Mute beep'}
+          >
+            {muteBeep ? '🔇 Beep' : '🔊 Beep'}
+          </button>
           {activeRundownId && (
             <button
               style={styles.importBtn}
@@ -613,6 +633,9 @@ export default function App(): React.JSX.Element {
                       showNextBackground
                       autoScroll
                       cameraFilter={cameraFilter !== null ? [cameraFilter] : undefined}
+                      audioBaseUrl={audioBaseUrl}
+                      muteCount={muteCount}
+                      muteBeep={muteBeep}
                     />
                   </div>
                 )}
@@ -637,6 +660,9 @@ export default function App(): React.JSX.Element {
                     showNextBackground
                     autoScroll
                     cameraFilter={cameraFilter !== null ? [cameraFilter] : undefined}
+                    audioBaseUrl={audioBaseUrl}
+                    muteCount={muteCount}
+                    muteBeep={muteBeep}
                   />
                 )}
               </div>

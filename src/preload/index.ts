@@ -97,6 +97,9 @@ export interface ElectronApi {
     importRundown: (args: { projectId: string }) => Promise<string | null>
     importDatabase: () => Promise<boolean>
   }
+  assets: {
+    getAudioDir: () => Promise<string>
+  }
 }
 
 const api: ElectronApi = {
@@ -186,6 +189,9 @@ const api: ElectronApi = {
     importProject: () => ipcRenderer.invoke('import:project'),
     importRundown: (args) => ipcRenderer.invoke('import:rundown', args),
     importDatabase: () => ipcRenderer.invoke('import:database'),
+  },
+  assets: {
+    getAudioDir: () => ipcRenderer.invoke('assets:audioDir'),
   },
 }
 

@@ -9,11 +9,15 @@ import type { Database } from 'better-sqlite3'
 
 const PORT = process.env['PORT'] ? parseInt(process.env['PORT'], 10) : 3000
 
-export function startServer(db?: Database): SocketServer {
+export function startServer(db?: Database, audioDir?: string): SocketServer {
   const app = express()
 
   app.use(express.json())
   app.use(routes)
+
+  if (audioDir) {
+    app.use('/audio', express.static(audioDir))
+  }
 
   // Serve the compiled web UI bundle (out/web/).
   // Run `yarn build:web` once to generate it; the bundle then works in both dev and prod.

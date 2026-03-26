@@ -524,6 +524,11 @@ function registerIpcHandlers(): void {
     currentUiMode = mode
   })
 
+  // Assets
+  ipcMain.handle('assets:audioDir', () => {
+    return join(app.getAppPath(), 'resources', 'audio')
+  })
+
   // Export / Import
   ipcMain.handle('export:project', async (_e, { projectId }: { projectId: string }) => {
     const data = exportProjectData(getDatabase(), projectId)
@@ -755,7 +760,8 @@ app.whenReady().then(() => {
   _db = getDatabase()
   clearLiveState(_db)
   registerIpcHandlers()
-  const io = startServer(_db)
+  const audioDir = join(app.getAppPath(), 'resources', 'audio')
+  const io = startServer(_db, audioDir)
   if (io) setSocketServer(io)
   createWindow()
 

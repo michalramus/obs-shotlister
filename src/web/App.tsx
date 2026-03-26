@@ -96,6 +96,9 @@ export default function App(): React.JSX.Element {
     return isNaN(parsed) ? 1.0 : parsed
   })
 
+  const [muteCount, setMuteCount] = useState(() => localStorage.getItem('obs-queuer-mute-count') === 'true')
+  const [muteBeep, setMuteBeep] = useState(() => localStorage.getItem('obs-queuer-mute-beep') === 'true')
+
   const [selectedCamera, setSelectedCamera] = useState<number | null>(() => {
     try {
       const stored = localStorage.getItem('obs-queuer-camera-filter')
@@ -224,6 +227,23 @@ export default function App(): React.JSX.Element {
           </select>
         )}
 
+        <button
+          style={s.zoomBtn}
+          onClick={() => { const v = !muteCount; setMuteCount(v); localStorage.setItem('obs-queuer-mute-count', String(v)) }}
+          title={muteCount ? 'Unmute countdown' : 'Mute countdown'}
+          aria-label={muteCount ? 'Unmute countdown' : 'Mute countdown'}
+        >
+          {muteCount ? '🔇C' : '🔊C'}
+        </button>
+        <button
+          style={s.zoomBtn}
+          onClick={() => { const v = !muteBeep; setMuteBeep(v); localStorage.setItem('obs-queuer-mute-beep', String(v)) }}
+          title={muteBeep ? 'Unmute beep' : 'Mute beep'}
+          aria-label={muteBeep ? 'Unmute beep' : 'Mute beep'}
+        >
+          {muteBeep ? '🔇B' : '🔊B'}
+        </button>
+
         <span style={s.statusText}>
           <span style={s.statusDot(connected)} />
           {connected ? 'Connected' : 'Disconnected'}
@@ -244,6 +264,9 @@ export default function App(): React.JSX.Element {
             startedAt={startedAt}
             running={running}
             cameraFilter={selectedCamera !== null ? [selectedCamera] : []}
+            audioBaseUrl="/audio"
+            muteCount={muteCount}
+            muteBeep={muteBeep}
           />
         )}
       </div>
