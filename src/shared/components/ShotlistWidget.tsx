@@ -213,6 +213,7 @@ export function ShotlistWidget({
   const beepFiredRef = useRef<boolean>(false)
   const prevLiveIndexForAudioRef = useRef<number | null>(null)
   const prevLiveIndexForFilterBeepRef = useRef<number | null>(null)
+  const filteredCamWasLiveRef = useRef<boolean>(false)
 
   // 60fps ticker while running
   useEffect(() => {
@@ -337,6 +338,35 @@ export function ShotlistWidget({
       audio.volume = audioVolume
       audio.play().catch((err: unknown) => console.error('[ShotlistWidget] beep error:', err))
     }
+  }, [
+    liveIndex,
+    running,
+    audioBaseUrl,
+    hasFilterForEffect,
+    muteBeep,
+    audioVolume,
+    shots,
+    cameras,
+    cameraFilter,
+  ])
+
+  // Filtered low-beep: play beep-low when filtered camera goes OFF live (switching to waiting)
+  useEffect(() => {
+    if (!audioBaseUrl || !hasFilterForEffect || muteBeep) return
+    const liveShot = liveIndex !== null ? shots[liveIndex] : null
+    const liveCam = liveShot ? cameras.find((c) => c.id === liveShot.cameraId) : null
+    const isFilteredCamLive =
+      running &&
+      liveCam != null &&
+      cameraFilter !== undefined &&
+      cameraFilter.includes(liveCam.number)
+
+    if (filteredCamWasLiveRef.current && !isFilteredCamLive) {
+      const audio = new Audio(`${audioBaseUrl}/beep-low.opus`)
+      audio.volume = audioVolume
+      audio.play().catch((err: unknown) => console.error('[ShotlistWidget] beep-low error:', err))
+    }
+    filteredCamWasLiveRef.current = isFilteredCamLive
   }, [
     liveIndex,
     running,
