@@ -295,9 +295,18 @@ export function ShotlistWidget({
     }
   }
 
-  const headerCountdown = isWaiting && timing.timeUntilNextVisibleMs !== null
-    ? formatMs(timing.timeUntilNextVisibleMs)
-    : timing.remainingMs !== null ? formatMs(timing.remainingMs) : '--:--'
+  const isTransitioning = hasFilter
+    && transitioningOutIndex >= 0
+    && capturedTransEffectiveDurRef.current !== null
+    && startedAt !== null
+    && liveTransitionMs > 0
+    && (now - startedAt) <= liveTransitionMs
+
+  const headerCountdown = isTransitioning && startedAt !== null
+    ? formatMs(Math.max(0, liveTransitionMs - (now - startedAt)))
+    : isWaiting && timing.timeUntilNextVisibleMs !== null
+      ? formatMs(timing.timeUntilNextVisibleMs)
+      : timing.remainingMs !== null ? formatMs(timing.remainingMs) : '--:--'
 
   return (
     <div style={s.widget} data-testid="shotlist-widget">
@@ -309,7 +318,7 @@ export function ShotlistWidget({
         }}
       >
         <span style={s.rundownName}>{rundownName}</span>
-        <span style={{ ...s.countdown, color: isWaiting ? '#2ecc71' : '#ff3b30' }}>
+        <span style={{ ...s.countdown, color: (isWaiting && !isTransitioning) ? '#2ecc71' : '#ff3b30' }}>
           {running && <span style={{ fontSize: '12px', marginRight: '4px' }}>▶</span>}
           {headerCountdown}
         </span>
@@ -333,12 +342,12 @@ export function ShotlistWidget({
 
             if (isLive && timing.remainingMs !== null) {
               const effectiveDur = timing.effectiveDurationMs ?? shot.durationMs
-              const totalVisual = effectiveDur + nextNonHiddenTransitionMs
+              const totalVisual = hasFilter ? effectiveDur + nextNonHiddenTransitionMs : effectiveDur
               timeLabel = formatMs(timing.remainingMs)
               progressPct = totalVisual > 0 ? (effectiveDur - timing.remainingMs) / totalVisual : 0
             }
 
-            if (isTransitioningOut && capturedTransEffectiveDurRef.current !== null && startedAt !== null) {
+            if (isTransitioningOut && hasFilter && capturedTransEffectiveDurRef.current !== null && startedAt !== null) {
               const transEffectiveDur = capturedTransEffectiveDurRef.current
               const transitionElapsed = Math.min(now - startedAt, liveTransitionMs)
               const totalVisual = transEffectiveDur + liveTransitionMs
@@ -346,8 +355,8 @@ export function ShotlistWidget({
               timeLabel = formatMs(Math.max(0, liveTransitionMs - transitionElapsed))
             }
 
-            // Waiting bar: on the next-visible shot when operator is waiting for their camera
-            const showWaitingBar = isWaiting && isNext && waitingPct !== null
+            // Waiting bar: on the next-visible shot when operator is waiting (not during transition)
+            const showWaitingBar = isWaiting && !isTransitioning && isNext && waitingPct !== null
             if (showWaitingBar && timing.timeUntilNextVisibleMs !== null) {
               timeLabel = formatMs(timing.timeUntilNextVisibleMs)
             }
@@ -358,8 +367,8 @@ export function ShotlistWidget({
                 ? Math.min(1, shot.transitionMs / (isLive ? effectiveDuration : shot.durationMs))
                 : 0
 
-            // Out-transition zone: right-anchored purple on live shot (next shot's transitionMs)
-            const outTransitionPct = isLive && nextNonHiddenTransitionMs > 0
+            // Out-transition zone: right-anchored purple on live shot (filter mode only)
+            const outTransitionPct = isLive && hasFilter && nextNonHiddenTransitionMs > 0
               ? nextNonHiddenTransitionMs / (effectiveDuration + nextNonHiddenTransitionMs)
               : 0
 
