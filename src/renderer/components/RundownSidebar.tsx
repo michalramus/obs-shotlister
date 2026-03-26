@@ -6,6 +6,8 @@ import {
   useSensor,
   useSensors,
   DragEndEvent,
+  DragOverEvent,
+  useDroppable,
 } from '@dnd-kit/core'
 import {
   SortableContext,
@@ -46,20 +48,11 @@ const s = {
     padding: '4px 0',
   } satisfies React.CSSProperties,
 
-  folderHeader: {
-    padding: '6px 14px 3px',
-    fontSize: '10px',
-    fontWeight: 700,
-    color: '#555',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.06em',
-    marginTop: '4px',
-  } satisfies React.CSSProperties,
-
-  item: (isActive: boolean): React.CSSProperties => ({
+  item: (isActive: boolean, indented: boolean): React.CSSProperties => ({
     display: 'flex',
     alignItems: 'center',
     padding: '7px 14px',
+    paddingLeft: indented ? '28px' : '14px',
     cursor: 'pointer',
     background: isActive ? '#2a3a4a' : 'transparent',
     color: isActive ? '#fff' : '#bbb',
@@ -117,7 +110,7 @@ const s = {
   } satisfies React.CSSProperties,
 
   addBtn: {
-    margin: '8px 10px',
+    margin: '4px 10px',
     padding: '6px 10px',
     background: 'none',
     border: '1px solid #333',
@@ -159,6 +152,18 @@ const s = {
     lineHeight: 1,
     userSelect: 'none' as const,
   } satisfies React.CSSProperties,
+
+  folderDeleteBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#5a7a9a',
+    cursor: 'pointer',
+    fontSize: '13px',
+    padding: '0 2px',
+    lineHeight: 1,
+    flexShrink: 0,
+    marginLeft: 'auto',
+  } satisfies React.CSSProperties,
 }
 
 interface ContextMenuState {
@@ -170,11 +175,11 @@ interface ContextMenuState {
 interface SortableRundownItemProps {
   rundown: Rundown
   isActive: boolean
+  indented: boolean
   editingId: string | null
   editingName: string
   editInputRef: React.RefObject<HTMLInputElement | null>
   running: boolean
-  folders: string[]
   onSelect: (id: string) => void
   onStartEdit: (id: string, name: string) => void
   onEditChange: (val: string) => void
@@ -182,14 +187,12 @@ interface SortableRundownItemProps {
   onCommitEdit: () => void
   onDelete: (id: string, e: React.MouseEvent) => void
   onContextMenu: (rundownId: string, e: React.MouseEvent) => void
-  contextMenuState: ContextMenuState | null
-  onCloseContextMenu: () => void
-  onSetFolder: (id: string, folder: string | null) => void
 }
 
 function SortableRundownItem({
   rundown,
   isActive,
+  indented,
   editingId,
   editingName,
   editInputRef,
@@ -209,7 +212,7 @@ function SortableRundownItem({
   })
 
   const style: React.CSSProperties = {
-    ...s.item(isActive),
+    ...s.item(isActive, indented),
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
@@ -229,7 +232,7 @@ function SortableRundownItem({
         {...attributes}
         {...listeners}
         onClick={(e) => e.stopPropagation()}
-        title="Drag to reorder"
+        title="Drag to reorder or drop on folder"
       >
         ⠿
       </span>
@@ -284,6 +287,129 @@ function SortableRundownItem({
   )
 }
 
+interface FolderHeaderProps {
+  folderName: string
+  collapsed: boolean
+  isOver: boolean
+  onToggle: () => void
+  onRename: (newName: string) => void
+  onDelete: () => void
+}
+
+function FolderHeader({
+  folderName,
+  collapsed,
+  isOver,
+  onToggle,
+  onRename,
+  onDelete,
+}: FolderHeaderProps): React.JSX.Element {
+  const [hovered, setHovered] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [editValue, setEditValue] = useState(folderName)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const { setNodeRef } = useDroppable({ id: 'folder:' + folderName })
+
+  useEffect(() => {
+    if (editing) inputRef.current?.focus()
+  }, [editing])
+
+  function commitRename(): void {
+    const trimmed = editValue.trim()
+    if (trimmed && trimmed !== folderName) {
+      onRename(trimmed)
+    }
+    setEditing(false)
+  }
+
+  const baseStyle: React.CSSProperties = {
+    padding: '7px 10px',
+    background: isOver ? '#253547' : '#1e2837',
+    borderLeft: isOver ? '3px solid #5a9fd4' : '3px solid #3d6b9e',
+    fontSize: '12px',
+    fontWeight: 700,
+    color: '#c8d8e8',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    cursor: 'pointer',
+    marginTop: '8px',
+    userSelect: 'none',
+    listStyle: 'none',
+  }
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={baseStyle}
+      onClick={onToggle}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      data-testid="folder-header"
+    >
+      <span style={{ fontSize: '10px', flexShrink: 0 }}>{collapsed ? '▸' : '▾'}</span>
+      <span style={{ fontSize: '14px', flexShrink: 0 }}>📁</span>
+
+      {editing ? (
+        <input
+          ref={inputRef}
+          style={{ ...s.inlineInput, fontSize: '12px', padding: '1px 4px' }}
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitRename()
+            else if (e.key === 'Escape') {
+              setEditValue(folderName)
+              setEditing(false)
+            }
+          }}
+          onClick={(e) => e.stopPropagation()}
+          aria-label="Rename folder"
+        />
+      ) : (
+        <span
+          style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          onDoubleClick={(e) => {
+            e.stopPropagation()
+            setEditValue(folderName)
+            setEditing(true)
+          }}
+          title="Double-click to rename folder"
+        >
+          {folderName}
+        </span>
+      )}
+
+      {hovered && !editing && (
+        <button
+          style={s.folderDeleteBtn}
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete()
+          }}
+          title="Remove folder (rundowns become ungrouped)"
+          aria-label={`Delete folder ${folderName}`}
+        >
+          ×
+        </button>
+      )}
+    </li>
+  )
+}
+
+function UngroupedDropZone(): React.JSX.Element {
+  const { setNodeRef } = useDroppable({ id: 'folder:__none__' })
+  return (
+    <li
+      ref={setNodeRef}
+      style={{ height: '4px', listStyle: 'none' }}
+      aria-hidden="true"
+    />
+  )
+}
+
 export function RundownSidebar(): React.JSX.Element {
   const rundowns = useAppStore((s) => s.rundowns)
   const activeRundownId = useAppStore((s) => s.activeRundownId)
@@ -298,19 +424,36 @@ export function RundownSidebar(): React.JSX.Element {
 
   const [newName, setNewName] = useState('')
   const [showNewInput, setShowNewInput] = useState(false)
+  const [showFolderInput, setShowFolderInput] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
-  const [folderInput, setFolderInput] = useState<{ rundownId: string; value: string } | null>(null)
+  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null)
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
+  const [localFolders, setLocalFolders] = useState<string[]>(() =>
+    Array.from(new Set(rundowns.map((r) => r.folder).filter((f): f is string => f !== null)))
+  )
 
   const newInputRef = useRef<HTMLInputElement>(null)
+  const newFolderInputRef = useRef<HTMLInputElement>(null)
   const editInputRef = useRef<HTMLInputElement | null>(null)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
+  // Sync localFolders when rundowns change (add new folders from rundowns)
+  useEffect(() => {
+    const fromRundowns = rundowns.map((r) => r.folder).filter((f): f is string => f !== null)
+    setLocalFolders((prev) => Array.from(new Set([...prev, ...fromRundowns])))
+  }, [rundowns])
+
   useEffect(() => {
     if (showNewInput) newInputRef.current?.focus()
   }, [showNewInput])
+
+  useEffect(() => {
+    if (showFolderInput) newFolderInputRef.current?.focus()
+  }, [showFolderInput])
 
   useEffect(() => {
     if (editingId) editInputRef.current?.focus()
@@ -323,6 +466,11 @@ export function RundownSidebar(): React.JSX.Element {
     window.addEventListener('mousedown', handler)
     return () => window.removeEventListener('mousedown', handler)
   }, [contextMenu])
+
+  // Compute all displayed folders
+  const displayedFolders = Array.from(
+    new Set([...localFolders, ...rundowns.map((r) => r.folder).filter((f): f is string => f !== null)])
+  )
 
   async function handleSelect(id: string): Promise<void> {
     setActiveRundown(id)
@@ -353,6 +501,24 @@ export function RundownSidebar(): React.JSX.Element {
     } else if (e.key === 'Escape') {
       setShowNewInput(false)
       setNewName('')
+    }
+  }
+
+  function handleCreateFolder(): void {
+    const trimmed = newFolderName.trim()
+    if (trimmed && !localFolders.includes(trimmed)) {
+      setLocalFolders((prev) => [...prev, trimmed])
+    }
+    setShowFolderInput(false)
+    setNewFolderName('')
+  }
+
+  function handleNewFolderKeyDown(e: React.KeyboardEvent): void {
+    if (e.key === 'Enter') {
+      handleCreateFolder()
+    } else if (e.key === 'Escape') {
+      setShowFolderInput(false)
+      setNewFolderName('')
     }
   }
 
@@ -410,12 +576,71 @@ export function RundownSidebar(): React.JSX.Element {
       console.error('[RundownSidebar] setFolder error:', err)
     }
     setContextMenu(null)
-    setFolderInput(null)
+  }
+
+  async function handleRenameFolder(oldName: string, newName: string): Promise<void> {
+    // Update all rundowns in this folder
+    const inFolder = rundowns.filter((r) => r.folder === oldName)
+    for (const rd of inFolder) {
+      await handleSetFolder(rd.id, newName)
+    }
+    // Update localFolders
+    setLocalFolders((prev) => prev.map((f) => (f === oldName ? newName : f)))
+    // Update collapsed state
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev)
+      if (next.has(oldName)) {
+        next.delete(oldName)
+        next.add(newName)
+      }
+      return next
+    })
+  }
+
+  async function handleDeleteFolder(folderName: string): Promise<void> {
+    // Move all rundowns in folder to ungrouped
+    const inFolder = rundowns.filter((r) => r.folder === folderName)
+    for (const rd of inFolder) {
+      await handleSetFolder(rd.id, null)
+    }
+    setLocalFolders((prev) => prev.filter((f) => f !== folderName))
+  }
+
+  function toggleCollapse(folderName: string): void {
+    setCollapsedFolders((prev) => {
+      const next = new Set(prev)
+      if (next.has(folderName)) {
+        next.delete(folderName)
+      } else {
+        next.add(folderName)
+      }
+      return next
+    })
+  }
+
+  function handleDragOver(event: DragOverEvent): void {
+    const { over } = event
+    if (over && typeof over.id === 'string' && over.id.startsWith('folder:')) {
+      setDragOverFolder(over.id.slice('folder:'.length))
+    } else {
+      setDragOverFolder(null)
+    }
   }
 
   function handleDragEnd(event: DragEndEvent): void {
     const { active, over } = event
-    if (!over || active.id === over.id) return
+    setDragOverFolder(null)
+
+    if (!over) return
+
+    if (typeof over.id === 'string' && over.id.startsWith('folder:')) {
+      const folder = over.id.slice('folder:'.length)
+      const targetFolder = folder === '__none__' ? null : folder
+      void handleSetFolder(active.id as string, targetFolder)
+      return
+    }
+
+    if (active.id === over.id) return
 
     const oldIndex = rundowns.findIndex((r) => r.id === active.id)
     const newIndex = rundowns.findIndex((r) => r.id === over.id)
@@ -423,55 +648,50 @@ export function RundownSidebar(): React.JSX.Element {
 
     const reordered = arrayMove(rundowns, oldIndex, newIndex)
 
-    // Determine target folder from the item at newIndex in reordered list
-    const targetRundown = reordered[newIndex]
+    // Inherit target's folder
+    const targetRundown = rundowns[newIndex]
     const draggedRundown = rundowns[oldIndex]
-    const targetFolder = targetRundown.id !== draggedRundown.id ? targetRundown.folder : draggedRundown.folder
+    const targetFolder = targetRundown.folder
 
     const ids = reordered.map((r) => r.id)
-
     reorderRundowns(ids).catch((err: unknown) => {
       console.error('[RundownSidebar] reorder error:', err)
     })
 
-    // If the dragged item moved to a different folder context, update the folder
     if (draggedRundown.folder !== targetFolder) {
-      handleSetFolder(draggedRundown.id, targetFolder).catch((err: unknown) => {
-        console.error('[RundownSidebar] setFolder on drag error:', err)
-      })
+      void handleSetFolder(draggedRundown.id, targetFolder)
     }
   }
 
-  // Collect unique folders (excluding null)
-  const folders = Array.from(new Set(rundowns.map((r) => r.folder).filter((f): f is string => f !== null)))
-
-  // Build groups: ungrouped first, then each folder
   const ungrouped = rundowns.filter((r) => r.folder === null)
-  const grouped = folders.map((folder) => ({
-    folder,
-    rundowns: rundowns.filter((r) => r.folder === folder),
-  }))
-
   const contextRundown = contextMenu ? rundowns.find((r) => r.id === contextMenu.rundownId) : null
 
   return (
     <aside style={s.sidebar} data-testid="rundown-sidebar">
       <div style={s.header}>Rundowns</div>
 
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragOver={handleDragOver}
+        onDragEnd={handleDragEnd}
+      >
         <SortableContext items={rundowns.map((r) => r.id)} strategy={verticalListSortingStrategy}>
           <ul style={s.list}>
+            {/* Invisible drop zone for ungrouped */}
+            <UngroupedDropZone />
+
             {/* Ungrouped rundowns */}
             {ungrouped.map((rd) => (
               <SortableRundownItem
                 key={rd.id}
                 rundown={rd}
                 isActive={rd.id === activeRundownId}
+                indented={false}
                 editingId={editingId}
                 editingName={editingName}
                 editInputRef={editInputRef}
                 running={running}
-                folders={folders}
                 onSelect={(id) => void handleSelect(id)}
                 onStartEdit={startEdit}
                 onEditChange={setEditingName}
@@ -479,46 +699,51 @@ export function RundownSidebar(): React.JSX.Element {
                 onCommitEdit={() => void commitEdit()}
                 onDelete={(id, e) => void handleDelete(id, e)}
                 onContextMenu={handleContextMenu}
-                contextMenuState={contextMenu}
-                onCloseContextMenu={() => setContextMenu(null)}
-                onSetFolder={(id, folder) => void handleSetFolder(id, folder)}
               />
             ))}
 
             {/* Folder groups */}
-            {grouped.map(({ folder, rundowns: folderRundowns }) => (
-              <React.Fragment key={folder}>
-                <li style={s.folderHeader}>
-                  <span style={{ marginRight: '4px' }}>▸</span>
-                  {folder}
-                </li>
-                {folderRundowns.map((rd) => (
-                  <SortableRundownItem
-                    key={rd.id}
-                    rundown={rd}
-                    isActive={rd.id === activeRundownId}
-                    editingId={editingId}
-                    editingName={editingName}
-                    editInputRef={editInputRef}
-                    running={running}
-                    folders={folders}
-                    onSelect={(id) => void handleSelect(id)}
-                    onStartEdit={startEdit}
-                    onEditChange={setEditingName}
-                    onEditKeyDown={handleEditKeyDown}
-                    onCommitEdit={() => void commitEdit()}
-                    onDelete={(id, e) => void handleDelete(id, e)}
-                    onContextMenu={handleContextMenu}
-                    contextMenuState={contextMenu}
-                    onCloseContextMenu={() => setContextMenu(null)}
-                    onSetFolder={(id, folder) => void handleSetFolder(id, folder)}
+            {displayedFolders.map((folder) => {
+              const folderRundowns = rundowns.filter((r) => r.folder === folder)
+              const collapsed = collapsedFolders.has(folder)
+              const isOver = dragOverFolder === folder
+
+              return (
+                <React.Fragment key={folder}>
+                  <FolderHeader
+                    folderName={folder}
+                    collapsed={collapsed}
+                    isOver={isOver}
+                    onToggle={() => toggleCollapse(folder)}
+                    onRename={(newName) => void handleRenameFolder(folder, newName)}
+                    onDelete={() => void handleDeleteFolder(folder)}
                   />
-                ))}
-              </React.Fragment>
-            ))}
+                  {!collapsed &&
+                    folderRundowns.map((rd) => (
+                      <SortableRundownItem
+                        key={rd.id}
+                        rundown={rd}
+                        isActive={rd.id === activeRundownId}
+                        indented={true}
+                        editingId={editingId}
+                        editingName={editingName}
+                        editInputRef={editInputRef}
+                        running={running}
+                        onSelect={(id) => void handleSelect(id)}
+                        onStartEdit={startEdit}
+                        onEditChange={setEditingName}
+                        onEditKeyDown={handleEditKeyDown}
+                        onCommitEdit={() => void commitEdit()}
+                        onDelete={(id, e) => void handleDelete(id, e)}
+                        onContextMenu={handleContextMenu}
+                      />
+                    ))}
+                </React.Fragment>
+              )
+            })}
 
             {showNewInput && (
-              <li style={s.item(false)}>
+              <li style={s.item(false, false)}>
                 <input
                   ref={newInputRef}
                   style={s.inlineInput}
@@ -543,57 +768,51 @@ export function RundownSidebar(): React.JSX.Element {
         + New Rundown
       </button>
 
+      {showFolderInput ? (
+        <div style={{ margin: '0 10px 8px' }}>
+          <input
+            ref={newFolderInputRef}
+            style={s.inlineInput}
+            placeholder="Folder name…"
+            value={newFolderName}
+            onChange={(e) => setNewFolderName(e.target.value)}
+            onBlur={handleCreateFolder}
+            onKeyDown={handleNewFolderKeyDown}
+            aria-label="New folder name"
+          />
+        </div>
+      ) : (
+        <button
+          style={{ ...s.addBtn, marginTop: 0 }}
+          onClick={() => setShowFolderInput(true)}
+          aria-label="Add new folder"
+        >
+          + New Folder
+        </button>
+      )}
+
       {/* Context menu */}
       {contextMenu && contextRundown && (
         <div
           style={{ ...s.contextMenu, left: contextMenu.x, top: contextMenu.y }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {folderInput && folderInput.rundownId === contextMenu.rundownId ? (
-            <div style={{ padding: '6px 10px' }}>
-              <input
-                style={{ ...s.inlineInput, width: '130px' }}
-                placeholder="Folder name…"
-                value={folderInput.value}
-                autoFocus
-                onChange={(e) => setFolderInput({ ...folderInput, value: e.target.value })}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    const v = folderInput.value.trim()
-                    void handleSetFolder(contextMenu.rundownId, v || null)
-                  } else if (e.key === 'Escape') {
-                    setFolderInput(null)
-                    setContextMenu(null)
-                  }
-                }}
-              />
-            </div>
-          ) : (
-            <>
-              <button
-                style={s.contextMenuItem}
-                onClick={() => setFolderInput({ rundownId: contextMenu.rundownId, value: contextRundown.folder ?? '' })}
-              >
-                {contextRundown.folder ? 'Change folder…' : 'Add to folder…'}
-              </button>
-              {contextRundown.folder && (
-                <button
-                  style={s.contextMenuItem}
-                  onClick={() => void handleSetFolder(contextMenu.rundownId, null)}
-                >
-                  Remove from folder
-                </button>
-              )}
-              <button
-                style={s.contextMenuItem}
-                onClick={() => {
-                  setContextMenu(null)
-                  startEdit(contextMenu.rundownId, contextRundown.name)
-                }}
-              >
-                Rename
-              </button>
-            </>
+          <button
+            style={s.contextMenuItem}
+            onClick={() => {
+              setContextMenu(null)
+              startEdit(contextMenu.rundownId, contextRundown.name)
+            }}
+          >
+            Rename
+          </button>
+          {contextRundown.folder && (
+            <button
+              style={s.contextMenuItem}
+              onClick={() => void handleSetFolder(contextMenu.rundownId, null)}
+            >
+              Remove from folder
+            </button>
           )}
         </div>
       )}
