@@ -350,7 +350,11 @@ export function TimelineEditor({
       const elapsed = Date.now() - startedAt!
       const newMs = Math.min(shotStartMs + elapsed, totalMs)
       setPlayheadMs(newMs)
-      autoScroll(newMs)
+      // Only auto-scroll while the current shot is still running
+      const currentShotDurationMs = shots[liveIndex!]?.durationMs ?? 0
+      if (elapsed < currentShotDurationMs) {
+        autoScroll(newMs)
+      }
       liveRafRef.current = requestAnimationFrame(tick)
     }
     liveRafRef.current = requestAnimationFrame(tick)
@@ -361,6 +365,13 @@ export function TimelineEditor({
       }
     }
   }, [running, liveIndex, startedAt, zoomPxPerSec]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When liveIndex changes, scroll to the new shot's start position
+  useEffect(() => {
+    if (!running || liveIndex === null) return
+    const shotStartMs = shots.slice(0, liveIndex).reduce((s, sh) => s + sh.durationMs, 0)
+    autoScroll(shotStartMs)
+  }, [liveIndex]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Scroll sync for overview
   useEffect(() => {
