@@ -661,7 +661,10 @@ async function switchOBSScenes(state: LiveState, database: ReturnType<typeof get
 async function setOBSPreviewForStart(state: LiveState, database: ReturnType<typeof getDatabase>): Promise<void> {
   if (obsClient.status !== 'connected' || !state.rundownId) return
   const queue = getLiveQueue()
-  const firstShot = queue[0]
+  const firstShotId = queue[0]?.id
+  if (!firstShotId) return
+  const allShots = listShots(database, state.rundownId)
+  const firstShot = allShots.find((s) => s.id === firstShotId)
   if (!firstShot) return
   const camera = getCameraById(database, firstShot.cameraId)
   if (camera?.obsScene) {
