@@ -645,7 +645,6 @@ export default function App(): React.JSX.Element {
                     running={running}
                     showNextBackground
                     autoScroll
-                    cameraFilter={cameraFilter !== null ? [cameraFilter] : undefined}
                     audioBaseUrl={audioBaseUrl}
                     muteCount={muteCount}
                     muteBeep={muteBeep}
