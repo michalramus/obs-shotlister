@@ -667,7 +667,9 @@ function registerIpcHandlers(): void {
 
   // Assets
   ipcMain.handle('assets:audioDir', () => {
-    return join(app.getAppPath(), 'resources', 'audio')
+    return app.isPackaged
+      ? join(process.resourcesPath, 'audio')
+      : join(app.getAppPath(), 'resources', 'audio')
   })
 
   // Export / Import
@@ -1027,7 +1029,9 @@ app.whenReady().then(() => {
   _db = getDatabase()
   clearLiveState(_db)
   registerIpcHandlers()
-  const audioDir = join(app.getAppPath(), 'resources', 'audio')
+  const audioDir = app.isPackaged
+    ? join(process.resourcesPath, 'audio')
+    : join(app.getAppPath(), 'resources', 'audio')
   const io = startServer(_db, audioDir)
   if (io) setSocketServer(io)
   createWindow()

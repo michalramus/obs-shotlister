@@ -1,0 +1,81 @@
+appId: com.obsqueuer.app
+productName: OBS Queuer
+copyright: Copyright © 2024
+
+# Files to include from the build output
+files:
+  - out/main/**
+  - out/preload/**
+  - out/renderer/**
+  - out/web/**
+  - package.json
+
+# Extra resources copied outside the asar (accessible via process.resourcesPath)
+extraResources:
+  - from: resources/audio
+    to: audio
+    filter:
+      - '**/*.opus'
+
+# Never unpack better-sqlite3 native module from asar
+asarUnpack:
+  - '**/*.node'
+
+directories:
+  output: dist
+  buildResources: build
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  category: public.app-category.utilities
+  icon: build/icon.icns
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: build/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+linux:
+  target:
+    - target: deb
+      arch:
+        - x64
+    - target: AppImage
+      arch:
+        - x64
+  icon: build/icons
+  category: AudioVideo
+  maintainer: obs-queuer
+
+deb:
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
