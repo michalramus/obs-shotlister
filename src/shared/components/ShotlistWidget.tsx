@@ -240,29 +240,33 @@ export function ShotlistWidget({
         const remainingSec =
           timingNow.remainingMs !== null ? Math.floor(timingNow.remainingMs / 1000) : null
 
-        // Countdown 5→1
+        const prevSec = prevRemainingSecRef.current
+        if (remainingSec !== null) prevRemainingSecRef.current = remainingSec
+
+        // Countdown 3→1: play word when second ticks down
         if (
           !muteCount &&
           remainingSec !== null &&
-          prevRemainingSecRef.current !== null &&
-          remainingSec !== prevRemainingSecRef.current &&
+          prevSec !== null &&
+          remainingSec !== prevSec &&
           remainingSec >= 1 &&
-          remainingSec <= 5
+          remainingSec <= 3
         ) {
-          const words = ['', 'one', 'two', 'three', 'four', 'five']
+          const words: Record<number, string> = { 1: 'one', 2: 'two', 3: 'three' }
           const audio = new Audio(`${audioBaseUrl}/${words[remainingSec]}.opus`)
           audio
             .play()
             .catch((err: unknown) => console.error('[ShotlistWidget] count audio error:', err))
         }
-        if (remainingSec !== null) prevRemainingSecRef.current = remainingSec
 
-        // Natural expiry beep
+        // Beep at expiry: fire once when remainingSec transitions to 0
         if (
           !muteBeep &&
           !beepFiredRef.current &&
-          timingNow.remainingMs !== null &&
-          timingNow.remainingMs <= 0
+          remainingSec !== null &&
+          prevSec !== null &&
+          remainingSec === 0 &&
+          prevSec > 0
         ) {
           beepFiredRef.current = true
           const audio = new Audio(`${audioBaseUrl}/beep.opus`)
