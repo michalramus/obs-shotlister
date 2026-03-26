@@ -96,8 +96,16 @@ export default function App(): React.JSX.Element {
     return isNaN(parsed) ? 1.0 : parsed
   })
 
-  const [muteCount, setMuteCount] = useState(() => localStorage.getItem('obs-queuer-mute-count') === 'true')
-  const [muteBeep, setMuteBeep] = useState(() => localStorage.getItem('obs-queuer-mute-beep') === 'true')
+  const [muteCount, setMuteCount] = useState(
+    () => localStorage.getItem('obs-queuer-mute-count') === 'true',
+  )
+  const [muteBeep, setMuteBeep] = useState(
+    () => localStorage.getItem('obs-queuer-mute-beep') === 'true',
+  )
+  const [audioVolume, setAudioVolume] = useState<number>(() => {
+    const v = parseFloat(localStorage.getItem('obs-queuer-audio-volume') ?? '1')
+    return isNaN(v) ? 1 : v
+  })
 
   const [selectedCamera, setSelectedCamera] = useState<number | null>(() => {
     try {
@@ -111,7 +119,11 @@ export default function App(): React.JSX.Element {
 
   function handleCameraChange(num: number | null): void {
     setSelectedCamera(num)
-    try { localStorage.setItem('obs-queuer-camera-filter', num !== null ? String(num) : '') } catch (err) { console.error('[App] localStorage setItem:', err) }
+    try {
+      localStorage.setItem('obs-queuer-camera-filter', num !== null ? String(num) : '')
+    } catch (err) {
+      console.error('[App] localStorage setItem:', err)
+    }
   }
 
   function adjustZoom(delta: number): void {
@@ -148,12 +160,9 @@ export default function App(): React.JSX.Element {
       },
     )
 
-    socket.on(
-      'state:live',
-      (data: { liveIndex: number | null; elapsedMs: number | null }) => {
-        setLiveState(data)
-      },
-    )
+    socket.on('state:live', (data: { liveIndex: number | null; elapsedMs: number | null }) => {
+      setLiveState(data)
+    })
 
     socket.on('state:playback', (data: { running: boolean }) => {
       setPlayback(data)
@@ -170,7 +179,10 @@ export default function App(): React.JSX.Element {
         let prevNonHiddenId: string | null = null
         if (liveIndex !== null) {
           for (let i = liveIndex - 1; i >= 0; i--) {
-            if (!shots[i].hidden) { prevNonHiddenId = shots[i].id; break }
+            if (!shots[i].hidden) {
+              prevNonHiddenId = shots[i].id
+              break
+            }
           }
         }
         if (prevNonHiddenId === shotId) {
@@ -217,19 +229,27 @@ export default function App(): React.JSX.Element {
           <select
             style={s.cameraSelect}
             value={selectedCamera ?? ''}
-            onChange={(e) => handleCameraChange(e.target.value === '' ? null : parseInt(e.target.value, 10))}
+            onChange={(e) =>
+              handleCameraChange(e.target.value === '' ? null : parseInt(e.target.value, 10))
+            }
             aria-label="Filter by camera"
           >
             <option value="">All cameras</option>
             {cameras.map((cam) => (
-              <option key={cam.id} value={cam.number}>CAM{cam.number} {cam.name}</option>
+              <option key={cam.id} value={cam.number}>
+                CAM{cam.number} {cam.name}
+              </option>
             ))}
           </select>
         )}
 
         <button
           style={s.zoomBtn}
-          onClick={() => { const v = !muteCount; setMuteCount(v); localStorage.setItem('obs-queuer-mute-count', String(v)) }}
+          onClick={() => {
+            const v = !muteCount
+            setMuteCount(v)
+            localStorage.setItem('obs-queuer-mute-count', String(v))
+          }}
           title={muteCount ? 'Unmute countdown' : 'Mute countdown'}
           aria-label={muteCount ? 'Unmute countdown' : 'Mute countdown'}
         >
@@ -237,12 +257,36 @@ export default function App(): React.JSX.Element {
         </button>
         <button
           style={s.zoomBtn}
-          onClick={() => { const v = !muteBeep; setMuteBeep(v); localStorage.setItem('obs-queuer-mute-beep', String(v)) }}
+          onClick={() => {
+            const v = !muteBeep
+            setMuteBeep(v)
+            localStorage.setItem('obs-queuer-mute-beep', String(v))
+          }}
           title={muteBeep ? 'Unmute beep' : 'Mute beep'}
           aria-label={muteBeep ? 'Unmute beep' : 'Mute beep'}
         >
           {muteBeep ? '🔇B' : '🔊B'}
         </button>
+
+        <label
+          style={{ display: 'flex', alignItems: 'center', gap: 3, color: '#888', fontSize: 11 }}
+          title="Audio communicates volume"
+        >
+          Vol
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={audioVolume}
+            onChange={(e) => {
+              const v = parseFloat(e.target.value)
+              setAudioVolume(v)
+              localStorage.setItem('obs-queuer-audio-volume', String(v))
+            }}
+            style={{ width: 60 }}
+          />
+        </label>
 
         <span style={s.statusText}>
           <span style={s.statusDot(connected)} />
@@ -252,9 +296,7 @@ export default function App(): React.JSX.Element {
 
       <div style={{ ...s.content, zoom: zoom }}>
         {rundown === null ? (
-          <div style={s.noRundown}>
-            {connected ? 'Waiting for rundown...' : 'Connecting...'}
-          </div>
+          <div style={s.noRundown}>{connected ? 'Waiting for rundown...' : 'Connecting...'}</div>
         ) : (
           <ShotlistWidget
             rundownName={rundown.name}
@@ -267,6 +309,7 @@ export default function App(): React.JSX.Element {
             audioBaseUrl="/audio"
             muteCount={muteCount}
             muteBeep={muteBeep}
+            audioVolume={audioVolume}
           />
         )}
       </div>

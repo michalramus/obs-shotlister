@@ -194,6 +194,9 @@ export default function App(): React.JSX.Element {
   const [muteBeep, setMuteBeep] = useState(
     () => localStorage.getItem('obs-queuer-mute-beep') === 'true',
   )
+  const [audioVolume, setAudioVolume] = useState<number>(() =>
+    parseFloat(localStorage.getItem('obs-queuer-audio-volume') ?? '1'),
+  )
   const [audioBaseUrl, setAudioBaseUrl] = useState<string | undefined>()
 
   const [showCameraConfig, setShowCameraConfig] = useState(false)
@@ -387,6 +390,25 @@ export default function App(): React.JSX.Element {
           >
             {muteBeep ? '🔇 Beep' : '🔊 Beep'}
           </button>
+          <label
+            style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#888', fontSize: 12 }}
+            title="Audio communicates volume"
+          >
+            Vol
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={audioVolume}
+              onChange={(e) => {
+                const v = parseFloat(e.target.value)
+                setAudioVolume(v)
+                localStorage.setItem('obs-queuer-audio-volume', String(v))
+              }}
+              style={{ width: 70, accentColor: '#888' }}
+            />
+          </label>
           {activeRundownId && (
             <button
               style={styles.importBtn}
@@ -767,6 +789,7 @@ export default function App(): React.JSX.Element {
                       audioBaseUrl={audioBaseUrl}
                       muteCount={muteCount}
                       muteBeep={muteBeep}
+                      audioVolume={audioVolume}
                     />
                   </div>
                 )}
@@ -793,6 +816,7 @@ export default function App(): React.JSX.Element {
                     audioBaseUrl={audioBaseUrl}
                     muteCount={muteCount}
                     muteBeep={muteBeep}
+                    audioVolume={audioVolume}
                   />
                 )}
               </div>

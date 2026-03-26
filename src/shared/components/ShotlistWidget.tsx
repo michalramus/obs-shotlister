@@ -15,6 +15,7 @@ export interface ShotlistWidgetProps {
   audioBaseUrl?: string
   muteCount?: boolean
   muteBeep?: boolean
+  audioVolume?: number // 0–1, default 1
 }
 
 // ---------------------------------------------------------------------------
@@ -196,6 +197,7 @@ export function ShotlistWidget({
   audioBaseUrl,
   muteCount = false,
   muteBeep = false,
+  audioVolume = 1,
 }: ShotlistWidgetProps): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now())
   const [headerFlash, setHeaderFlash] = useState(false)
@@ -243,20 +245,25 @@ export function ShotlistWidget({
         const prevSec = prevRemainingSecRef.current
         if (remainingSec !== null) prevRemainingSecRef.current = remainingSec
 
-        // Countdown 3→1: play word when second ticks down
+        // Helper to play a sound file with volume control
+        const playAudio = (filename: string): void => {
+          const audio = new Audio(`${audioBaseUrl}/${filename}`)
+          audio.volume = audioVolume
+          audio.play().catch((err: unknown) => console.error('[ShotlistWidget] audio error:', err))
+        }
+
+        // Countdown 3→1: play word at END of that second (when it ticks away)
+        // e.g. play 'three' when remainingSec goes from 3 to 2
         if (
           !muteCount &&
-          remainingSec !== null &&
           prevSec !== null &&
-          remainingSec !== prevSec &&
-          remainingSec >= 1 &&
-          remainingSec <= 3
+          remainingSec !== null &&
+          remainingSec < prevSec &&
+          prevSec >= 1 &&
+          prevSec <= 3
         ) {
           const words: Record<number, string> = { 1: 'one', 2: 'two', 3: 'three' }
-          const audio = new Audio(`${audioBaseUrl}/${words[remainingSec]}.opus`)
-          audio
-            .play()
-            .catch((err: unknown) => console.error('[ShotlistWidget] count audio error:', err))
+          playAudio(`${words[prevSec]}.opus`)
         }
 
         // Beep at expiry: fire once when remainingSec transitions to 0
@@ -269,8 +276,7 @@ export function ShotlistWidget({
           prevSec > 0
         ) {
           beepFiredRef.current = true
-          const audio = new Audio(`${audioBaseUrl}/beep.opus`)
-          audio.play().catch((err: unknown) => console.error('[ShotlistWidget] beep error:', err))
+          playAudio('beep.opus')
         }
       }
 
@@ -296,6 +302,7 @@ export function ShotlistWidget({
     audioBaseUrl,
     muteCount,
     muteBeep,
+    audioVolume,
   ])
 
   // Auto-scroll to live shot when live index changes
@@ -323,9 +330,20 @@ export function ShotlistWidget({
     const liveCam = cameras.find((c) => c.id === liveShot.cameraId)
     if (liveCam && cameraFilter && cameraFilter.includes(liveCam.number)) {
       const audio = new Audio(`${audioBaseUrl}/beep.opus`)
+      audio.volume = audioVolume
       audio.play().catch((err: unknown) => console.error('[ShotlistWidget] beep error:', err))
     }
-  }, [liveIndex, running, audioBaseUrl, hasFilterForEffect, muteBeep, shots, cameras, cameraFilter])
+  }, [
+    liveIndex,
+    running,
+    audioBaseUrl,
+    hasFilterForEffect,
+    muteBeep,
+    audioVolume,
+    shots,
+    cameras,
+    cameraFilter,
+  ])
 
   const timing = computeTiming(shots, cameras, liveIndex, startedAt, now, cameraFilter)
 
