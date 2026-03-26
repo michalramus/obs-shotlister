@@ -35,6 +35,14 @@ import {
 import type { TransitionMapping } from './ipc/transitions'
 import { listMarkers, upsertMarker, deleteMarker } from './ipc/markers'
 import type { UpsertMarkerInput } from './ipc/markers'
+import {
+  exportProject as exportProjectData,
+  exportRundown as exportRundownData,
+  exportDatabase as exportDatabaseData,
+  importProject as importProjectData,
+  importRundown as importRundownData,
+  importDatabase as importDatabaseData,
+} from './ipc/exportimport'
 
 // Must be called before app is ready — allows media:// URLs in the renderer
 protocol.registerSchemesAsPrivileged([
@@ -514,6 +522,76 @@ function registerIpcHandlers(): void {
   // UI mode
   ipcMain.handle('ui:setMode', (_e: Electron.IpcMainInvokeEvent, mode: 'edit' | 'live') => {
     currentUiMode = mode
+  })
+
+  // Export / Import
+  ipcMain.handle('export:project', async (_e, { projectId }: { projectId: string }) => {
+    const data = exportProjectData(getDatabase(), projectId)
+    const result = await dialog.showSaveDialog({
+      defaultPath: 'project.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    })
+    if (result.canceled || !result.filePath) return
+    await fsPromises.writeFile(result.filePath, JSON.stringify(data, null, 2), 'utf-8')
+  })
+
+  ipcMain.handle('export:rundown', async (_e, { rundownId }: { rundownId: string }) => {
+    const data = exportRundownData(getDatabase(), rundownId)
+    const result = await dialog.showSaveDialog({
+      defaultPath: 'rundown.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    })
+    if (result.canceled || !result.filePath) return
+    await fsPromises.writeFile(result.filePath, JSON.stringify(data, null, 2), 'utf-8')
+  })
+
+  ipcMain.handle('export:database', async () => {
+    const data = exportDatabaseData(getDatabase())
+    const result = await dialog.showSaveDialog({
+      defaultPath: 'obs-queuer-backup.json',
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    })
+    if (result.canceled || !result.filePath) return
+    await fsPromises.writeFile(result.filePath, JSON.stringify(data, null, 2), 'utf-8')
+  })
+
+  ipcMain.handle('import:project', async () => {
+    const result = await dialog.showOpenDialog({
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      properties: ['openFile'],
+    })
+    if (result.canceled || !result.filePaths[0]) return null
+    const raw = await fsPromises.readFile(result.filePaths[0], 'utf-8')
+    const data = JSON.parse(raw)
+    const newProjectId = importProjectData(getDatabase(), data)
+    broadcastRundownState(getDatabase(), _io)
+    return newProjectId
+  })
+
+  ipcMain.handle('import:rundown', async (_e, { projectId }: { projectId: string }) => {
+    const result = await dialog.showOpenDialog({
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      properties: ['openFile'],
+    })
+    if (result.canceled || !result.filePaths[0]) return null
+    const raw = await fsPromises.readFile(result.filePaths[0], 'utf-8')
+    const data = JSON.parse(raw)
+    const newRundownId = importRundownData(getDatabase(), projectId, data)
+    broadcastRundownState(getDatabase(), _io)
+    return newRundownId
+  })
+
+  ipcMain.handle('import:database', async () => {
+    const result = await dialog.showOpenDialog({
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+      properties: ['openFile'],
+    })
+    if (result.canceled || !result.filePaths[0]) return false
+    const raw = await fsPromises.readFile(result.filePaths[0], 'utf-8')
+    const data = JSON.parse(raw)
+    importDatabaseData(getDatabase(), data)
+    broadcastRundownState(getDatabase(), _io)
+    return true
   })
 }
 

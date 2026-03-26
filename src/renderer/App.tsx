@@ -67,6 +67,36 @@ const styles = {
     cursor: 'pointer',
   } satisfies React.CSSProperties,
 
+  dropdownWrapper: {
+    position: 'relative' as const,
+  } satisfies React.CSSProperties,
+
+  dropdownMenu: {
+    position: 'absolute' as const,
+    right: 0,
+    top: '100%',
+    marginTop: '4px',
+    background: '#2a2a2a',
+    border: '1px solid #444',
+    borderRadius: '4px',
+    zIndex: 100,
+    minWidth: '160px',
+    overflow: 'hidden',
+  } satisfies React.CSSProperties,
+
+  dropdownItem: {
+    display: 'block',
+    width: '100%',
+    padding: '7px 14px',
+    background: 'none',
+    border: 'none',
+    color: '#ccc',
+    fontSize: '12px',
+    cursor: 'pointer',
+    textAlign: 'left' as const,
+    whiteSpace: 'nowrap' as const,
+  } satisfies React.CSSProperties,
+
   obsDot: (status: string): React.CSSProperties => ({
     width: '8px',
     height: '8px',
@@ -162,6 +192,8 @@ export default function App(): React.JSX.Element {
   const [showResolveImport, setShowResolveImport] = useState(false)
   const [showObsPanel, setShowObsPanel] = useState(false)
   const [showOscPanel, setShowOscPanel] = useState(false)
+  const [showExportMenu, setShowExportMenu] = useState(false)
+  const [showImportMenu, setShowImportMenu] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [headerFlash, setHeaderFlash] = useState(false)
   const isFirstLiveIndexRef = useRef(true)
@@ -243,6 +275,48 @@ export default function App(): React.JSX.Element {
 
   const hasVideo = uiMode === 'edit' && rundownMedia !== null && isVideoFile(rundownMedia.filePath)
 
+  async function handleExportProject(): Promise<void> {
+    if (!activeProjectId) return
+    setShowExportMenu(false)
+    await window.api.exportImport.exportProject({ projectId: activeProjectId })
+  }
+
+  async function handleExportRundown(): Promise<void> {
+    if (!activeRundownId) return
+    setShowExportMenu(false)
+    await window.api.exportImport.exportRundown({ rundownId: activeRundownId })
+  }
+
+  async function handleExportDatabase(): Promise<void> {
+    setShowExportMenu(false)
+    await window.api.exportImport.exportDatabase()
+  }
+
+  async function handleImportProject(): Promise<void> {
+    setShowImportMenu(false)
+    await window.api.exportImport.importProject()
+    await loadProjects()
+  }
+
+  async function handleImportRundown(): Promise<void> {
+    if (!activeProjectId) return
+    setShowImportMenu(false)
+    const newRundownId = await window.api.exportImport.importRundown({ projectId: activeProjectId })
+    if (newRundownId) {
+      await loadProjects()
+    }
+  }
+
+  async function handleImportDatabase(): Promise<void> {
+    const confirmed = window.confirm('This will replace ALL data. Are you sure?')
+    if (!confirmed) return
+    setShowImportMenu(false)
+    const ok = await window.api.exportImport.importDatabase()
+    if (ok) {
+      await loadProjects()
+    }
+  }
+
   return (
     <div style={styles.root}>
       <header style={{ ...styles.header, background: headerFlash ? '#888' : '#1a1a1a', transition: 'background 0.35s ease-out' }}>
@@ -270,6 +344,89 @@ export default function App(): React.JSX.Element {
               Import from Resolve
             </button>
           )}
+
+          {/* Export dropdown */}
+          <div style={styles.dropdownWrapper}>
+            <button
+              style={styles.obsBtn}
+              onClick={() => { setShowExportMenu((v) => !v); setShowImportMenu(false) }}
+            >
+              Export
+            </button>
+            {showExportMenu && (
+              <>
+                <div
+                  style={{ position: 'fixed', inset: 0, zIndex: 99 }}
+                  onClick={() => setShowExportMenu(false)}
+                />
+                <div style={styles.dropdownMenu}>
+                  {activeRundownId !== null && (
+                    <button
+                      style={styles.dropdownItem}
+                      onClick={() => { handleExportRundown().catch((err: unknown) => console.error('[App] exportRundown:', err)) }}
+                    >
+                      Export rundown
+                    </button>
+                  )}
+                  {activeProjectId !== null && (
+                    <button
+                      style={styles.dropdownItem}
+                      onClick={() => { handleExportProject().catch((err: unknown) => console.error('[App] exportProject:', err)) }}
+                    >
+                      Export project
+                    </button>
+                  )}
+                  <button
+                    style={styles.dropdownItem}
+                    onClick={() => { handleExportDatabase().catch((err: unknown) => console.error('[App] exportDatabase:', err)) }}
+                  >
+                    Export DB
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Import dropdown */}
+          <div style={styles.dropdownWrapper}>
+            <button
+              style={styles.obsBtn}
+              onClick={() => { setShowImportMenu((v) => !v); setShowExportMenu(false) }}
+            >
+              Import
+            </button>
+            {showImportMenu && (
+              <>
+                <div
+                  style={{ position: 'fixed', inset: 0, zIndex: 99 }}
+                  onClick={() => setShowImportMenu(false)}
+                />
+                <div style={styles.dropdownMenu}>
+                  <button
+                    style={styles.dropdownItem}
+                    onClick={() => { handleImportProject().catch((err: unknown) => console.error('[App] importProject:', err)) }}
+                  >
+                    Import project
+                  </button>
+                  {activeProjectId !== null && (
+                    <button
+                      style={styles.dropdownItem}
+                      onClick={() => { handleImportRundown().catch((err: unknown) => console.error('[App] importRundown:', err)) }}
+                    >
+                      Import rundown
+                    </button>
+                  )}
+                  <button
+                    style={styles.dropdownItem}
+                    onClick={() => { handleImportDatabase().catch((err: unknown) => console.error('[App] importDatabase:', err)) }}
+                  >
+                    Import DB
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
           <button
             style={styles.obsBtn}
             onClick={() => setShowObsPanel(true)}

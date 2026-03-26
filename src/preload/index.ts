@@ -89,6 +89,14 @@ export interface ElectronApi {
     setMode: (mode: 'edit' | 'live') => Promise<void>
   }
   mediaReadFile: (filePath: string) => Promise<Buffer>
+  exportImport: {
+    exportProject: (args: { projectId: string }) => Promise<void>
+    exportRundown: (args: { rundownId: string }) => Promise<void>
+    exportDatabase: () => Promise<void>
+    importProject: () => Promise<string | null>
+    importRundown: (args: { projectId: string }) => Promise<string | null>
+    importDatabase: () => Promise<boolean>
+  }
 }
 
 const api: ElectronApi = {
@@ -171,6 +179,14 @@ const api: ElectronApi = {
     openDialog: () => ipcRenderer.invoke('rundown:media:open-dialog'),
   },
   mediaReadFile: (filePath) => ipcRenderer.invoke('media:read-file', filePath),
+  exportImport: {
+    exportProject: (args) => ipcRenderer.invoke('export:project', args),
+    exportRundown: (args) => ipcRenderer.invoke('export:rundown', args),
+    exportDatabase: () => ipcRenderer.invoke('export:database'),
+    importProject: () => ipcRenderer.invoke('import:project'),
+    importRundown: (args) => ipcRenderer.invoke('import:rundown', args),
+    importDatabase: () => ipcRenderer.invoke('import:database'),
+  },
 }
 
 contextBridge.exposeInMainWorld('api', api)

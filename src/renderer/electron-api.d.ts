@@ -145,6 +145,14 @@ export interface ElectronApi {
     setMode: (mode: 'edit' | 'live') => Promise<void>
   }
   mediaReadFile: (filePath: string) => Promise<ArrayBuffer>
+  exportImport: {
+    exportProject: (args: { projectId: string }) => Promise<void>
+    exportRundown: (args: { rundownId: string }) => Promise<void>
+    exportDatabase: () => Promise<void>
+    importProject: () => Promise<string | null>
+    importRundown: (args: { projectId: string }) => Promise<string | null>
+    importDatabase: () => Promise<boolean>
+  }
 }
 
 declare global {
