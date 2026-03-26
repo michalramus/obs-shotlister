@@ -357,10 +357,11 @@ export function TimelineEditor({
     function tick(): void {
       const shotStartMs = shots.slice(0, liveIndex!).reduce((s, sh) => s + sh.durationMs, 0)
       const elapsed = Date.now() - startedAt!
-      const newMs = Math.min(shotStartMs + elapsed, totalMs)
+      const currentShotDurationMs = shots[liveIndex!]?.durationMs ?? 0
+      const shotEndMs = shotStartMs + currentShotDurationMs
+      const newMs = Math.min(shotStartMs + elapsed, shotEndMs)
       setPlayheadMs(newMs)
       // Only auto-scroll while the current shot is still running
-      const currentShotDurationMs = shots[liveIndex!]?.durationMs ?? 0
       if (elapsed < currentShotDurationMs) {
         autoScroll(newMs)
       }
