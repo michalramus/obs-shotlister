@@ -152,6 +152,8 @@ export default function App(): React.JSX.Element {
   const rundownMedia = useAppStore((s) => s.rundownMedia)
   const saveRundownMedia = useAppStore((s) => s.saveRundownMedia)
   const clearRundownMedia = useAppStore((s) => s.clearRundownMedia)
+  const cameraFilter = useAppStore((s) => s.cameraFilter)
+  const setCameraFilter = useAppStore((s) => s.setCameraFilter)
 
   const [selectedShotId, setSelectedShotId] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -246,6 +248,18 @@ export default function App(): React.JSX.Element {
       <header style={{ ...styles.header, background: headerFlash ? '#888' : '#1a1a1a', transition: 'background 0.35s ease-out' }}>
         <span style={styles.appName}>OBS Queuer</span>
         <ProjectSelector onOpenCameraConfig={() => setShowCameraConfig(true)} />
+        {activeProjectId !== null && cameras.length > 0 && (
+          <select
+            value={cameraFilter ?? ''}
+            onChange={(e) => setCameraFilter(e.target.value ? parseInt(e.target.value, 10) : null)}
+            style={{ background: '#2a2a2a', color: '#fff', border: '1px solid #444', borderRadius: '4px', padding: '4px 8px', fontSize: '12px' }}
+          >
+            <option value="">All cameras</option>
+            {cameras.map((c) => (
+              <option key={c.id} value={c.number}>CAM {c.number}{c.name ? ` – ${c.name}` : ''}</option>
+            ))}
+          </select>
+        )}
         <div style={styles.headerActions}>
           {activeRundownId && (
             <button
@@ -441,6 +455,7 @@ export default function App(): React.JSX.Element {
                       running={running}
                       showNextBackground
                       autoScroll
+                      cameraFilter={cameraFilter !== null ? [cameraFilter] : undefined}
                     />
                   </div>
                 )}
@@ -464,6 +479,7 @@ export default function App(): React.JSX.Element {
                     running={running}
                     showNextBackground
                     autoScroll
+                    cameraFilter={cameraFilter !== null ? [cameraFilter] : undefined}
                   />
                 )}
               </div>
