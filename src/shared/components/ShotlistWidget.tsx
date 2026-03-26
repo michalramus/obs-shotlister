@@ -208,6 +208,8 @@ export function ShotlistWidget({
   const prevLiveIndexRef = useRef<number | null>(null)
   const capturedTransEffectiveDurRef = useRef<number | null>(null)
   const prevRemainingSecRef = useRef<number | null>(null)
+  const prevRemainingMsRef = useRef<number | null>(null)
+  const reachedZeroAtRef = useRef<number | null>(null)
   const beepFiredRef = useRef<boolean>(false)
   const prevLiveIndexForAudioRef = useRef<number | null>(null)
   const prevLiveIndexForFilterBeepRef = useRef<number | null>(null)
@@ -235,15 +237,20 @@ export function ShotlistWidget({
         if (liveIndex !== prevLiveIndexForAudioRef.current) {
           beepFiredRef.current = false
           prevRemainingSecRef.current = null
+          prevRemainingMsRef.current = null
+          reachedZeroAtRef.current = null
           prevLiveIndexForAudioRef.current = liveIndex
         }
 
         const timingNow = computeTiming(shots, cameras, liveIndex, startedAt, tickNow, cameraFilter)
         const remainingSec =
           timingNow.remainingMs !== null ? Math.floor(timingNow.remainingMs / 1000) : null
+        const remainingMs = timingNow.remainingMs
 
         const prevSec = prevRemainingSecRef.current
         if (remainingSec !== null) prevRemainingSecRef.current = remainingSec
+        const prevMs = prevRemainingMsRef.current
+        if (remainingMs !== null) prevRemainingMsRef.current = remainingMs
 
         // Helper to play a sound file with volume control
         const playAudio = (filename: string): void => {
@@ -266,18 +273,17 @@ export function ShotlistWidget({
           playAudio(`${words[prevSec]}.opus`)
         }
 
-        // Beep at expiry: fire once when remainingMs goes negative (timer expired)
-        // This is one second after 'one', when the progress bar hits 100%
-        if (
-          !muteBeep &&
-          !beepFiredRef.current &&
-          timingNow.remainingMs !== null &&
-          timingNow.remainingMs < 0 &&
-          prevSec !== null &&
-          prevSec >= 0
-        ) {
-          beepFiredRef.current = true
-          playAudio('beep.opus')
+        // Beep at expiry: fire once ~1 second after remainingMs reaches 0
+        // (one second after 'one', when progress bar has been at 100% for 1s)
+        if (!muteBeep && !beepFiredRef.current && remainingMs !== null) {
+          if (remainingMs === 0 && prevMs !== null && prevMs > 0) {
+            // Record the moment we first hit 0
+            reachedZeroAtRef.current = tickNow
+          }
+          if (reachedZeroAtRef.current !== null && tickNow - reachedZeroAtRef.current >= 1000) {
+            beepFiredRef.current = true
+            playAudio('beep.opus')
+          }
         }
       }
 
