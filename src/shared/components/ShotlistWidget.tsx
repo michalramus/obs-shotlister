@@ -63,7 +63,11 @@ const s = {
     gap: '8px',
     padding: '8px 14px',
     borderBottom: '1px solid #2a2a2a',
-    background: isLive ? 'transparent' : (isNext && showNextBg) ? 'rgba(46, 204, 113, 0.18)' : 'transparent',
+    background: isLive
+      ? 'transparent'
+      : isNext && showNextBg
+        ? 'rgba(46, 204, 113, 0.18)'
+        : 'transparent',
     position: 'relative',
     overflow: 'hidden',
   }),
@@ -233,20 +237,35 @@ export function ShotlistWidget({
         }
 
         const timingNow = computeTiming(shots, cameras, liveIndex, startedAt, tickNow, cameraFilter)
-        const remainingSec = timingNow.remainingMs !== null ? Math.floor(timingNow.remainingMs / 1000) : null
+        const remainingSec =
+          timingNow.remainingMs !== null ? Math.floor(timingNow.remainingMs / 1000) : null
 
         // Countdown 5→1
-        if (!muteCount && remainingSec !== null && prevRemainingSecRef.current !== null &&
-            remainingSec !== prevRemainingSecRef.current && remainingSec >= 1 && remainingSec <= 5) {
-          const audio = new Audio(`${audioBaseUrl}/count-${remainingSec}.mp3`)
-          audio.play().catch((err: unknown) => console.error('[ShotlistWidget] count audio error:', err))
+        if (
+          !muteCount &&
+          remainingSec !== null &&
+          prevRemainingSecRef.current !== null &&
+          remainingSec !== prevRemainingSecRef.current &&
+          remainingSec >= 1 &&
+          remainingSec <= 5
+        ) {
+          const words = ['', 'one', 'two', 'three', 'four', 'five']
+          const audio = new Audio(`${audioBaseUrl}/${words[remainingSec]}.opus`)
+          audio
+            .play()
+            .catch((err: unknown) => console.error('[ShotlistWidget] count audio error:', err))
         }
         if (remainingSec !== null) prevRemainingSecRef.current = remainingSec
 
         // Natural expiry beep
-        if (!muteBeep && !beepFiredRef.current && timingNow.remainingMs !== null && timingNow.remainingMs <= 0) {
+        if (
+          !muteBeep &&
+          !beepFiredRef.current &&
+          timingNow.remainingMs !== null &&
+          timingNow.remainingMs <= 0
+        ) {
           beepFiredRef.current = true
-          const audio = new Audio(`${audioBaseUrl}/beep.mp3`)
+          const audio = new Audio(`${audioBaseUrl}/beep.opus`)
           audio.play().catch((err: unknown) => console.error('[ShotlistWidget] beep error:', err))
         }
       }
@@ -263,7 +282,17 @@ export function ShotlistWidget({
         rafRef.current = null
       }
     }
-  }, [running, liveIndex, shots, cameras, startedAt, cameraFilter, audioBaseUrl, muteCount, muteBeep])
+  }, [
+    running,
+    liveIndex,
+    shots,
+    cameras,
+    startedAt,
+    cameraFilter,
+    audioBaseUrl,
+    muteCount,
+    muteBeep,
+  ])
 
   // Auto-scroll to live shot when live index changes
   useEffect(() => {
@@ -289,7 +318,7 @@ export function ShotlistWidget({
     if (!liveShot) return
     const liveCam = cameras.find((c) => c.id === liveShot.cameraId)
     if (liveCam && cameraFilter && cameraFilter.includes(liveCam.number)) {
-      const audio = new Audio(`${audioBaseUrl}/beep.mp3`)
+      const audio = new Audio(`${audioBaseUrl}/beep.opus`)
       audio.play().catch((err: unknown) => console.error('[ShotlistWidget] beep error:', err))
     }
   }, [liveIndex, running, audioBaseUrl, hasFilterForEffect, muteBeep, shots, cameras, cameraFilter])
@@ -338,31 +367,42 @@ export function ShotlistWidget({
   let nextNonHiddenTransitionMs = 0
   if (liveIndex !== null) {
     for (let i = liveIndex + 1; i < shots.length; i++) {
-      if (!shots[i].hidden) { nextNonHiddenTransitionMs = shots[i].transitionMs; break }
+      if (!shots[i].hidden) {
+        nextNonHiddenTransitionMs = shots[i].transitionMs
+        break
+      }
     }
   }
 
   // Last non-hidden shot before live — show red bar continuing through its out-transition zone
-  const liveTransitionMs = liveIndex !== null && shots[liveIndex] ? shots[liveIndex].transitionMs : 0
+  const liveTransitionMs =
+    liveIndex !== null && shots[liveIndex] ? shots[liveIndex].transitionMs : 0
   let transitioningOutIndex = -1
   if (liveTransitionMs > 0 && liveIndex !== null) {
     for (let i = liveIndex - 1; i >= 0; i--) {
-      if (!shots[i].hidden) { transitioningOutIndex = i; break }
+      if (!shots[i].hidden) {
+        transitioningOutIndex = i
+        break
+      }
     }
   }
 
-  const isTransitioning = hasFilter
-    && transitioningOutIndex >= 0
-    && capturedTransEffectiveDurRef.current !== null
-    && startedAt !== null
-    && liveTransitionMs > 0
-    && (now - startedAt) <= liveTransitionMs
+  const isTransitioning =
+    hasFilter &&
+    transitioningOutIndex >= 0 &&
+    capturedTransEffectiveDurRef.current !== null &&
+    startedAt !== null &&
+    liveTransitionMs > 0 &&
+    now - startedAt <= liveTransitionMs
 
-  const headerCountdown = isTransitioning && startedAt !== null
-    ? formatMs(Math.max(0, liveTransitionMs - (now - startedAt)))
-    : isWaiting && timing.timeUntilNextVisibleMs !== null
-      ? formatMs(timing.timeUntilNextVisibleMs)
-      : timing.remainingMs !== null ? formatMs(timing.remainingMs) : '--:--'
+  const headerCountdown =
+    isTransitioning && startedAt !== null
+      ? formatMs(Math.max(0, liveTransitionMs - (now - startedAt)))
+      : isWaiting && timing.timeUntilNextVisibleMs !== null
+        ? formatMs(timing.timeUntilNextVisibleMs)
+        : timing.remainingMs !== null
+          ? formatMs(timing.remainingMs)
+          : '--:--'
 
   return (
     <div style={s.widget} data-testid="shotlist-widget">
@@ -375,15 +415,17 @@ export function ShotlistWidget({
               : !running || !hasFilter
                 ? '#222'
                 : isWaiting
-                  ? '#1a4a1a'   // dark green = waiting for our camera
-                  : '#4a1a1a'   // dark red = our camera is live
+                  ? '#1a4a1a' // dark green = waiting for our camera
+                  : '#4a1a1a' // dark red = our camera is live
             return headerBg
           })(),
           transition: 'background 0.35s ease-out',
         }}
       >
         <span style={s.rundownName}>{rundownName}</span>
-        <span style={{ ...s.countdown, color: (isWaiting && !isTransitioning) ? '#2ecc71' : '#ff3b30' }}>
+        <span
+          style={{ ...s.countdown, color: isWaiting && !isTransitioning ? '#2ecc71' : '#ff3b30' }}
+        >
           {running && <span style={{ fontSize: '12px', marginRight: '4px' }}>▶</span>}
           {headerCountdown}
         </span>
@@ -407,16 +449,24 @@ export function ShotlistWidget({
 
             if (isLive && timing.remainingMs !== null) {
               const effectiveDur = timing.effectiveDurationMs ?? shot.durationMs
-              const totalVisual = hasFilter ? effectiveDur + nextNonHiddenTransitionMs : effectiveDur
+              const totalVisual = hasFilter
+                ? effectiveDur + nextNonHiddenTransitionMs
+                : effectiveDur
               timeLabel = formatMs(timing.remainingMs)
               progressPct = totalVisual > 0 ? (effectiveDur - timing.remainingMs) / totalVisual : 0
             }
 
-            if (isTransitioningOut && hasFilter && capturedTransEffectiveDurRef.current !== null && startedAt !== null) {
+            if (
+              isTransitioningOut &&
+              hasFilter &&
+              capturedTransEffectiveDurRef.current !== null &&
+              startedAt !== null
+            ) {
               const transEffectiveDur = capturedTransEffectiveDurRef.current
               const transitionElapsed = Math.min(now - startedAt, liveTransitionMs)
               const totalVisual = transEffectiveDur + liveTransitionMs
-              progressPct = totalVisual > 0 ? (transEffectiveDur + transitionElapsed) / totalVisual : 1
+              progressPct =
+                totalVisual > 0 ? (transEffectiveDur + transitionElapsed) / totalVisual : 1
               timeLabel = formatMs(Math.max(0, liveTransitionMs - transitionElapsed))
             }
 
@@ -433,41 +483,68 @@ export function ShotlistWidget({
                 : 0
 
             // Out-transition zone: right-anchored purple on live shot (filter mode only)
-            const outTransitionPct = isLive && hasFilter && nextNonHiddenTransitionMs > 0
-              ? nextNonHiddenTransitionMs / (effectiveDuration + nextNonHiddenTransitionMs)
-              : 0
+            const outTransitionPct =
+              isLive && hasFilter && nextNonHiddenTransitionMs > 0
+                ? nextNonHiddenTransitionMs / (effectiveDuration + nextNonHiddenTransitionMs)
+                : 0
 
             return (
               <li
                 key={shot.id}
-                ref={isLive ? (el) => { liveRef.current = el } : undefined}
+                ref={
+                  isLive
+                    ? (el) => {
+                        liveRef.current = el
+                      }
+                    : undefined
+                }
                 style={s.shotRow(isLive, isNext, showNextBackground)}
                 data-testid={isLive ? 'shot-live' : isNext ? 'shot-next' : 'shot-row'}
                 data-shot-id={isLive ? shot.id : undefined}
               >
-                {(transitionPct > 0 || outTransitionPct > 0 || progressPct !== null || showWaitingBar) && (
+                {(transitionPct > 0 ||
+                  outTransitionPct > 0 ||
+                  progressPct !== null ||
+                  showWaitingBar) && (
                   <div
                     style={s.progressTrack()}
-                    data-testid={isLive ? 'progress-live' : isNext ? 'progress-next' : isTransitioningOut ? 'progress-transitioning-out' : undefined}
+                    data-testid={
+                      isLive
+                        ? 'progress-live'
+                        : isNext
+                          ? 'progress-next'
+                          : isTransitioningOut
+                            ? 'progress-transitioning-out'
+                            : undefined
+                    }
                   >
                     {showWaitingBar && waitingPct !== null && (
                       <div style={s.waitingBar(waitingPct)} />
                     )}
                     {transitionPct > 0 && (
-                      <div style={s.transitionBar(transitionPct)} data-testid="progress-transition" />
+                      <div
+                        style={s.transitionBar(transitionPct)}
+                        data-testid="progress-transition"
+                      />
                     )}
                     {outTransitionPct > 0 && (
-                      <div style={s.outTransitionBar(outTransitionPct)} data-testid="progress-out-transition" />
+                      <div
+                        style={s.outTransitionBar(outTransitionPct)}
+                        data-testid="progress-out-transition"
+                      />
                     )}
                     {progressPct !== null && (
-                      <div style={s.progressBar(Math.min(1, Math.max(0, progressPct)), isLive || isTransitioningOut)} />
+                      <div
+                        style={s.progressBar(
+                          Math.min(1, Math.max(0, progressPct)),
+                          isLive || isTransitioningOut,
+                        )}
+                      />
                     )}
                   </div>
                 )}
                 <div style={s.rowContent}>
-                  {camera && (
-                    <span style={s.cameraBadge(camera.color)}>CAM{camera.number}</span>
-                  )}
+                  {camera && <span style={s.cameraBadge(camera.color)}>CAM{camera.number}</span>}
                   <span style={s.cameraName}>{camera?.name ?? '—'}</span>
                   {shot.label && <span style={s.label}>"{shot.label}"</span>}
                   <span style={s.timeDisplay}>{timeLabel}</span>
