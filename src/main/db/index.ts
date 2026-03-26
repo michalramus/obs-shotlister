@@ -67,6 +67,8 @@ export function applyMigrations(database: Database.Database): void {
   try { database.exec('ALTER TABLE live_state ADD COLUMN project_id TEXT') } catch (_) { /* column exists */ }
   try { database.exec('ALTER TABLE shots ADD COLUMN transition_name TEXT') } catch (_) { /* column exists */ }
   try { database.exec('ALTER TABLE shots ADD COLUMN transition_ms INTEGER NOT NULL DEFAULT 0') } catch (_) { /* column exists */ }
+  try { database.exec('ALTER TABLE rundowns ADD COLUMN order_index INTEGER NOT NULL DEFAULT 0') } catch (_) { /* column exists */ }
+  try { database.exec('ALTER TABLE rundowns ADD COLUMN folder TEXT') } catch (_) { /* column exists */ }
   database.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       key   TEXT PRIMARY KEY,

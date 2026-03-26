@@ -15,7 +15,7 @@ import {
   deleteCamera,
 } from './ipc/projects'
 import type { CameraUpsertInput } from './ipc/projects'
-import { listRundowns, createRundown, renameRundown, deleteRundown } from './ipc/rundowns'
+import { listRundowns, createRundown, renameRundown, deleteRundown, reorderRundowns, setRundownFolder } from './ipc/rundowns'
 import { listShots, createShot, updateShot, deleteShot, reorderShots, splitShot } from './ipc/shots'
 import type { CreateShotInput, UpdateShotInput, SplitShotInput } from './ipc/shots'
 import { getLiveState, getLiveQueue, startLive, stopLive, nextShot, skipNext, restartLive, setActiveRundown, setActiveProject, clearLiveState } from './ipc/live'
@@ -246,6 +246,14 @@ function registerIpcHandlers(): void {
   ipcMain.handle('rundowns:setActive', (_event, payload: { rundownId: string | null }) => {
     setActiveRundown(db, payload.rundownId)
     broadcastRundown()
+  })
+
+  ipcMain.handle('rundowns:reorder', (_e, { ids }: { ids: string[] }) => {
+    reorderRundowns(db, ids)
+  })
+
+  ipcMain.handle('rundowns:setFolder', (_e, { id, folder }: { id: string; folder: string | null }) => {
+    return setRundownFolder(db, id, folder)
   })
 
   ipcMain.handle('project:setActive', (_event, payload: { projectId: string | null }) => {

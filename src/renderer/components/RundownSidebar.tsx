@@ -1,5 +1,21 @@
 import React, { useState, useRef, useEffect } from 'react'
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { useAppStore } from '../store'
+import type { Rundown } from '../../shared/types'
 
 const s = {
   sidebar: {
@@ -28,6 +44,16 @@ const s = {
     listStyle: 'none',
     margin: 0,
     padding: '4px 0',
+  } satisfies React.CSSProperties,
+
+  folderHeader: {
+    padding: '6px 14px 3px',
+    fontSize: '10px',
+    fontWeight: 700,
+    color: '#555',
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.06em',
+    marginTop: '4px',
   } satisfies React.CSSProperties,
 
   item: (isActive: boolean): React.CSSProperties => ({
@@ -68,6 +94,17 @@ const s = {
     flexShrink: 0,
   } satisfies React.CSSProperties,
 
+  menuBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#666',
+    cursor: 'pointer',
+    fontSize: '13px',
+    padding: '0 2px',
+    lineHeight: 1,
+    flexShrink: 0,
+  } satisfies React.CSSProperties,
+
   inlineInput: {
     background: '#2a2a2a',
     border: '1px solid #444',
@@ -90,6 +127,161 @@ const s = {
     cursor: 'pointer',
     textAlign: 'left' as const,
   } satisfies React.CSSProperties,
+
+  contextMenu: {
+    position: 'fixed' as const,
+    background: '#222',
+    border: '1px solid #444',
+    borderRadius: '4px',
+    zIndex: 1000,
+    minWidth: '160px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+    padding: '4px 0',
+  } satisfies React.CSSProperties,
+
+  contextMenuItem: {
+    padding: '7px 14px',
+    fontSize: '12px',
+    color: '#ccc',
+    cursor: 'pointer',
+    display: 'block',
+    width: '100%',
+    background: 'none',
+    border: 'none',
+    textAlign: 'left' as const,
+  } satisfies React.CSSProperties,
+
+  dragHandle: {
+    cursor: 'grab',
+    color: '#444',
+    fontSize: '12px',
+    flexShrink: 0,
+    lineHeight: 1,
+    userSelect: 'none' as const,
+  } satisfies React.CSSProperties,
+}
+
+interface ContextMenuState {
+  rundownId: string
+  x: number
+  y: number
+}
+
+interface SortableRundownItemProps {
+  rundown: Rundown
+  isActive: boolean
+  editingId: string | null
+  editingName: string
+  editInputRef: React.RefObject<HTMLInputElement | null>
+  running: boolean
+  folders: string[]
+  onSelect: (id: string) => void
+  onStartEdit: (id: string, name: string) => void
+  onEditChange: (val: string) => void
+  onEditKeyDown: (e: React.KeyboardEvent) => void
+  onCommitEdit: () => void
+  onDelete: (id: string, e: React.MouseEvent) => void
+  onContextMenu: (rundownId: string, e: React.MouseEvent) => void
+  contextMenuState: ContextMenuState | null
+  onCloseContextMenu: () => void
+  onSetFolder: (id: string, folder: string | null) => void
+}
+
+function SortableRundownItem({
+  rundown,
+  isActive,
+  editingId,
+  editingName,
+  editInputRef,
+  running,
+  onSelect,
+  onStartEdit,
+  onEditChange,
+  onEditKeyDown,
+  onCommitEdit,
+  onDelete,
+  onContextMenu,
+}: SortableRundownItemProps): React.JSX.Element {
+  const [hovered, setHovered] = useState(false)
+
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: rundown.id,
+  })
+
+  const style: React.CSSProperties = {
+    ...s.item(isActive),
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  }
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={style}
+      onClick={() => onSelect(rundown.id)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      data-testid="rundown-item"
+    >
+      <span
+        style={s.dragHandle}
+        {...attributes}
+        {...listeners}
+        onClick={(e) => e.stopPropagation()}
+        title="Drag to reorder"
+      >
+        ⠿
+      </span>
+
+      {isActive && <span style={s.activeDot} />}
+
+      {editingId === rundown.id ? (
+        <input
+          ref={editInputRef as React.RefObject<HTMLInputElement>}
+          style={s.inlineInput}
+          value={editingName}
+          onChange={(e) => onEditChange(e.target.value)}
+          onBlur={onCommitEdit}
+          onKeyDown={onEditKeyDown}
+          onClick={(e) => e.stopPropagation()}
+          aria-label="Rename rundown"
+        />
+      ) : (
+        <span
+          style={s.name}
+          onDoubleClick={() => onStartEdit(rundown.id, rundown.name)}
+          title={running ? 'Rename disabled while live' : 'Double-click to rename'}
+        >
+          {rundown.name}
+        </span>
+      )}
+
+      {hovered && editingId !== rundown.id && (
+        <>
+          <button
+            style={s.menuBtn}
+            onClick={(e) => {
+              e.stopPropagation()
+              onContextMenu(rundown.id, e)
+            }}
+            title="More options"
+            aria-label={`Options for ${rundown.name}`}
+          >
+            ⋯
+          </button>
+          <button
+            style={s.deleteBtn}
+            onClick={(e) => onDelete(rundown.id, e)}
+            title="Delete rundown"
+            aria-label={`Delete ${rundown.name}`}
+          >
+            ×
+          </button>
+        </>
+      )}
+    </li>
+  )
 }
 
 export function RundownSidebar(): React.JSX.Element {
@@ -101,15 +293,20 @@ export function RundownSidebar(): React.JSX.Element {
   const addRundown = useAppStore((s) => s.addRundown)
   const renameRundown = useAppStore((s) => s.renameRundown)
   const removeRundown = useAppStore((s) => s.removeRundown)
+  const reorderRundowns = useAppStore((s) => s.reorderRundowns)
+  const setRundownFolder = useAppStore((s) => s.setRundownFolder)
 
   const [newName, setNewName] = useState('')
   const [showNewInput, setShowNewInput] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
-  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [folderInput, setFolderInput] = useState<{ rundownId: string; value: string } | null>(null)
 
   const newInputRef = useRef<HTMLInputElement>(null)
-  const editInputRef = useRef<HTMLInputElement>(null)
+  const editInputRef = useRef<HTMLInputElement | null>(null)
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
   useEffect(() => {
     if (showNewInput) newInputRef.current?.focus()
@@ -118,6 +315,14 @@ export function RundownSidebar(): React.JSX.Element {
   useEffect(() => {
     if (editingId) editInputRef.current?.focus()
   }, [editingId])
+
+  // Close context menu on outside click
+  useEffect(() => {
+    if (!contextMenu) return
+    const handler = (): void => setContextMenu(null)
+    window.addEventListener('mousedown', handler)
+    return () => window.removeEventListener('mousedown', handler)
+  }, [contextMenu])
 
   async function handleSelect(id: string): Promise<void> {
     setActiveRundown(id)
@@ -193,71 +398,142 @@ export function RundownSidebar(): React.JSX.Element {
     }
   }
 
+  function handleContextMenu(rundownId: string, e: React.MouseEvent): void {
+    e.preventDefault()
+    setContextMenu({ rundownId, x: e.clientX, y: e.clientY })
+  }
+
+  async function handleSetFolder(id: string, folder: string | null): Promise<void> {
+    try {
+      await setRundownFolder(id, folder)
+    } catch (err) {
+      console.error('[RundownSidebar] setFolder error:', err)
+    }
+    setContextMenu(null)
+    setFolderInput(null)
+  }
+
+  function handleDragEnd(event: DragEndEvent): void {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+
+    const oldIndex = rundowns.findIndex((r) => r.id === active.id)
+    const newIndex = rundowns.findIndex((r) => r.id === over.id)
+    if (oldIndex === -1 || newIndex === -1) return
+
+    const reordered = arrayMove(rundowns, oldIndex, newIndex)
+
+    // Determine target folder from the item at newIndex in reordered list
+    const targetRundown = reordered[newIndex]
+    const draggedRundown = rundowns[oldIndex]
+    const targetFolder = targetRundown.id !== draggedRundown.id ? targetRundown.folder : draggedRundown.folder
+
+    const ids = reordered.map((r) => r.id)
+
+    reorderRundowns(ids).catch((err: unknown) => {
+      console.error('[RundownSidebar] reorder error:', err)
+    })
+
+    // If the dragged item moved to a different folder context, update the folder
+    if (draggedRundown.folder !== targetFolder) {
+      handleSetFolder(draggedRundown.id, targetFolder).catch((err: unknown) => {
+        console.error('[RundownSidebar] setFolder on drag error:', err)
+      })
+    }
+  }
+
+  // Collect unique folders (excluding null)
+  const folders = Array.from(new Set(rundowns.map((r) => r.folder).filter((f): f is string => f !== null)))
+
+  // Build groups: ungrouped first, then each folder
+  const ungrouped = rundowns.filter((r) => r.folder === null)
+  const grouped = folders.map((folder) => ({
+    folder,
+    rundowns: rundowns.filter((r) => r.folder === folder),
+  }))
+
+  const contextRundown = contextMenu ? rundowns.find((r) => r.id === contextMenu.rundownId) : null
+
   return (
     <aside style={s.sidebar} data-testid="rundown-sidebar">
       <div style={s.header}>Rundowns</div>
 
-      <ul style={s.list}>
-        {rundowns.map((rd) => (
-          <li
-            key={rd.id}
-            style={s.item(rd.id === activeRundownId)}
-            onClick={() => void handleSelect(rd.id)}
-            onMouseEnter={() => setHoveredId(rd.id)}
-            onMouseLeave={() => setHoveredId(null)}
-            data-testid="rundown-item"
-          >
-            {rd.id === activeRundownId && <span style={s.activeDot} />}
-
-            {editingId === rd.id ? (
-              <input
-                ref={editInputRef}
-                style={s.inlineInput}
-                value={editingName}
-                onChange={(e) => setEditingName(e.target.value)}
-                onBlur={() => void commitEdit()}
-                onKeyDown={handleEditKeyDown}
-                onClick={(e) => e.stopPropagation()}
-                aria-label="Rename rundown"
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={rundowns.map((r) => r.id)} strategy={verticalListSortingStrategy}>
+          <ul style={s.list}>
+            {/* Ungrouped rundowns */}
+            {ungrouped.map((rd) => (
+              <SortableRundownItem
+                key={rd.id}
+                rundown={rd}
+                isActive={rd.id === activeRundownId}
+                editingId={editingId}
+                editingName={editingName}
+                editInputRef={editInputRef}
+                running={running}
+                folders={folders}
+                onSelect={(id) => void handleSelect(id)}
+                onStartEdit={startEdit}
+                onEditChange={setEditingName}
+                onEditKeyDown={handleEditKeyDown}
+                onCommitEdit={() => void commitEdit()}
+                onDelete={(id, e) => void handleDelete(id, e)}
+                onContextMenu={handleContextMenu}
+                contextMenuState={contextMenu}
+                onCloseContextMenu={() => setContextMenu(null)}
+                onSetFolder={(id, folder) => void handleSetFolder(id, folder)}
               />
-            ) : (
-              <span
-                style={s.name}
-                onDoubleClick={() => startEdit(rd.id, rd.name)}
-                title={running ? 'Rename disabled while live' : 'Double-click to rename'}
-              >
-                {rd.name}
-              </span>
-            )}
+            ))}
 
-            {hoveredId === rd.id && editingId !== rd.id && (
-              <button
-                style={s.deleteBtn}
-                onClick={(e) => void handleDelete(rd.id, e)}
-                title="Delete rundown"
-                aria-label={`Delete ${rd.name}`}
-              >
-                ×
-              </button>
-            )}
-          </li>
-        ))}
+            {/* Folder groups */}
+            {grouped.map(({ folder, rundowns: folderRundowns }) => (
+              <React.Fragment key={folder}>
+                <li style={s.folderHeader}>
+                  <span style={{ marginRight: '4px' }}>▸</span>
+                  {folder}
+                </li>
+                {folderRundowns.map((rd) => (
+                  <SortableRundownItem
+                    key={rd.id}
+                    rundown={rd}
+                    isActive={rd.id === activeRundownId}
+                    editingId={editingId}
+                    editingName={editingName}
+                    editInputRef={editInputRef}
+                    running={running}
+                    folders={folders}
+                    onSelect={(id) => void handleSelect(id)}
+                    onStartEdit={startEdit}
+                    onEditChange={setEditingName}
+                    onEditKeyDown={handleEditKeyDown}
+                    onCommitEdit={() => void commitEdit()}
+                    onDelete={(id, e) => void handleDelete(id, e)}
+                    onContextMenu={handleContextMenu}
+                    contextMenuState={contextMenu}
+                    onCloseContextMenu={() => setContextMenu(null)}
+                    onSetFolder={(id, folder) => void handleSetFolder(id, folder)}
+                  />
+                ))}
+              </React.Fragment>
+            ))}
 
-        {showNewInput && (
-          <li style={s.item(false)}>
-            <input
-              ref={newInputRef}
-              style={s.inlineInput}
-              placeholder="Rundown name…"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onBlur={() => void handleCreate()}
-              onKeyDown={handleNewKeyDown}
-              aria-label="New rundown name"
-            />
-          </li>
-        )}
-      </ul>
+            {showNewInput && (
+              <li style={s.item(false)}>
+                <input
+                  ref={newInputRef}
+                  style={s.inlineInput}
+                  placeholder="Rundown name…"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onBlur={() => void handleCreate()}
+                  onKeyDown={handleNewKeyDown}
+                  aria-label="New rundown name"
+                />
+              </li>
+            )}
+          </ul>
+        </SortableContext>
+      </DndContext>
 
       <button
         style={s.addBtn}
@@ -266,6 +542,61 @@ export function RundownSidebar(): React.JSX.Element {
       >
         + New Rundown
       </button>
+
+      {/* Context menu */}
+      {contextMenu && contextRundown && (
+        <div
+          style={{ ...s.contextMenu, left: contextMenu.x, top: contextMenu.y }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {folderInput && folderInput.rundownId === contextMenu.rundownId ? (
+            <div style={{ padding: '6px 10px' }}>
+              <input
+                style={{ ...s.inlineInput, width: '130px' }}
+                placeholder="Folder name…"
+                value={folderInput.value}
+                autoFocus
+                onChange={(e) => setFolderInput({ ...folderInput, value: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const v = folderInput.value.trim()
+                    void handleSetFolder(contextMenu.rundownId, v || null)
+                  } else if (e.key === 'Escape') {
+                    setFolderInput(null)
+                    setContextMenu(null)
+                  }
+                }}
+              />
+            </div>
+          ) : (
+            <>
+              <button
+                style={s.contextMenuItem}
+                onClick={() => setFolderInput({ rundownId: contextMenu.rundownId, value: contextRundown.folder ?? '' })}
+              >
+                {contextRundown.folder ? 'Change folder…' : 'Add to folder…'}
+              </button>
+              {contextRundown.folder && (
+                <button
+                  style={s.contextMenuItem}
+                  onClick={() => void handleSetFolder(contextMenu.rundownId, null)}
+                >
+                  Remove from folder
+                </button>
+              )}
+              <button
+                style={s.contextMenuItem}
+                onClick={() => {
+                  setContextMenu(null)
+                  startEdit(contextMenu.rundownId, contextRundown.name)
+                }}
+              >
+                Rename
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </aside>
   )
 }

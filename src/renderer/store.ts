@@ -54,6 +54,8 @@ interface AppStore {
   addRundown: (name: string) => Promise<Rundown>
   renameRundown: (id: string, name: string) => Promise<void>
   removeRundown: (id: string) => Promise<void>
+  reorderRundowns: (ids: string[]) => Promise<void>
+  setRundownFolder: (id: string, folder: string | null) => Promise<void>
 
   // Shot CRUD actions
   loadShots: (rundownId: string) => Promise<void>
@@ -262,6 +264,19 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set((state) => ({
       rundowns: state.rundowns.map((r) => (r.id === id ? updated : r)),
     }))
+  },
+
+  reorderRundowns: async (ids) => {
+    await window.api.rundowns.reorder({ ids })
+    set((state) => {
+      const order = new Map(ids.map((id, i) => [id, i]))
+      return { rundowns: [...state.rundowns].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0)) }
+    })
+  },
+
+  setRundownFolder: async (id, folder) => {
+    const updated = await window.api.rundowns.setFolder({ id, folder })
+    set((state) => ({ rundowns: state.rundowns.map((r) => r.id === id ? updated : r) }))
   },
 
   removeRundown: async (id) => {

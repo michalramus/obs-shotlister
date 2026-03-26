@@ -19,6 +19,8 @@ export interface Rundown {
   projectId: string
   name: string
   createdAt: number
+  orderIndex: number
+  folder: string | null
 }
 
 export interface Shot {

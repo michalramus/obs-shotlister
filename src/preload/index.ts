@@ -29,6 +29,8 @@ export interface ElectronApi {
     rename: (payload: { id: string; name: string }) => Promise<Rundown>
     delete: (payload: { id: string }) => Promise<void>
     setActive: (payload: { rundownId: string | null }) => Promise<void>
+    reorder: (args: { ids: string[] }) => Promise<void>
+    setFolder: (args: { id: string; folder: string | null }) => Promise<Rundown>
   }
   shots: {
     list: (payload: { rundownId: string }) => Promise<Shot[]>
@@ -107,6 +109,8 @@ const api: ElectronApi = {
     rename: (payload) => ipcRenderer.invoke('rundowns:rename', payload),
     delete: (payload) => ipcRenderer.invoke('rundowns:delete', payload),
     setActive: (payload) => ipcRenderer.invoke('rundowns:setActive', payload),
+    reorder: (args) => ipcRenderer.invoke('rundowns:reorder', args),
+    setFolder: (args) => ipcRenderer.invoke('rundowns:setFolder', args),
   },
   shots: {
     list: (payload) => ipcRenderer.invoke('shots:list', payload),

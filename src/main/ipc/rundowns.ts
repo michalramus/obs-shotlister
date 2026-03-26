@@ -20,6 +20,8 @@ interface RundownRow {
   project_id: string
   name: string
   created_at: number
+  order_index: number
+  folder: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -32,6 +34,8 @@ function rowToRundown(row: RundownRow): Rundown {
     projectId: row.project_id,
     name: row.name,
     createdAt: row.created_at,
+    orderIndex: row.order_index,
+    folder: row.folder ?? null,
   }
 }
 
@@ -41,7 +45,7 @@ function rowToRundown(row: RundownRow): Rundown {
 
 export function getRundown(db: Database.Database, id: string): Rundown | null {
   const row = db
-    .prepare('SELECT id, project_id, name, created_at FROM rundowns WHERE id = ?')
+    .prepare('SELECT id, project_id, name, created_at, order_index, folder FROM rundowns WHERE id = ?')
     .get(id) as RundownRow | undefined
   return row ? rowToRundown(row) : null
 }
@@ -49,7 +53,7 @@ export function getRundown(db: Database.Database, id: string): Rundown | null {
 export function listRundowns(db: Database.Database, projectId: string): Rundown[] {
   const rows = db
     .prepare(
-      'SELECT id, project_id, name, created_at FROM rundowns WHERE project_id = ? ORDER BY created_at ASC',
+      'SELECT id, project_id, name, created_at, order_index, folder FROM rundowns WHERE project_id = ? ORDER BY order_index ASC, created_at ASC',
     )
     .all(projectId) as RundownRow[]
   return rows.map(rowToRundown)
@@ -63,15 +67,44 @@ export function createRundown(db: Database.Database, projectId: string, name: st
   const id = randomUUID()
   const createdAt = Date.now()
 
+  const orderIndexRow = db
+    .prepare('SELECT COALESCE(MAX(order_index), -1) + 1 AS next_index FROM rundowns WHERE project_id = ?')
+    .get(projectId) as { next_index: number }
+  const orderIndex = orderIndexRow.next_index
+
   // Foreign key enforcement will throw if projectId is invalid
-  db.prepare('INSERT INTO rundowns (id, project_id, name, created_at) VALUES (?, ?, ?, ?)').run(
+  db.prepare('INSERT INTO rundowns (id, project_id, name, created_at, order_index) VALUES (?, ?, ?, ?, ?)').run(
     id,
     projectId,
     name,
     createdAt,
+    orderIndex,
   )
 
-  return { id, projectId, name, createdAt }
+  return { id, projectId, name, createdAt, orderIndex, folder: null }
+}
+
+export function reorderRundowns(db: Database.Database, ids: string[]): void {
+  const update = db.prepare('UPDATE rundowns SET order_index = ? WHERE id = ?')
+  const transaction = db.transaction(() => {
+    for (let i = 0; i < ids.length; i++) {
+      update.run(i, ids[i])
+    }
+  })
+  transaction()
+}
+
+export function setRundownFolder(db: Database.Database, id: string, folder: string | null): Rundown {
+  const result = db.prepare('UPDATE rundowns SET folder = ? WHERE id = ?').run(folder, id)
+
+  if (result.changes === 0) {
+    throw new Error(`Rundown not found: ${id}`)
+  }
+
+  const row = db
+    .prepare('SELECT id, project_id, name, created_at, order_index, folder FROM rundowns WHERE id = ?')
+    .get(id) as RundownRow
+  return rowToRundown(row)
 }
 
 export function renameRundown(db: Database.Database, id: string, name: string): Rundown {
@@ -86,7 +119,7 @@ export function renameRundown(db: Database.Database, id: string, name: string): 
   }
 
   const row = db
-    .prepare('SELECT id, project_id, name, created_at FROM rundowns WHERE id = ?')
+    .prepare('SELECT id, project_id, name, created_at, order_index, folder FROM rundowns WHERE id = ?')
     .get(id) as RundownRow
   return rowToRundown(row)
 }

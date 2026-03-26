@@ -83,6 +83,8 @@ export interface ElectronApi {
     rename: (payload: { id: string; name: string }) => Promise<Rundown>
     delete: (payload: { id: string }) => Promise<void>
     setActive: (payload: { rundownId: string | null }) => Promise<void>
+    reorder: (args: { ids: string[] }) => Promise<void>
+    setFolder: (args: { id: string; folder: string | null }) => Promise<Rundown>
   }
   shots: {
     list: (payload: { rundownId: string }) => Promise<Shot[]>
