@@ -38,18 +38,26 @@ export interface ElectronApi {
     update: (payload: UpdateShotInput) => Promise<Shot>
     delete: (payload: { id: string }) => Promise<void>
     reorder: (payload: { ids: string[] }) => Promise<void>
-    split: (payload: { shotId: string; atMs: number; newCameraId: string }) => Promise<{ first: Shot; second: Shot }>
+    split: (payload: {
+      shotId: string
+      atMs: number
+      newCameraId: string
+    }) => Promise<{ first: Shot; second: Shot }>
     importCsvOpenDialog: () => Promise<Electron.OpenDialogReturnValue>
     importCsvParse: (payload: { filePath: string }) => Promise<ParseResult>
     importCsvConfirm: (payload: ConfirmImportInput) => Promise<Shot[]>
   }
   live: {
     get: () => Promise<LiveState>
-    start: (payload: { rundownId: string }) => Promise<LiveState>
+    start: (payload: { rundownId: string; previewFirst?: boolean }) => Promise<LiveState>
     stop: () => Promise<LiveState>
     next: () => Promise<LiveState>
     skipNext: () => Promise<LiveState>
     restart: () => Promise<LiveState>
+    getPreviewFirst: () => Promise<boolean>
+    savePreviewFirst: (value: boolean) => Promise<void>
+    onStatePush: (cb: (state: LiveState) => void) => void
+    onShotHiddenPush: (cb: (shotId: string) => void) => void
   }
   project: {
     setActive: (payload: { projectId: string | null }) => Promise<void>
@@ -65,7 +73,10 @@ export interface ElectronApi {
     getTransitions: () => Promise<string[]>
     validate: () => Promise<OBSValidateResult | null>
     listTransitionMappings: () => Promise<TransitionMapping[]>
-    upsertTransitionMapping: (p: { logicalName: string; obsTransitionName: string }) => Promise<void>
+    upsertTransitionMapping: (p: {
+      logicalName: string
+      obsTransitionName: string
+    }) => Promise<void>
     deleteTransitionMapping: (p: { logicalName: string }) => Promise<void>
     onStatusChange: (cb: (status: OBSConnectionStatus) => void) => void
     onValidationResult: (cb: (result: OBSValidateResult | null) => void) => void
@@ -76,7 +87,12 @@ export interface ElectronApi {
   }
   markers: {
     list: (payload: { rundownId: string }) => Promise<Marker[]>
-    upsert: (payload: { id?: string; rundownId: string; positionMs: number; label?: string | null }) => Promise<Marker>
+    upsert: (payload: {
+      id?: string
+      rundownId: string
+      positionMs: number
+      label?: string | null
+    }) => Promise<Marker>
     delete: (payload: { id: string }) => Promise<void>
   }
   rundownMedia: {
@@ -142,6 +158,14 @@ const api: ElectronApi = {
     next: () => ipcRenderer.invoke('live:next'),
     skipNext: () => ipcRenderer.invoke('live:skip-next'),
     restart: () => ipcRenderer.invoke('live:restart'),
+    getPreviewFirst: () => ipcRenderer.invoke('live:getPreviewFirst'),
+    savePreviewFirst: (value: boolean) => ipcRenderer.invoke('live:savePreviewFirst', value),
+    onStatePush: (cb: (state: LiveState) => void) => {
+      ipcRenderer.on('live:state-push', (_e, state: LiveState) => cb(state))
+    },
+    onShotHiddenPush: (cb: (shotId: string) => void) => {
+      ipcRenderer.on('live:shot-hidden-push', (_e, shotId: string) => cb(shotId))
+    },
   },
   project: {
     setActive: (payload) => ipcRenderer.invoke('project:setActive', payload),
@@ -161,8 +185,14 @@ const api: ElectronApi = {
     listTransitionMappings: () => ipcRenderer.invoke('obs:transitions:list'),
     upsertTransitionMapping: (p) => ipcRenderer.invoke('obs:transitions:upsert', p),
     deleteTransitionMapping: (p) => ipcRenderer.invoke('obs:transitions:delete', p),
-    onStatusChange: (cb) => { ipcRenderer.on('obs:status', (_event, d: { status: OBSConnectionStatus }) => cb(d.status)) },
-    onValidationResult: (cb) => { ipcRenderer.on('obs:validationResult', (_event, result: OBSValidateResult | null) => cb(result)) },
+    onStatusChange: (cb) => {
+      ipcRenderer.on('obs:status', (_event, d: { status: OBSConnectionStatus }) => cb(d.status))
+    },
+    onValidationResult: (cb) => {
+      ipcRenderer.on('obs:validationResult', (_event, result: OBSValidateResult | null) =>
+        cb(result),
+      )
+    },
   },
   osc: {
     getSettings: () => ipcRenderer.invoke('osc:settings:get'),

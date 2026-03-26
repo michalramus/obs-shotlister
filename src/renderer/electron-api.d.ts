@@ -92,18 +92,26 @@ export interface ElectronApi {
     update: (payload: UpdateShotInput) => Promise<Shot>
     delete: (payload: { id: string }) => Promise<void>
     reorder: (payload: { ids: string[] }) => Promise<void>
-    split: (payload: { shotId: string; atMs: number; newCameraId: string }) => Promise<{ first: Shot; second: Shot }>
+    split: (payload: {
+      shotId: string
+      atMs: number
+      newCameraId: string
+    }) => Promise<{ first: Shot; second: Shot }>
     importCsvOpenDialog: () => Promise<{ canceled: boolean; filePaths: string[] }>
     importCsvParse: (payload: { filePath: string }) => Promise<ParseResult>
     importCsvConfirm: (payload: ConfirmImportInput) => Promise<Shot[]>
   }
   live: {
     get: () => Promise<LiveState>
-    start: (payload: { rundownId: string }) => Promise<LiveState>
+    start: (payload: { rundownId: string; previewFirst?: boolean }) => Promise<LiveState>
     stop: () => Promise<LiveState>
     next: () => Promise<LiveState>
     skipNext: () => Promise<LiveState>
     restart: () => Promise<LiveState>
+    getPreviewFirst: () => Promise<boolean>
+    savePreviewFirst: (value: boolean) => Promise<void>
+    onStatePush: (cb: (state: LiveState) => void) => void
+    onShotHiddenPush: (cb: (shotId: string) => void) => void
   }
   project: {
     setActive: (payload: { projectId: string | null }) => Promise<void>
@@ -121,7 +129,10 @@ export interface ElectronApi {
     setEnabled: (enabled: boolean) => Promise<void>
     validate: () => Promise<OBSValidateResult | null>
     listTransitionMappings: () => Promise<TransitionMapping[]>
-    upsertTransitionMapping: (p: { logicalName: string; obsTransitionName: string }) => Promise<void>
+    upsertTransitionMapping: (p: {
+      logicalName: string
+      obsTransitionName: string
+    }) => Promise<void>
     deleteTransitionMapping: (p: { logicalName: string }) => Promise<void>
     onStatusChange: (cb: (status: OBSConnectionStatus) => void) => void
     onValidationResult: (cb: (result: OBSValidateResult | null) => void) => void
@@ -132,7 +143,12 @@ export interface ElectronApi {
   }
   markers: {
     list: (payload: { rundownId: string }) => Promise<Marker[]>
-    upsert: (payload: { id?: string; rundownId: string; positionMs: number; label?: string | null }) => Promise<Marker>
+    upsert: (payload: {
+      id?: string
+      rundownId: string
+      positionMs: number
+      label?: string | null
+    }) => Promise<Marker>
     delete: (payload: { id: string }) => Promise<void>
   }
   rundownMedia: {

@@ -1,6 +1,12 @@
 import { create } from 'zustand'
 import type { Project, Camera, Rundown, Shot, Marker } from '../shared/types'
-import type { LiveState, CreateShotInput, UpdateShotInput, OBSConnectionStatus, OBSValidateResult } from './electron-api.d'
+import type {
+  LiveState,
+  CreateShotInput,
+  UpdateShotInput,
+  OBSConnectionStatus,
+  OBSValidateResult,
+} from './electron-api.d'
 
 interface AppStore {
   // Data
@@ -35,6 +41,8 @@ interface AppStore {
   setActiveProject: (id: string | null) => void
   setActiveRundown: (id: string | null) => void
   setLiveState: (state: LiveState) => void
+  handleLiveStatePush: (state: LiveState) => void
+  markShotHidden: (shotId: string) => void
   setObsStatus: (status: OBSConnectionStatus) => void
   setObsValidationResult: (result: OBSValidateResult | null) => void
 
@@ -79,7 +87,7 @@ interface AppStore {
 
   // Live control actions
   loadLiveState: () => Promise<void>
-  liveStart: (rundownId: string) => Promise<void>
+  liveStart: (rundownId: string, previewFirst?: boolean) => Promise<void>
   liveStop: () => Promise<void>
   liveNext: () => Promise<void>
   liveSkipNext: () => Promise<void>
@@ -157,9 +165,26 @@ export const useAppStore = create<AppStore>((set, get) => ({
       running: state.running,
       shots:
         state.liveIndex !== null
-          ? s.shots.map((shot, i) => (i < state.liveIndex! && !shot.hidden ? { ...shot, hidden: true } : shot))
+          ? s.shots.map((shot, i) =>
+              i < state.liveIndex! && !shot.hidden ? { ...shot, hidden: true } : shot,
+            )
           : s.shots,
     })),
+
+  markShotHidden: (shotId) =>
+    set((s) => ({
+      shots: s.shots.map((shot) => (shot.id === shotId ? { ...shot, hidden: true } : shot)),
+    })),
+
+  handleLiveStatePush: (state) => {
+    const { running, activeRundownId, loadShots } = get()
+    get().setLiveState(state)
+    if (running && !state.running && activeRundownId) {
+      loadShots(activeRundownId).catch((err: unknown) =>
+        console.error('[store] handleLiveStatePush loadShots:', err),
+      )
+    }
+  },
 
   setObsStatus: (status) => set({ obsStatus: status }),
   setObsValidationResult: (result) => set({ obsValidationResult: result }),
@@ -253,7 +278,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     await window.api.rundowns.setActive({ rundownId: rundown.id })
     const { cameras } = get()
     if (cameras.length > 0) {
-      await window.api.shots.create({ rundownId: rundown.id, cameraId: cameras[0].id, durationMs: 180000 })
+      await window.api.shots.create({
+        rundownId: rundown.id,
+        cameraId: cameras[0].id,
+        durationMs: 180000,
+      })
       await get().loadShots(rundown.id)
     }
     return rundown
@@ -270,13 +299,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
     await window.api.rundowns.reorder({ ids })
     set((state) => {
       const order = new Map(ids.map((id, i) => [id, i]))
-      return { rundowns: [...state.rundowns].sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0)) }
+      return {
+        rundowns: [...state.rundowns].sort(
+          (a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0),
+        ),
+      }
     })
   },
 
   setRundownFolder: async (id, folder) => {
     const updated = await window.api.rundowns.setFolder({ id, folder })
-    set((state) => ({ rundowns: state.rundowns.map((r) => r.id === id ? updated : r) }))
+    set((state) => ({ rundowns: state.rundowns.map((r) => (r.id === id ? updated : r)) }))
   },
 
   removeRundown: async (id) => {
@@ -296,7 +329,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   // Rundown media
   loadRundownMedia: async (rundownId) => {
     const result = await window.api.rundownMedia.get({ rundownId })
-    set({ rundownMedia: result.filePath ? { filePath: result.filePath, offsetMs: result.offsetMs } : null })
+    set({
+      rundownMedia: result.filePath
+        ? { filePath: result.filePath, offsetMs: result.offsetMs }
+        : null,
+    })
   },
   saveRundownMedia: async (rundownId, filePath, offsetMs) => {
     await window.api.rundownMedia.save({ rundownId, filePath, offsetMs })
@@ -366,7 +403,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const { markers } = get()
     const existing = markers.find((m) => m.id === id)
     if (!existing) return
-    const updated = await window.api.markers.upsert({ id, rundownId: existing.rundownId, positionMs, label: existing.label })
+    const updated = await window.api.markers.upsert({
+      id,
+      rundownId: existing.rundownId,
+      positionMs,
+      label: existing.label,
+    })
     set((state) => ({
       markers: state.markers
         .map((m) => (m.id === id ? updated : m))
@@ -385,8 +427,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     get().setLiveState(state)
   },
 
-  liveStart: async (rundownId) => {
-    const state = await window.api.live.start({ rundownId })
+  liveStart: async (rundownId, previewFirst) => {
+    const state = await window.api.live.start({ rundownId, previewFirst })
     get().setLiveState(state)
   },
 

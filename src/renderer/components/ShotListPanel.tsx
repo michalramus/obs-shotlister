@@ -226,8 +226,20 @@ function parseTransitionSecs(s: string): number {
 
 interface ShotFormProps {
   cameras: Camera[]
-  initial?: { cameraId: string; durationMs: number; label: string; transitionName: string | null; transitionMs: number }
-  onConfirm: (values: { cameraId: string; durationMs: number; label: string; transitionName: string | null; transitionMs: number }) => void
+  initial?: {
+    cameraId: string
+    durationMs: number
+    label: string
+    transitionName: string | null
+    transitionMs: number
+  }
+  onConfirm: (values: {
+    cameraId: string
+    durationMs: number
+    label: string
+    transitionName: string | null
+    transitionMs: number
+  }) => void
   onCancel: () => void
 }
 
@@ -235,15 +247,20 @@ function ShotForm({ cameras, initial, onConfirm, onCancel }: ShotFormProps): Rea
   const [cameraId, setCameraId] = useState(initial?.cameraId ?? cameras[0]?.id ?? '')
   const [duration, setDuration] = useState(initial ? msToMss(initial.durationMs) : '0:30')
   const [label, setLabel] = useState(initial?.label ?? '')
-  const [transitionName, setTransitionName] = useState<string | null>(initial?.transitionName ?? null)
+  const [transitionName, setTransitionName] = useState<string | null>(
+    initial?.transitionName ?? null,
+  )
   const [transitionSecs, setTransitionSecs] = useState<string>(
-    initial?.transitionMs ? (initial.transitionMs / 1000).toString() : '0.5'
+    initial?.transitionMs ? (initial.transitionMs / 1000).toString() : '0.5',
   )
   const [logicalTransitions, setLogicalTransitions] = useState<string[]>([])
 
   useEffect(() => {
-    window.api.obs.listTransitionMappings()
-      .then((mappings) => setLogicalTransitions(mappings.map((m) => m.logicalName)))
+    window.api.obs
+      .listTransitionMappings()
+      .then((mappings) =>
+        setLogicalTransitions(mappings.map((m) => m.logicalName).filter((n) => n !== 'cut')),
+      )
       .catch((err: unknown) => console.error('[ShotListPanel] listTransitionMappings:', err))
   }, [])
 
@@ -298,7 +315,9 @@ function ShotForm({ cameras, initial, onConfirm, onCancel }: ShotFormProps): Rea
       >
         <option value="">— cut —</option>
         {logicalTransitions.map((t) => (
-          <option key={t} value={t}>{t}</option>
+          <option key={t} value={t}>
+            {t}
+          </option>
         ))}
         {transitionName && !logicalTransitions.includes(transitionName) && (
           <option value={transitionName}>{transitionName}</option>
@@ -373,7 +392,11 @@ function SortableShotRow({
 
   return (
     <li
-      ref={(el) => { setNodeRef(el); liveRefCallback?.(el); selectedRefCallback?.(el) }}
+      ref={(el) => {
+        setNodeRef(el)
+        liveRefCallback?.(el)
+        selectedRefCallback?.(el)
+      }}
       style={style}
       data-testid="shot-row"
     >
@@ -389,8 +412,10 @@ function SortableShotRow({
         {shot.label ? ` "${shot.label}"` : ''}
       </span>
       <span style={s.duration}>{msToMss(shot.durationMs)}</span>
-      {shot.transitionName && (
-        <span style={s.transitionInfo}>↪ {shot.transitionName} {(shot.transitionMs / 1000).toFixed(1)}s</span>
+      {shot.transitionName && shot.transitionName !== 'cut' && (
+        <span style={s.transitionInfo}>
+          ↪ {shot.transitionName} {(shot.transitionMs / 1000).toFixed(1)}s
+        </span>
       )}
 
       {!isLocked && (
@@ -440,7 +465,9 @@ export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX
   const [editingShot, setEditingShot] = useState<Shot | null>(null)
 
   const liveDomRef = useRef<HTMLLIElement | null>(null)
-  const setLiveRef = useCallback((el: HTMLLIElement | null) => { liveDomRef.current = el }, [])
+  const setLiveRef = useCallback((el: HTMLLIElement | null) => {
+    liveDomRef.current = el
+  }, [])
 
   useEffect(() => {
     liveDomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -456,7 +483,13 @@ export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX
 
   const sensors = useSensors(useSensor(PointerSensor))
 
-  async function handleAdd(values: { cameraId: string; durationMs: number; label: string; transitionName: string | null; transitionMs: number }): Promise<void> {
+  async function handleAdd(values: {
+    cameraId: string
+    durationMs: number
+    label: string
+    transitionName: string | null
+    transitionMs: number
+  }): Promise<void> {
     if (!activeRundownId) return
     const input: CreateShotInput = {
       rundownId: activeRundownId,
@@ -474,7 +507,13 @@ export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX
     setShowAddForm(false)
   }
 
-  async function handleEdit(values: { cameraId: string; durationMs: number; label: string; transitionName: string | null; transitionMs: number }): Promise<void> {
+  async function handleEdit(values: {
+    cameraId: string
+    durationMs: number
+    label: string
+    transitionName: string | null
+    transitionMs: number
+  }): Promise<void> {
     if (!editingShot) return
     const input: UpdateShotInput = {
       id: editingShot.id,
@@ -526,16 +565,17 @@ export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX
 
   return (
     <div style={s.panel} data-testid="shot-list-panel">
-      {running && (
-        <div style={s.liveLock}>Live — editing disabled</div>
-      )}
+      {running && <div style={s.liveLock}>Live — editing disabled</div>}
 
       <div style={s.toolbar}>
         <span style={s.title}>Shots</span>
         {!running && (
           <button
             style={s.addBtn}
-            onClick={() => { setShowAddForm(true); setEditingShot(null) }}
+            onClick={() => {
+              setShowAddForm(true)
+              setEditingShot(null)
+            }}
             aria-label="Add shot"
           >
             + Add shot
@@ -554,10 +594,8 @@ export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={shots.map((s) => s.id)} strategy={verticalListSortingStrategy}>
           <ul style={s.list}>
-            {shots.length === 0 && (
-              <li style={s.emptyState}>No shots. Add one above.</li>
-            )}
-            {shots.map((shot) => (
+            {shots.length === 0 && <li style={s.emptyState}>No shots. Add one above.</li>}
+            {shots.map((shot) =>
               editingShot?.id === shot.id && !running ? (
                 <li key={shot.id} style={{ listStyle: 'none' }}>
                   <ShotForm
@@ -582,12 +620,21 @@ export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX
                   isLive={liveIndex === shots.indexOf(shot)}
                   isSelected={shot.id === selectedShotId}
                   liveRefCallback={liveIndex === shots.indexOf(shot) ? setLiveRef : undefined}
-                  selectedRefCallback={shot.id === selectedShotId ? (el) => { selectedRowRef.current = el } : undefined}
-                  onEdit={(s) => { setEditingShot(s); setShowAddForm(false) }}
+                  selectedRefCallback={
+                    shot.id === selectedShotId
+                      ? (el) => {
+                          selectedRowRef.current = el
+                        }
+                      : undefined
+                  }
+                  onEdit={(s) => {
+                    setEditingShot(s)
+                    setShowAddForm(false)
+                  }}
                   onDelete={(s) => void handleDelete(s)}
                 />
-              )
-            ))}
+              ),
+            )}
           </ul>
         </SortableContext>
       </DndContext>

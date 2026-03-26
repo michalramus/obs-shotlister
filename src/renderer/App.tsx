@@ -183,10 +183,17 @@ export default function App(): React.JSX.Element {
   const saveRundownMedia = useAppStore((s) => s.saveRundownMedia)
   const clearRundownMedia = useAppStore((s) => s.clearRundownMedia)
 
+  const handleLiveStatePush = useAppStore((s) => s.handleLiveStatePush)
+  const markShotHidden = useAppStore((s) => s.markShotHidden)
+
   const [selectedShotId, setSelectedShotId] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
-  const [muteCount, setMuteCount] = useState(() => localStorage.getItem('obs-queuer-mute-count') === 'true')
-  const [muteBeep, setMuteBeep] = useState(() => localStorage.getItem('obs-queuer-mute-beep') === 'true')
+  const [muteCount, setMuteCount] = useState(
+    () => localStorage.getItem('obs-queuer-mute-count') === 'true',
+  )
+  const [muteBeep, setMuteBeep] = useState(
+    () => localStorage.getItem('obs-queuer-mute-beep') === 'true',
+  )
   const [audioBaseUrl, setAudioBaseUrl] = useState<string | undefined>()
 
   const [showCameraConfig, setShowCameraConfig] = useState(false)
@@ -215,13 +222,28 @@ export default function App(): React.JSX.Element {
     Promise.all([loadProjects(), loadLiveState()]).catch((err: unknown) => {
       setLoadError(err instanceof Error ? err.message : 'Failed to load.')
     })
-    window.api.obs.getStatus().then((r) => setObsStatus(r.status)).catch(() => {})
+    window.api.obs
+      .getStatus()
+      .then((r) => setObsStatus(r.status))
+      .catch(() => {})
     window.api.obs.onStatusChange(setObsStatus)
     window.api.obs.onValidationResult(setObsValidationResult)
-    window.api.assets.getAudioDir().then((dir) => {
-      setAudioBaseUrl(`media://localhost${dir}`)
-    }).catch((err: unknown) => console.error('[App] getAudioDir:', err))
-  }, [loadProjects, loadLiveState, setObsStatus, setObsValidationResult])
+    window.api.live.onStatePush(handleLiveStatePush)
+    window.api.live.onShotHiddenPush(markShotHidden)
+    window.api.assets
+      .getAudioDir()
+      .then((dir) => {
+        setAudioBaseUrl(`media://localhost${dir}`)
+      })
+      .catch((err: unknown) => console.error('[App] getAudioDir:', err))
+  }, [
+    loadProjects,
+    loadLiveState,
+    setObsStatus,
+    setObsValidationResult,
+    handleLiveStatePush,
+    markShotHidden,
+  ])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -248,7 +270,17 @@ export default function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [running, shots, activeRundownId, liveNext, liveStart, liveSkipNext, uiMode, liveIndex, startedAt])
+  }, [
+    running,
+    shots,
+    activeRundownId,
+    liveNext,
+    liveStart,
+    liveSkipNext,
+    uiMode,
+    liveIndex,
+    startedAt,
+  ])
 
   // When the active project changes, load its cameras + rundowns
   useEffect(() => {
@@ -323,19 +355,33 @@ export default function App(): React.JSX.Element {
 
   return (
     <div style={styles.root}>
-      <header style={{ ...styles.header, background: headerFlash ? '#888' : '#1a1a1a', transition: 'background 0.35s ease-out' }}>
+      <header
+        style={{
+          ...styles.header,
+          background: headerFlash ? '#888' : '#1a1a1a',
+          transition: 'background 0.35s ease-out',
+        }}
+      >
         <span style={styles.appName}>OBS Queuer</span>
         <ProjectSelector onOpenCameraConfig={() => setShowCameraConfig(true)} />
         <div style={styles.headerActions}>
           <button
-            onClick={() => { const v = !muteCount; setMuteCount(v); localStorage.setItem('obs-queuer-mute-count', String(v)) }}
+            onClick={() => {
+              const v = !muteCount
+              setMuteCount(v)
+              localStorage.setItem('obs-queuer-mute-count', String(v))
+            }}
             style={{ ...styles.importBtn, color: muteCount ? '#555' : '#888' }}
             title={muteCount ? 'Unmute countdown' : 'Mute countdown'}
           >
             {muteCount ? '🔇 Count' : '🔊 Count'}
           </button>
           <button
-            onClick={() => { const v = !muteBeep; setMuteBeep(v); localStorage.setItem('obs-queuer-mute-beep', String(v)) }}
+            onClick={() => {
+              const v = !muteBeep
+              setMuteBeep(v)
+              localStorage.setItem('obs-queuer-mute-beep', String(v))
+            }}
             style={{ ...styles.importBtn, color: muteBeep ? '#555' : '#888' }}
             title={muteBeep ? 'Unmute beep' : 'Mute beep'}
           >
@@ -355,7 +401,10 @@ export default function App(): React.JSX.Element {
           <div style={styles.dropdownWrapper}>
             <button
               style={styles.obsBtn}
-              onClick={() => { setShowExportMenu((v) => !v); setShowImportMenu(false) }}
+              onClick={() => {
+                setShowExportMenu((v) => !v)
+                setShowImportMenu(false)
+              }}
             >
               Export
             </button>
@@ -369,7 +418,11 @@ export default function App(): React.JSX.Element {
                   {activeRundownId !== null && (
                     <button
                       style={styles.dropdownItem}
-                      onClick={() => { handleExportRundown().catch((err: unknown) => console.error('[App] exportRundown:', err)) }}
+                      onClick={() => {
+                        handleExportRundown().catch((err: unknown) =>
+                          console.error('[App] exportRundown:', err),
+                        )
+                      }}
                     >
                       Export rundown
                     </button>
@@ -377,14 +430,22 @@ export default function App(): React.JSX.Element {
                   {activeProjectId !== null && (
                     <button
                       style={styles.dropdownItem}
-                      onClick={() => { handleExportProject().catch((err: unknown) => console.error('[App] exportProject:', err)) }}
+                      onClick={() => {
+                        handleExportProject().catch((err: unknown) =>
+                          console.error('[App] exportProject:', err),
+                        )
+                      }}
                     >
                       Export project
                     </button>
                   )}
                   <button
                     style={styles.dropdownItem}
-                    onClick={() => { handleExportDatabase().catch((err: unknown) => console.error('[App] exportDatabase:', err)) }}
+                    onClick={() => {
+                      handleExportDatabase().catch((err: unknown) =>
+                        console.error('[App] exportDatabase:', err),
+                      )
+                    }}
                   >
                     Export DB
                   </button>
@@ -397,7 +458,10 @@ export default function App(): React.JSX.Element {
           <div style={styles.dropdownWrapper}>
             <button
               style={styles.obsBtn}
-              onClick={() => { setShowImportMenu((v) => !v); setShowExportMenu(false) }}
+              onClick={() => {
+                setShowImportMenu((v) => !v)
+                setShowExportMenu(false)
+              }}
             >
               Import
             </button>
@@ -410,21 +474,33 @@ export default function App(): React.JSX.Element {
                 <div style={styles.dropdownMenu}>
                   <button
                     style={styles.dropdownItem}
-                    onClick={() => { handleImportProject().catch((err: unknown) => console.error('[App] importProject:', err)) }}
+                    onClick={() => {
+                      handleImportProject().catch((err: unknown) =>
+                        console.error('[App] importProject:', err),
+                      )
+                    }}
                   >
                     Import project
                   </button>
                   {activeProjectId !== null && (
                     <button
                       style={styles.dropdownItem}
-                      onClick={() => { handleImportRundown().catch((err: unknown) => console.error('[App] importRundown:', err)) }}
+                      onClick={() => {
+                        handleImportRundown().catch((err: unknown) =>
+                          console.error('[App] importRundown:', err),
+                        )
+                      }}
                     >
                       Import rundown
                     </button>
                   )}
                   <button
                     style={styles.dropdownItem}
-                    onClick={() => { handleImportDatabase().catch((err: unknown) => console.error('[App] importDatabase:', err)) }}
+                    onClick={() => {
+                      handleImportDatabase().catch((err: unknown) =>
+                        console.error('[App] importDatabase:', err),
+                      )
+                    }}
                   >
                     Import DB
                   </button>
@@ -441,37 +517,33 @@ export default function App(): React.JSX.Element {
             <span style={styles.obsDot(obsStatus)} />
             OBS
           </button>
-          <button
-            style={styles.obsBtn}
-            onClick={() => setShowOscPanel(true)}
-            title="OSC Server"
-          >
+          <button style={styles.obsBtn} onClick={() => setShowOscPanel(true)} title="OSC Server">
             OSC
           </button>
         </div>
       </header>
 
-      {obsStatus === 'connected' && obsValidationResult !== null && (
-        !obsValidationResult.studioModeEnabled ||
-        obsValidationResult.missingScenes.length > 0 ||
-        obsValidationResult.missingTransitions.length > 0
-      ) && (
-        <div
-          style={styles.warningBanner}
-          onClick={() => setShowObsPanel(true)}
-          role="button"
-          aria-label="OBS misconfigured — click to open settings"
-        >
-          <span>OBS:</span>
-          {!obsValidationResult.studioModeEnabled && <span>studio mode off</span>}
-          {obsValidationResult.missingScenes.length > 0 && (
-            <span>missing scenes: {obsValidationResult.missingScenes.join(', ')}</span>
-          )}
-          {obsValidationResult.missingTransitions.length > 0 && (
-            <span>missing transitions: {obsValidationResult.missingTransitions.join(', ')}</span>
-          )}
-        </div>
-      )}
+      {obsStatus === 'connected' &&
+        obsValidationResult !== null &&
+        (!obsValidationResult.studioModeEnabled ||
+          obsValidationResult.missingScenes.length > 0 ||
+          obsValidationResult.missingTransitions.length > 0) && (
+          <div
+            style={styles.warningBanner}
+            onClick={() => setShowObsPanel(true)}
+            role="button"
+            aria-label="OBS misconfigured — click to open settings"
+          >
+            <span>OBS:</span>
+            {!obsValidationResult.studioModeEnabled && <span>studio mode off</span>}
+            {obsValidationResult.missingScenes.length > 0 && (
+              <span>missing scenes: {obsValidationResult.missingScenes.join(', ')}</span>
+            )}
+            {obsValidationResult.missingTransitions.length > 0 && (
+              <span>missing transitions: {obsValidationResult.missingTransitions.join(', ')}</span>
+            )}
+          </div>
+        )}
 
       <div style={styles.body}>
         {loadError !== null && (
@@ -491,11 +563,25 @@ export default function App(): React.JSX.Element {
               <>
                 <div style={styles.center}>
                   {activeRundownId !== null && <LiveControls />}
-                  <div style={{ flex: 1, overflow: 'hidden', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div
+                    style={{
+                      flex: 1,
+                      overflow: 'hidden',
+                      background: '#000',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
                     <video
                       ref={videoRef}
                       src={`media://localhost${rundownMedia!.filePath}`}
-                      style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'contain',
+                        background: '#000',
+                      }}
                     />
                   </div>
                   <TimelineEditor
@@ -508,9 +594,13 @@ export default function App(): React.JSX.Element {
                     onShotClick={(id) => setSelectedShotId(id)}
                     onSplitShot={(shotId, atMs, newCameraId) => {
                       if (atMs <= 0) {
-                        editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) => console.error('[App] editShot:', err))
+                        editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) =>
+                          console.error('[App] editShot:', err),
+                        )
                       } else {
-                        splitShot(shotId, atMs, newCameraId).catch((err: unknown) => console.error('[App] splitShot:', err))
+                        splitShot(shotId, atMs, newCameraId).catch((err: unknown) =>
+                          console.error('[App] splitShot:', err),
+                        )
                       }
                     }}
                     onResizeShots={(idA, durA, idB, durB) => {
@@ -520,29 +610,55 @@ export default function App(): React.JSX.Element {
                       ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
                     }}
                     onExtendLastShot={(id, dur) => {
-                      editShot({ id, durationMs: Math.round(dur) }).catch((err: unknown) => console.error('[App] extendLastShot:', err))
+                      editShot({ id, durationMs: Math.round(dur) }).catch((err: unknown) =>
+                        console.error('[App] extendLastShot:', err),
+                      )
                     }}
                     onDeleteShot={(id) => {
-                      removeShot(id).catch((err: unknown) => console.error('[App] deleteShot:', err))
+                      removeShot(id).catch((err: unknown) =>
+                        console.error('[App] deleteShot:', err),
+                      )
                     }}
                     onChangeShotCamera={(id, camId) => {
-                      editShot({ id, cameraId: camId }).catch((err: unknown) => console.error('[App] changeShotCamera:', err))
+                      editShot({ id, cameraId: camId }).catch((err: unknown) =>
+                        console.error('[App] changeShotCamera:', err),
+                      )
                     }}
                     mediaVideoRef={videoRef}
                     rundownMedia={rundownMedia}
                     onAddMarker={(posMs) => {
-                      if (activeRundownId) addMarker(activeRundownId, posMs).catch((err: unknown) => console.error('[App] addMarker:', err))
+                      if (activeRundownId)
+                        addMarker(activeRundownId, posMs).catch((err: unknown) =>
+                          console.error('[App] addMarker:', err),
+                        )
                     }}
-                    onUpdateMarker={(id, posMs) => updateMarker(id, posMs).catch((err: unknown) => console.error('[App] updateMarker:', err))}
-                    onDeleteMarker={(id) => removeMarker(id).catch((err: unknown) => console.error('[App] deleteMarker:', err))}
-                    onImportMedia={() => { handleImportMedia().catch((err: unknown) => console.error('[App] importMedia:', err)) }}
+                    onUpdateMarker={(id, posMs) =>
+                      updateMarker(id, posMs).catch((err: unknown) =>
+                        console.error('[App] updateMarker:', err),
+                      )
+                    }
+                    onDeleteMarker={(id) =>
+                      removeMarker(id).catch((err: unknown) =>
+                        console.error('[App] deleteMarker:', err),
+                      )
+                    }
+                    onImportMedia={() => {
+                      handleImportMedia().catch((err: unknown) =>
+                        console.error('[App] importMedia:', err),
+                      )
+                    }}
                     onUpdateMediaOffset={(offsetMs) => {
                       if (rundownMedia && activeRundownId) {
-                        saveRundownMedia(activeRundownId, rundownMedia.filePath, offsetMs).catch((err: unknown) => console.error('[App] updateMediaOffset:', err))
+                        saveRundownMedia(activeRundownId, rundownMedia.filePath, offsetMs).catch(
+                          (err: unknown) => console.error('[App] updateMediaOffset:', err),
+                        )
                       }
                     }}
                     onClearMedia={() => {
-                      if (activeRundownId) clearRundownMedia(activeRundownId).catch((err: unknown) => console.error('[App] clearMedia:', err))
+                      if (activeRundownId)
+                        clearRundownMedia(activeRundownId).catch((err: unknown) =>
+                          console.error('[App] clearMedia:', err),
+                        )
                     }}
                   />
                 </div>
@@ -568,9 +684,13 @@ export default function App(): React.JSX.Element {
                     onShotClick={(id) => setSelectedShotId(id)}
                     onSplitShot={(shotId, atMs, newCameraId) => {
                       if (atMs <= 0) {
-                        editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) => console.error('[App] editShot:', err))
+                        editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) =>
+                          console.error('[App] editShot:', err),
+                        )
                       } else {
-                        splitShot(shotId, atMs, newCameraId).catch((err: unknown) => console.error('[App] splitShot:', err))
+                        splitShot(shotId, atMs, newCameraId).catch((err: unknown) =>
+                          console.error('[App] splitShot:', err),
+                        )
                       }
                     }}
                     onResizeShots={(idA, durA, idB, durB) => {
@@ -580,29 +700,55 @@ export default function App(): React.JSX.Element {
                       ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
                     }}
                     onExtendLastShot={(id, dur) => {
-                      editShot({ id, durationMs: Math.round(dur) }).catch((err: unknown) => console.error('[App] extendLastShot:', err))
+                      editShot({ id, durationMs: Math.round(dur) }).catch((err: unknown) =>
+                        console.error('[App] extendLastShot:', err),
+                      )
                     }}
                     onDeleteShot={(id) => {
-                      removeShot(id).catch((err: unknown) => console.error('[App] deleteShot:', err))
+                      removeShot(id).catch((err: unknown) =>
+                        console.error('[App] deleteShot:', err),
+                      )
                     }}
                     onChangeShotCamera={(id, camId) => {
-                      editShot({ id, cameraId: camId }).catch((err: unknown) => console.error('[App] changeShotCamera:', err))
+                      editShot({ id, cameraId: camId }).catch((err: unknown) =>
+                        console.error('[App] changeShotCamera:', err),
+                      )
                     }}
                     mediaVideoRef={videoRef}
                     rundownMedia={rundownMedia}
                     onAddMarker={(posMs) => {
-                      if (activeRundownId) addMarker(activeRundownId, posMs).catch((err: unknown) => console.error('[App] addMarker:', err))
+                      if (activeRundownId)
+                        addMarker(activeRundownId, posMs).catch((err: unknown) =>
+                          console.error('[App] addMarker:', err),
+                        )
                     }}
-                    onUpdateMarker={(id, posMs) => updateMarker(id, posMs).catch((err: unknown) => console.error('[App] updateMarker:', err))}
-                    onDeleteMarker={(id) => removeMarker(id).catch((err: unknown) => console.error('[App] deleteMarker:', err))}
-                    onImportMedia={() => { handleImportMedia().catch((err: unknown) => console.error('[App] importMedia:', err)) }}
+                    onUpdateMarker={(id, posMs) =>
+                      updateMarker(id, posMs).catch((err: unknown) =>
+                        console.error('[App] updateMarker:', err),
+                      )
+                    }
+                    onDeleteMarker={(id) =>
+                      removeMarker(id).catch((err: unknown) =>
+                        console.error('[App] deleteMarker:', err),
+                      )
+                    }
+                    onImportMedia={() => {
+                      handleImportMedia().catch((err: unknown) =>
+                        console.error('[App] importMedia:', err),
+                      )
+                    }}
                     onUpdateMediaOffset={(offsetMs) => {
                       if (rundownMedia && activeRundownId) {
-                        saveRundownMedia(activeRundownId, rundownMedia.filePath, offsetMs).catch((err: unknown) => console.error('[App] updateMediaOffset:', err))
+                        saveRundownMedia(activeRundownId, rundownMedia.filePath, offsetMs).catch(
+                          (err: unknown) => console.error('[App] updateMediaOffset:', err),
+                        )
                       }
                     }}
                     onClearMedia={() => {
-                      if (activeRundownId) clearRundownMedia(activeRundownId).catch((err: unknown) => console.error('[App] clearMedia:', err))
+                      if (activeRundownId)
+                        clearRundownMedia(activeRundownId).catch((err: unknown) =>
+                          console.error('[App] clearMedia:', err),
+                        )
                     }}
                   />
                 </div>
@@ -618,7 +764,6 @@ export default function App(): React.JSX.Element {
                       running={running}
                       showNextBackground
                       autoScroll
-
                       audioBaseUrl={audioBaseUrl}
                       muteCount={muteCount}
                       muteBeep={muteBeep}
@@ -661,9 +806,13 @@ export default function App(): React.JSX.Element {
                 onShotClick={(id) => setSelectedShotId(id)}
                 onSplitShot={(shotId, atMs, newCameraId) => {
                   if (atMs <= 0) {
-                    editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) => console.error('[App] editShot:', err))
+                    editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) =>
+                      console.error('[App] editShot:', err),
+                    )
                   } else {
-                    splitShot(shotId, atMs, newCameraId).catch((err: unknown) => console.error('[App] splitShot:', err))
+                    splitShot(shotId, atMs, newCameraId).catch((err: unknown) =>
+                      console.error('[App] splitShot:', err),
+                    )
                   }
                 }}
                 onResizeShots={(idA, durA, idB, durB) => {
@@ -673,21 +822,36 @@ export default function App(): React.JSX.Element {
                   ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
                 }}
                 onExtendLastShot={(id, dur) => {
-                  editShot({ id, durationMs: Math.round(dur) }).catch((err: unknown) => console.error('[App] extendLastShot:', err))
+                  editShot({ id, durationMs: Math.round(dur) }).catch((err: unknown) =>
+                    console.error('[App] extendLastShot:', err),
+                  )
                 }}
                 onDeleteShot={(id) => {
                   removeShot(id).catch((err: unknown) => console.error('[App] deleteShot:', err))
                 }}
                 onChangeShotCamera={(id, camId) => {
-                  editShot({ id, cameraId: camId }).catch((err: unknown) => console.error('[App] changeShotCamera:', err))
+                  editShot({ id, cameraId: camId }).catch((err: unknown) =>
+                    console.error('[App] changeShotCamera:', err),
+                  )
                 }}
                 mediaVideoRef={videoRef}
                 rundownMedia={null}
                 onAddMarker={(posMs) => {
-                  if (activeRundownId) addMarker(activeRundownId, posMs).catch((err: unknown) => console.error('[App] addMarker:', err))
+                  if (activeRundownId)
+                    addMarker(activeRundownId, posMs).catch((err: unknown) =>
+                      console.error('[App] addMarker:', err),
+                    )
                 }}
-                onUpdateMarker={(id, posMs) => updateMarker(id, posMs).catch((err: unknown) => console.error('[App] updateMarker:', err))}
-                onDeleteMarker={(id) => removeMarker(id).catch((err: unknown) => console.error('[App] deleteMarker:', err))}
+                onUpdateMarker={(id, posMs) =>
+                  updateMarker(id, posMs).catch((err: unknown) =>
+                    console.error('[App] updateMarker:', err),
+                  )
+                }
+                onDeleteMarker={(id) =>
+                  removeMarker(id).catch((err: unknown) =>
+                    console.error('[App] deleteMarker:', err),
+                  )
+                }
                 onImportMedia={() => {}}
                 onUpdateMediaOffset={() => {}}
                 onClearMedia={() => {}}

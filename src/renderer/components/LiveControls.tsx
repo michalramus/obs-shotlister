@@ -13,7 +13,9 @@ const s = {
     borderLeft: uiMode === 'edit' ? '4px solid #2980b9' : '4px solid #e74c3c',
   }),
 
-  btn: (variant: 'primary' | 'danger' | 'secondary' | 'mode-live' | 'mode-edit'): React.CSSProperties => ({
+  btn: (
+    variant: 'primary' | 'danger' | 'secondary' | 'mode-live' | 'mode-edit',
+  ): React.CSSProperties => ({
     padding: '6px 16px',
     borderRadius: '4px',
     border: 'none',
@@ -58,6 +60,29 @@ export function LiveControls(): React.JSX.Element {
 
   const [inTransition, setInTransition] = useState(false)
   const transitionRafRef = useRef<number | null>(null)
+  const [previewFirst, setPreviewFirst] = useState(() => {
+    try {
+      const stored = localStorage.getItem('obs-queuer-preview-first')
+      return stored === null ? true : stored === 'true'
+    } catch {
+      return true
+    }
+  })
+
+  // Sync previewFirst from DB on mount (DB is source of truth for OSC)
+  useEffect(() => {
+    window.api.live
+      .getPreviewFirst()
+      .then((v) => {
+        setPreviewFirst(v)
+        try {
+          localStorage.setItem('obs-queuer-preview-first', String(v))
+        } catch {
+          /* ignore */
+        }
+      })
+      .catch((err: unknown) => console.error('[LiveControls] getPreviewFirst:', err))
+  }, [])
 
   // 60fps RAF loop to track transition state
   useEffect(() => {
@@ -108,18 +133,49 @@ export function LiveControls(): React.JSX.Element {
           {uiMode === 'edit' ? 'EDIT MODE' : 'LIVE MODE'}
         </button>
         {uiMode === 'live' && (
-          <button
-            style={s.btn('primary')}
-            disabled={!canStart()}
-            onClick={() => {
-              if (activeRundownId) {
-                liveStart(activeRundownId).catch((err) => handleError('start', err))
-              }
-            }}
-            aria-label="Start rundown"
-          >
-            ▶ Start
-          </button>
+          <>
+            <button
+              style={s.btn('primary')}
+              disabled={!canStart()}
+              onClick={() => {
+                if (activeRundownId) {
+                  liveStart(activeRundownId, previewFirst).catch((err) => handleError('start', err))
+                }
+              }}
+              aria-label="Start rundown"
+            >
+              ▶ Start
+            </button>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                fontSize: '12px',
+                color: '#aaa',
+                cursor: 'pointer',
+                userSelect: 'none',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={previewFirst}
+                onChange={(e) => {
+                  const v = e.target.checked
+                  setPreviewFirst(v)
+                  try {
+                    localStorage.setItem('obs-queuer-preview-first', String(v))
+                  } catch {
+                    /* ignore */
+                  }
+                  window.api.live
+                    .savePreviewFirst(v)
+                    .catch((err: unknown) => console.error('[LiveControls] savePreviewFirst:', err))
+                }}
+              />
+              Preview first
+            </label>
+          </>
         )}
       </div>
     )
@@ -172,7 +228,9 @@ export function LiveControls(): React.JSX.Element {
         <span style={{ fontSize: '12px', color: '#888' }}>last shot</span>
       )}
 
-      <span style={{ ...s.liveBadge, animation: 'pulse-live 1.2s ease-in-out infinite' }}>● LIVE</span>
+      <span style={{ ...s.liveBadge, animation: 'pulse-live 1.2s ease-in-out infinite' }}>
+        ● LIVE
+      </span>
     </div>
   )
 }
