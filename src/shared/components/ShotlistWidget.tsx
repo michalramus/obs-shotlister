@@ -212,6 +212,7 @@ export function ShotlistWidget({
   const reachedZeroAtRef = useRef<number | null>(null)
   const beepFiredRef = useRef<boolean>(false)
   const prevLiveIndexForAudioRef = useRef<number | null>(null)
+  const prevStartedAtForAudioRef = useRef<number | null>(null)
   const prevLiveIndexForFilterBeepRef = useRef<number | null>(null)
   const filteredCamWasLiveRef = useRef<boolean>(false)
 
@@ -234,13 +235,17 @@ export function ShotlistWidget({
       // Countdown and natural beep (unfiltered mode only)
       const hasFilterNow = cameraFilter !== undefined && cameraFilter.length > 0
       if (!hasFilterNow && liveIndex !== null && audioBaseUrl) {
-        // Reset state on liveIndex change
-        if (liveIndex !== prevLiveIndexForAudioRef.current) {
+        // Reset state on liveIndex or startedAt change (new live session)
+        if (
+          liveIndex !== prevLiveIndexForAudioRef.current ||
+          startedAt !== prevStartedAtForAudioRef.current
+        ) {
           beepFiredRef.current = false
           prevRemainingSecRef.current = null
           prevRemainingMsRef.current = null
           reachedZeroAtRef.current = null
           prevLiveIndexForAudioRef.current = liveIndex
+          prevStartedAtForAudioRef.current = startedAt
         }
 
         const timingNow = computeTiming(shots, cameras, liveIndex, startedAt, tickNow, cameraFilter)
