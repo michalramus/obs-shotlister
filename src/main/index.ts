@@ -315,6 +315,7 @@ function registerIpcHandlers(): void {
     broadcastLiveState(state)
     broadcastRundown()
     setOBSPreviewForStart(state, db)
+      .then(() => new Promise<void>((resolve) => setTimeout(resolve, 50)))
       .then(() => switchOBSScenes(state, db))
       .catch(console.error)
     return state
@@ -627,14 +628,17 @@ async function switchOBSScenes(state: LiveState, database: ReturnType<typeof get
   const liveShot = allShots[liveShotIdx]
   const liveCamera = getCameraById(database, liveShot.cameraId)
 
-  const { obsName, constLengthMs } = resolveTransitionFull(database, liveShot.transitionName ?? 'cut')
-  const effectiveTransitionMs = constLengthMs ?? (liveShot.transitionMs ?? 0)
+  const effectiveTransitionMs = liveShot.transitionMs ?? 0
 
-  // 1+2. Configure transition, then trigger studio mode transition (preview→program)
+  // 1+2. Configure transition (only when explicitly set on shot), then trigger studio mode transition
   if (liveCamera?.obsScene) {
-    try {
-      await obsClient.setCurrentSceneTransition(obsName, constLengthMs !== null ? 0 : effectiveTransitionMs)
-    } catch (e: unknown) { console.error('[OBS] setTransition:', e) }
+    if (liveShot.transitionName !== null) {
+      const { obsName, constLengthMs } = resolveTransitionFull(database, liveShot.transitionName)
+      const duration = constLengthMs !== null ? 0 : effectiveTransitionMs
+      try {
+        await obsClient.setCurrentSceneTransition(obsName, duration)
+      } catch (e: unknown) { console.error('[OBS] setTransition: attempted name:', obsName, e) }
+    }
     try {
       await obsClient.triggerStudioModeTransition()
     } catch (e: unknown) { console.error('[OBS] program:', e) }
