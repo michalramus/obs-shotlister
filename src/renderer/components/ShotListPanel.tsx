@@ -6,6 +6,10 @@ import {
   useSensor,
   useSensors,
   DragEndEvent,
+  DragStartEvent,
+  DragOverEvent,
+  DragCancelEvent,
+  DragOverlay,
 } from '@dnd-kit/core'
 import {
   SortableContext,
@@ -201,6 +205,14 @@ const s = {
 // Duration helpers
 // ---------------------------------------------------------------------------
 
+const DROP_LINE_STYLE: React.CSSProperties = {
+  height: '2px',
+  background: '#5a9fd4',
+  borderRadius: '1px',
+  margin: '0 8px',
+  pointerEvents: 'none',
+}
+
 function msToMss(ms: number): string {
   const totalSec = Math.floor(ms / 1000)
   const m = Math.floor(totalSec / 60)
@@ -355,6 +367,8 @@ interface SortableShotRowProps {
   isLocked: boolean
   isLive: boolean
   isSelected: boolean
+  isDraggingThis: boolean
+  isDropTarget: boolean
   liveRefCallback?: (el: HTMLLIElement | null) => void
   selectedRefCallback?: (el: HTMLLIElement | null) => void
   onEdit: (shot: Shot) => void
@@ -367,12 +381,14 @@ function SortableShotRow({
   isLocked,
   isLive,
   isSelected,
+  isDraggingThis,
+  isDropTarget,
   liveRefCallback,
   selectedRefCallback,
   onEdit,
   onDelete,
 }: SortableShotRowProps): React.JSX.Element {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
     id: shot.id,
     disabled: isLocked,
   })
@@ -385,60 +401,65 @@ function SortableShotRow({
     ...(isLive ? { background: liveBg } : {}),
     transform: CSS.Transform.toString(transform),
     transition,
-    opacity: isDragging ? 0.5 : 1,
+    // invisible placeholder while dragging — keeps layout frozen
+    opacity: isDraggingThis ? 0 : 1,
+    pointerEvents: isDraggingThis ? 'none' : undefined,
     outline: isSelected ? '2px solid #4a90d9' : undefined,
     outlineOffset: isSelected ? '-2px' : undefined,
   }
 
   return (
-    <li
-      ref={(el) => {
-        setNodeRef(el)
-        liveRefCallback?.(el)
-        selectedRefCallback?.(el)
-      }}
-      style={style}
-      data-testid="shot-row"
-    >
-      {!isLocked && (
-        <span style={s.dragHandle} {...attributes} {...listeners} aria-label="Drag to reorder">
-          ⠿
-        </span>
-      )}
+    <>
+      {isDropTarget && <li style={DROP_LINE_STYLE} aria-hidden="true" />}
+      <li
+        ref={(el) => {
+          setNodeRef(el)
+          liveRefCallback?.(el)
+          selectedRefCallback?.(el)
+        }}
+        style={style}
+        data-testid="shot-row"
+      >
+        {!isLocked && (
+          <span style={s.dragHandle} {...attributes} {...listeners} aria-label="Drag to reorder">
+            ⠿
+          </span>
+        )}
 
-      {camera && <span style={s.cameraBadge(camera.color)}>CAM{camera.number}</span>}
-      <span style={s.name}>
-        {camera?.name ?? '—'}
-        {shot.label ? ` "${shot.label}"` : ''}
-      </span>
-      <span style={s.duration}>{msToMss(shot.durationMs)}</span>
-      {shot.transitionName && shot.transitionName !== 'cut' && (
-        <span style={s.transitionInfo}>
-          ↪ {shot.transitionName} {(shot.transitionMs / 1000).toFixed(1)}s
+        {camera && <span style={s.cameraBadge(camera.color)}>CAM{camera.number}</span>}
+        <span style={s.name}>
+          {camera?.name ?? '—'}
+          {shot.label ? ` "${shot.label}"` : ''}
         </span>
-      )}
+        <span style={s.duration}>{msToMss(shot.durationMs)}</span>
+        {shot.transitionName && shot.transitionName !== 'cut' && (
+          <span style={s.transitionInfo}>
+            ↪ {shot.transitionName} {(shot.transitionMs / 1000).toFixed(1)}s
+          </span>
+        )}
 
-      {!isLocked && (
-        <>
-          <button
-            style={s.iconBtn}
-            onClick={() => onEdit(shot)}
-            aria-label="Edit shot"
-            title="Edit"
-          >
-            ✎
-          </button>
-          <button
-            style={s.iconBtn}
-            onClick={() => onDelete(shot)}
-            aria-label="Delete shot"
-            title="Delete"
-          >
-            🗑
-          </button>
-        </>
-      )}
-    </li>
+        {!isLocked && (
+          <>
+            <button
+              style={s.iconBtn}
+              onClick={() => onEdit(shot)}
+              aria-label="Edit shot"
+              title="Edit"
+            >
+              ✎
+            </button>
+            <button
+              style={s.iconBtn}
+              onClick={() => onDelete(shot)}
+              aria-label="Delete shot"
+              title="Delete"
+            >
+              🗑
+            </button>
+          </>
+        )}
+      </li>
+    </>
   )
 }
 
@@ -463,6 +484,8 @@ export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX
 
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingShot, setEditingShot] = useState<Shot | null>(null)
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [overId, setOverId] = useState<string | null>(null)
 
   const liveDomRef = useRef<HTMLLIElement | null>(null)
   const setLiveRef = useCallback((el: HTMLLIElement | null) => {
@@ -541,8 +564,24 @@ export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX
     }
   }
 
+  function handleDragStart(event: DragStartEvent): void {
+    setActiveId(event.active.id as string)
+    setOverId(null)
+  }
+
+  function handleDragOver(event: DragOverEvent): void {
+    setOverId(event.over ? (event.over.id as string) : null)
+  }
+
+  function handleDragCancel(_event: DragCancelEvent): void {
+    setActiveId(null)
+    setOverId(null)
+  }
+
   function handleDragEnd(event: DragEndEvent): void {
     const { active, over } = event
+    setActiveId(null)
+    setOverId(null)
     if (!over || active.id === over.id) return
 
     const oldIndex = shots.findIndex((s) => s.id === active.id)
@@ -591,7 +630,14 @@ export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX
         />
       )}
 
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
+      >
         <SortableContext items={shots.map((s) => s.id)} strategy={verticalListSortingStrategy}>
           <ul style={s.list}>
             {shots.length === 0 && <li style={s.emptyState}>No shots. Add one above.</li>}
@@ -619,6 +665,8 @@ export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX
                   isLocked={running}
                   isLive={liveIndex === shots.indexOf(shot)}
                   isSelected={shot.id === selectedShotId}
+                  isDraggingThis={shot.id === activeId}
+                  isDropTarget={shot.id === overId && shot.id !== activeId}
                   liveRefCallback={liveIndex === shots.indexOf(shot) ? setLiveRef : undefined}
                   selectedRefCallback={
                     shot.id === selectedShotId
@@ -637,6 +685,38 @@ export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX
             )}
           </ul>
         </SortableContext>
+
+        <DragOverlay>
+          {activeId
+            ? (() => {
+                const activeShot = shots.find((s) => s.id === activeId)
+                if (!activeShot) return null
+                const camera = cameras.find((c) => c.id === activeShot.cameraId)
+                return (
+                  <ul style={{ listStyle: 'none', margin: 0, padding: 0, opacity: 0.9 }}>
+                    <li
+                      style={{
+                        ...s.row,
+                        background: '#2a3040',
+                        borderRadius: '4px',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                      }}
+                    >
+                      <span style={s.dragHandle}>⠿</span>
+                      {camera && (
+                        <span style={s.cameraBadge(camera.color)}>CAM{camera.number}</span>
+                      )}
+                      <span style={s.name}>
+                        {camera?.name ?? '—'}
+                        {activeShot.label ? ` "${activeShot.label}"` : ''}
+                      </span>
+                      <span style={s.duration}>{msToMss(activeShot.durationMs)}</span>
+                    </li>
+                  </ul>
+                )
+              })()
+            : null}
+        </DragOverlay>
       </DndContext>
     </div>
   )

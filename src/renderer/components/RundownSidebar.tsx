@@ -7,7 +7,10 @@ import {
   useSensors,
   DragEndEvent,
   DragOverEvent,
+  DragStartEvent,
+  DragCancelEvent,
   useDroppable,
+  DragOverlay,
 } from '@dnd-kit/core'
 import {
   SortableContext,
@@ -166,6 +169,14 @@ const s = {
   } satisfies React.CSSProperties,
 }
 
+const DROP_LINE_STYLE: React.CSSProperties = {
+  height: '2px',
+  background: '#5a9fd4',
+  borderRadius: '1px',
+  margin: '0 8px',
+  pointerEvents: 'none',
+}
+
 interface ContextMenuState {
   rundownId: string
   x: number
@@ -180,6 +191,8 @@ interface SortableRundownItemProps {
   editingName: string
   editInputRef: React.RefObject<HTMLInputElement | null>
   running: boolean
+  isDraggingThis: boolean
+  isDropTarget: boolean
   onSelect: (id: string) => void
   onStartEdit: (id: string, name: string) => void
   onEditChange: (val: string) => void
@@ -189,7 +202,7 @@ interface SortableRundownItemProps {
   onContextMenu: (rundownId: string, e: React.MouseEvent) => void
 }
 
-function SortableRundownItem({
+function RundownItemContent({
   rundown,
   isActive,
   indented,
@@ -197,6 +210,9 @@ function SortableRundownItem({
   editingName,
   editInputRef,
   running,
+  hovered,
+  setHovered,
+  dragHandleProps,
   onSelect,
   onStartEdit,
   onEditChange,
@@ -204,24 +220,33 @@ function SortableRundownItem({
   onCommitEdit,
   onDelete,
   onContextMenu,
-}: SortableRundownItemProps): React.JSX.Element {
-  const [hovered, setHovered] = useState(false)
-
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: rundown.id,
-  })
-
-  const style: React.CSSProperties = {
-    ...s.item(isActive, indented),
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-  }
-
+  style,
+  nodeRef,
+}: {
+  rundown: Rundown
+  isActive: boolean
+  indented: boolean
+  editingId: string | null
+  editingName: string
+  editInputRef: React.RefObject<HTMLInputElement | null>
+  running: boolean
+  hovered: boolean
+  setHovered: (v: boolean) => void
+  dragHandleProps: object
+  onSelect: (id: string) => void
+  onStartEdit: (id: string, name: string) => void
+  onEditChange: (val: string) => void
+  onEditKeyDown: (e: React.KeyboardEvent) => void
+  onCommitEdit: () => void
+  onDelete: (id: string, e: React.MouseEvent) => void
+  onContextMenu: (rundownId: string, e: React.MouseEvent) => void
+  style?: React.CSSProperties
+  nodeRef?: (node: HTMLElement | null) => void
+}): React.JSX.Element {
   return (
     <li
-      ref={setNodeRef}
-      style={style}
+      ref={nodeRef}
+      style={{ ...s.item(isActive, indented), ...style }}
       onClick={() => onSelect(rundown.id)}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -229,8 +254,7 @@ function SortableRundownItem({
     >
       <span
         style={s.dragHandle}
-        {...attributes}
-        {...listeners}
+        {...dragHandleProps}
         onClick={(e) => e.stopPropagation()}
         title="Drag to reorder or drop on folder"
       >
@@ -284,6 +308,66 @@ function SortableRundownItem({
         </>
       )}
     </li>
+  )
+}
+
+function SortableRundownItem({
+  rundown,
+  isActive,
+  indented,
+  editingId,
+  editingName,
+  editInputRef,
+  running,
+  isDraggingThis,
+  isDropTarget,
+  onSelect,
+  onStartEdit,
+  onEditChange,
+  onEditKeyDown,
+  onCommitEdit,
+  onDelete,
+  onContextMenu,
+}: SortableRundownItemProps): React.JSX.Element {
+  const [hovered, setHovered] = useState(false)
+
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
+    id: rundown.id,
+  })
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    // invisible placeholder while dragging — keeps layout frozen
+    opacity: isDraggingThis ? 0 : 1,
+    pointerEvents: isDraggingThis ? 'none' : undefined,
+  }
+
+  return (
+    <>
+      {isDropTarget && <li style={DROP_LINE_STYLE} aria-hidden="true" />}
+      <RundownItemContent
+        rundown={rundown}
+        isActive={isActive}
+        indented={indented}
+        editingId={editingId}
+        editingName={editingName}
+        editInputRef={editInputRef}
+        running={running}
+        hovered={hovered}
+        setHovered={setHovered}
+        dragHandleProps={{ ...attributes, ...listeners }}
+        onSelect={onSelect}
+        onStartEdit={onStartEdit}
+        onEditChange={onEditChange}
+        onEditKeyDown={onEditKeyDown}
+        onCommitEdit={onCommitEdit}
+        onDelete={onDelete}
+        onContextMenu={onContextMenu}
+        style={style}
+        nodeRef={setNodeRef}
+      />
+    </>
   )
 }
 
@@ -401,13 +485,7 @@ function FolderHeader({
 
 function UngroupedDropZone(): React.JSX.Element {
   const { setNodeRef } = useDroppable({ id: 'folder:__none__' })
-  return (
-    <li
-      ref={setNodeRef}
-      style={{ height: '4px', listStyle: 'none' }}
-      aria-hidden="true"
-    />
-  )
+  return <li ref={setNodeRef} style={{ height: '4px', listStyle: 'none' }} aria-hidden="true" />
 }
 
 export function RundownSidebar(): React.JSX.Element {
@@ -432,8 +510,10 @@ export function RundownSidebar(): React.JSX.Element {
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null)
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
   const [localFolders, setLocalFolders] = useState<string[]>(() =>
-    Array.from(new Set(rundowns.map((r) => r.folder).filter((f): f is string => f !== null)))
+    Array.from(new Set(rundowns.map((r) => r.folder).filter((f): f is string => f !== null))),
   )
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [overId, setOverId] = useState<string | null>(null)
 
   const newInputRef = useRef<HTMLInputElement>(null)
   const newFolderInputRef = useRef<HTMLInputElement>(null)
@@ -469,8 +549,13 @@ export function RundownSidebar(): React.JSX.Element {
 
   // Compute all displayed folders
   const displayedFolders = Array.from(
-    new Set([...localFolders, ...rundowns.map((r) => r.folder).filter((f): f is string => f !== null)])
+    new Set([
+      ...localFolders,
+      ...rundowns.map((r) => r.folder).filter((f): f is string => f !== null),
+    ]),
   )
+
+  const activeRundown = activeId ? rundowns.find((r) => r.id === activeId) : null
 
   async function handleSelect(id: string): Promise<void> {
     setActiveRundown(id)
@@ -579,14 +664,11 @@ export function RundownSidebar(): React.JSX.Element {
   }
 
   async function handleRenameFolder(oldName: string, newName: string): Promise<void> {
-    // Update all rundowns in this folder
     const inFolder = rundowns.filter((r) => r.folder === oldName)
     for (const rd of inFolder) {
       await handleSetFolder(rd.id, newName)
     }
-    // Update localFolders
     setLocalFolders((prev) => prev.map((f) => (f === oldName ? newName : f)))
-    // Update collapsed state
     setCollapsedFolders((prev) => {
       const next = new Set(prev)
       if (next.has(oldName)) {
@@ -598,7 +680,6 @@ export function RundownSidebar(): React.JSX.Element {
   }
 
   async function handleDeleteFolder(folderName: string): Promise<void> {
-    // Move all rundowns in folder to ungrouped
     const inFolder = rundowns.filter((r) => r.folder === folderName)
     for (const rd of inFolder) {
       await handleSetFolder(rd.id, null)
@@ -618,17 +699,26 @@ export function RundownSidebar(): React.JSX.Element {
     })
   }
 
+  function handleDragStart(event: DragStartEvent): void {
+    setActiveId(event.active.id as string)
+    setOverId(null)
+  }
+
   function handleDragOver(event: DragOverEvent): void {
     const { over } = event
     if (over && typeof over.id === 'string' && over.id.startsWith('folder:')) {
       setDragOverFolder(over.id.slice('folder:'.length))
+      setOverId(null)
     } else {
       setDragOverFolder(null)
+      setOverId(over ? (over.id as string) : null)
     }
   }
 
   function handleDragEnd(event: DragEndEvent): void {
     const { active, over } = event
+    setActiveId(null)
+    setOverId(null)
     setDragOverFolder(null)
 
     if (!over) return
@@ -648,7 +738,6 @@ export function RundownSidebar(): React.JSX.Element {
 
     const reordered = arrayMove(rundowns, oldIndex, newIndex)
 
-    // Inherit target's folder
     const targetRundown = rundowns[newIndex]
     const draggedRundown = rundowns[oldIndex]
     const targetFolder = targetRundown.folder
@@ -663,8 +752,28 @@ export function RundownSidebar(): React.JSX.Element {
     }
   }
 
+  function handleDragCancel(_event: DragCancelEvent): void {
+    setActiveId(null)
+    setOverId(null)
+    setDragOverFolder(null)
+  }
+
   const ungrouped = rundowns.filter((r) => r.folder === null)
   const contextRundown = contextMenu ? rundowns.find((r) => r.id === contextMenu.rundownId) : null
+
+  const sharedItemProps = {
+    editingId,
+    editingName,
+    editInputRef,
+    running,
+    onSelect: (id: string) => void handleSelect(id),
+    onStartEdit: startEdit,
+    onEditChange: setEditingName,
+    onEditKeyDown: handleEditKeyDown,
+    onCommitEdit: () => void commitEdit(),
+    onDelete: (id: string, e: React.MouseEvent) => void handleDelete(id, e),
+    onContextMenu: handleContextMenu,
+  }
 
   return (
     <aside style={s.sidebar} data-testid="rundown-sidebar">
@@ -673,36 +782,27 @@ export function RundownSidebar(): React.JSX.Element {
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
+        onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
+        onDragCancel={handleDragCancel}
       >
         <SortableContext items={rundowns.map((r) => r.id)} strategy={verticalListSortingStrategy}>
           <ul style={s.list}>
-            {/* Invisible drop zone for ungrouped */}
             <UngroupedDropZone />
 
-            {/* Ungrouped rundowns */}
             {ungrouped.map((rd) => (
               <SortableRundownItem
                 key={rd.id}
                 rundown={rd}
                 isActive={rd.id === activeRundownId}
                 indented={false}
-                editingId={editingId}
-                editingName={editingName}
-                editInputRef={editInputRef}
-                running={running}
-                onSelect={(id) => void handleSelect(id)}
-                onStartEdit={startEdit}
-                onEditChange={setEditingName}
-                onEditKeyDown={handleEditKeyDown}
-                onCommitEdit={() => void commitEdit()}
-                onDelete={(id, e) => void handleDelete(id, e)}
-                onContextMenu={handleContextMenu}
+                isDraggingThis={rd.id === activeId}
+                isDropTarget={rd.id === overId && rd.id !== activeId}
+                {...sharedItemProps}
               />
             ))}
 
-            {/* Folder groups */}
             {displayedFolders.map((folder) => {
               const folderRundowns = rundowns.filter((r) => r.folder === folder)
               const collapsed = collapsedFolders.has(folder)
@@ -725,17 +825,9 @@ export function RundownSidebar(): React.JSX.Element {
                         rundown={rd}
                         isActive={rd.id === activeRundownId}
                         indented={true}
-                        editingId={editingId}
-                        editingName={editingName}
-                        editInputRef={editInputRef}
-                        running={running}
-                        onSelect={(id) => void handleSelect(id)}
-                        onStartEdit={startEdit}
-                        onEditChange={setEditingName}
-                        onEditKeyDown={handleEditKeyDown}
-                        onCommitEdit={() => void commitEdit()}
-                        onDelete={(id, e) => void handleDelete(id, e)}
-                        onContextMenu={handleContextMenu}
+                        isDraggingThis={rd.id === activeId}
+                        isDropTarget={rd.id === overId && rd.id !== activeId}
+                        {...sharedItemProps}
                       />
                     ))}
                 </React.Fragment>
@@ -758,13 +850,40 @@ export function RundownSidebar(): React.JSX.Element {
             )}
           </ul>
         </SortableContext>
+
+        <DragOverlay>
+          {activeRundown ? (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, opacity: 0.9 }}>
+              <RundownItemContent
+                rundown={activeRundown}
+                isActive={activeRundown.id === activeRundownId}
+                indented={activeRundown.folder !== null}
+                editingId={null}
+                editingName=""
+                editInputRef={{ current: null }}
+                running={running}
+                hovered={false}
+                setHovered={() => {}}
+                dragHandleProps={{}}
+                onSelect={() => {}}
+                onStartEdit={() => {}}
+                onEditChange={() => {}}
+                onEditKeyDown={() => {}}
+                onCommitEdit={() => {}}
+                onDelete={() => {}}
+                onContextMenu={() => {}}
+                style={{
+                  background: '#2a3040',
+                  borderRadius: '4px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                }}
+              />
+            </ul>
+          ) : null}
+        </DragOverlay>
       </DndContext>
 
-      <button
-        style={s.addBtn}
-        onClick={() => setShowNewInput(true)}
-        aria-label="Add new rundown"
-      >
+      <button style={s.addBtn} onClick={() => setShowNewInput(true)} aria-label="Add new rundown">
         + New Rundown
       </button>
 
@@ -791,7 +910,6 @@ export function RundownSidebar(): React.JSX.Element {
         </button>
       )}
 
-      {/* Context menu */}
       {contextMenu && contextRundown && (
         <div
           style={{ ...s.contextMenu, left: contextMenu.x, top: contextMenu.y }}
