@@ -6,6 +6,7 @@ import { RundownSidebar } from './components/RundownSidebar'
 import { ShotListPanel } from './components/ShotListPanel'
 import { LiveControls } from './components/LiveControls'
 import { ShotlistWidget } from '../shared/components/ShotlistWidget'
+import { isInTransition } from '../shared/timing'
 import { ResolveImportDialog } from './components/ResolveImportDialog'
 import { OBSSettingsPanel } from './components/OBSSettingsPanel'
 import { OSCSettingsPanel } from './components/OSCSettingsPanel'
@@ -191,18 +192,25 @@ export default function App(): React.JSX.Element {
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return
       if (e.code === 'Space') {
         e.preventDefault()
-        if (running) liveNext().catch((err: unknown) => console.error('[App] liveNext:', err))
-        else if (uiMode === 'live' && shots.length > 0 && activeRundownId) liveStart(activeRundownId).catch((err: unknown) => console.error('[App] liveStart:', err))
+        if (running) {
+          if (!isInTransition(running, liveIndex, startedAt, shots, Date.now())) {
+            liveNext().catch((err: unknown) => console.error('[App] liveNext:', err))
+          }
+        } else if (uiMode === 'live' && shots.length > 0 && activeRundownId) {
+          liveStart(activeRundownId).catch((err: unknown) => console.error('[App] liveStart:', err))
+        }
         // If uiMode === 'edit', do nothing — TimelineEditor handles Space
       }
       if (e.code === 'ArrowRight' && running) {
         e.preventDefault()
-        liveSkipNext().catch((err: unknown) => console.error('[App] liveSkipNext:', err))
+        if (!isInTransition(running, liveIndex, startedAt, shots, Date.now())) {
+          liveSkipNext().catch((err: unknown) => console.error('[App] liveSkipNext:', err))
+        }
       }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [running, shots, activeRundownId, liveNext, liveStart, liveSkipNext, uiMode])
+  }, [running, shots, activeRundownId, liveNext, liveStart, liveSkipNext, uiMode, liveIndex, startedAt])
 
   // When the active project changes, load its cameras + rundowns
   useEffect(() => {

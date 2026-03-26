@@ -1,5 +1,6 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useAppStore } from '../store'
+import { isInTransition } from '../../shared/timing'
 
 const s = {
   bar: (uiMode: 'edit' | 'live'): React.CSSProperties => ({
@@ -44,6 +45,7 @@ const s = {
 export function LiveControls(): React.JSX.Element {
   const running = useAppStore((s) => s.running)
   const shots = useAppStore((s) => s.shots)
+  const startedAt = useAppStore((s) => s.startedAt)
   const activeRundownId = useAppStore((s) => s.activeRundownId)
   const liveStart = useAppStore((s) => s.liveStart)
   const liveStop = useAppStore((s) => s.liveStop)
@@ -53,6 +55,24 @@ export function LiveControls(): React.JSX.Element {
   const liveIndex = useAppStore((s) => s.liveIndex)
   const uiMode = useAppStore((s) => s.uiMode)
   const setUiMode = useAppStore((s) => s.setUiMode)
+
+  const [inTransition, setInTransition] = useState(false)
+  const transitionRafRef = useRef<number | null>(null)
+
+  // 60fps RAF loop to track transition state
+  useEffect(() => {
+    function tick(): void {
+      setInTransition(isInTransition(running, liveIndex, startedAt, shots, Date.now()))
+      transitionRafRef.current = requestAnimationFrame(tick)
+    }
+    transitionRafRef.current = requestAnimationFrame(tick)
+    return () => {
+      if (transitionRafRef.current !== null) {
+        cancelAnimationFrame(transitionRafRef.current)
+        transitionRafRef.current = null
+      }
+    }
+  }, [running, liveIndex, startedAt, shots])
 
   useEffect(() => {
     const style = document.createElement('style')
@@ -87,18 +107,20 @@ export function LiveControls(): React.JSX.Element {
         >
           {uiMode === 'edit' ? 'EDIT MODE' : 'LIVE MODE'}
         </button>
-        <button
-          style={s.btn('primary')}
-          disabled={!canStart()}
-          onClick={() => {
-            if (activeRundownId) {
-              liveStart(activeRundownId).catch((err) => handleError('start', err))
-            }
-          }}
-          aria-label="Start rundown"
-        >
-          ▶ Start
-        </button>
+        {uiMode === 'live' && (
+          <button
+            style={s.btn('primary')}
+            disabled={!canStart()}
+            onClick={() => {
+              if (activeRundownId) {
+                liveStart(activeRundownId).catch((err) => handleError('start', err))
+              }
+            }}
+            aria-label="Start rundown"
+          >
+            ▶ Start
+          </button>
+        )}
       </div>
     )
   }
@@ -130,7 +152,7 @@ export function LiveControls(): React.JSX.Element {
 
       <button
         style={s.btn('secondary')}
-        disabled={!canSkipNext()}
+        disabled={!canSkipNext() || inTransition}
         onClick={() => liveSkipNext().catch((err) => handleError('skip-next', err))}
         aria-label="Skip next shot"
       >
@@ -139,6 +161,7 @@ export function LiveControls(): React.JSX.Element {
 
       <button
         style={s.btn('primary')}
+        disabled={inTransition}
         onClick={() => liveNext().catch((err) => handleError('next', err))}
         aria-label="Next shot"
       >

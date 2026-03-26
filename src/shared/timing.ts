@@ -119,3 +119,19 @@ export function computeTiming(
 
   return { liveIndex, nextVisibleIndex, remainingMs, timeUntilNextVisibleMs, totalTimeUntilNextVisibleMs, effectiveDurationMs }
 }
+
+/**
+ * Returns true if the live shot is currently within its in-transition window.
+ */
+export function isInTransition(
+  running: boolean,
+  liveIndex: number | null,
+  startedAt: number | null,
+  shots: Shot[],
+  now: number,
+): boolean {
+  if (!running || liveIndex === null || startedAt === null) return false
+  const shot = shots[liveIndex]
+  if (!shot || shot.transitionMs <= 0) return false
+  return (now - startedAt) < shot.transitionMs
+}
