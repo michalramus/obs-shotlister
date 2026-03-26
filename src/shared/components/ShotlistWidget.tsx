@@ -313,7 +313,16 @@ export function ShotlistWidget({
       <div
         style={{
           ...s.header,
-          background: headerFlash ? '#666' : '#222',
+          background: (() => {
+            const headerBg = headerFlash
+              ? '#666'
+              : !running || !hasFilter
+                ? '#222'
+                : isWaiting
+                  ? '#1a4a1a'   // dark green = waiting for our camera
+                  : '#4a1a1a'   // dark red = our camera is live
+            return headerBg
+          })(),
           transition: 'background 0.35s ease-out',
         }}
       >
