@@ -25,8 +25,8 @@ export function stopOscServer(): void {
   if (oscServer) {
     try {
       oscServer.close()
-    } catch {
-      // ignore close errors
+    } catch (err) {
+      console.error('[osc] close error:', err)
     }
     oscServer = null
   }

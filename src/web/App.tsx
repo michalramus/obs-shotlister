@@ -108,7 +108,7 @@ export default function App(): React.JSX.Element {
 
   function handleCameraChange(num: number | null): void {
     setSelectedCamera(num)
-    try { localStorage.setItem('obs-queuer-camera-filter', num !== null ? String(num) : '') } catch {}
+    try { localStorage.setItem('obs-queuer-camera-filter', num !== null ? String(num) : '') } catch (err) { console.error('[App] localStorage setItem:', err) }
   }
 
   function adjustZoom(delta: number): void {

@@ -244,7 +244,7 @@ function ShotForm({ cameras, initial, onConfirm, onCancel }: ShotFormProps): Rea
   useEffect(() => {
     window.api.obs.listTransitionMappings()
       .then((mappings) => setLogicalTransitions(mappings.map((m) => m.logicalName)))
-      .catch(() => {/* ignore */})
+      .catch((err: unknown) => console.error('[ShotListPanel] listTransitionMappings:', err))
   }, [])
 
   function handleConfirm(): void {

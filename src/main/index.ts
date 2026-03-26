@@ -366,11 +366,11 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('obs:getTransitions', async () => {
-    try { return await obsClient.getTransitionList() } catch { return [] }
+    try { return await obsClient.getTransitionList() } catch (err) { console.error('[OBS] getTransitionList:', err); return [] }
   })
 
   ipcMain.handle('obs:getScenes', async () => {
-    try { return await obsClient.getSceneList() } catch { return [] }
+    try { return await obsClient.getSceneList() } catch (err) { console.error('[OBS] getSceneList:', err); return [] }
   })
 
   ipcMain.handle('obs:checkScenes', async () => {
