@@ -28,6 +28,7 @@ interface TimelineEditorProps {
   onChangeShotCamera: (shotId: string, cameraId: string) => void
   mediaVideoRef: React.RefObject<HTMLVideoElement | null>
   selectedShotId: string | null
+  onLabelEdit: (shotId: string) => void
 }
 
 const TRACK_HEIGHT = 50
@@ -91,6 +92,7 @@ export function TimelineEditor({
   onChangeShotCamera,
   mediaVideoRef,
   selectedShotId,
+  onLabelEdit,
 }: TimelineEditorProps): React.JSX.Element {
   const [zoomPxPerSec, setZoomPxPerSec] = useState<number>(() => {
     const saved = localStorage.getItem('obs-queuer-timeline-zoom')
@@ -131,6 +133,8 @@ export function TimelineEditor({
   const extendDragRef = useRef<{ startX: number; origDur: number } | null>(null)
   const playheadMsRef = useRef(playheadMs)
   const onAddMarkerRef = useRef(onAddMarker)
+  const onLabelEditRef = useRef(onLabelEdit)
+  const selectedShotIdRef = useRef(selectedShotId)
   const isFirstLiveRef = useRef(true)
   const isFirstSelectedRef = useRef(true)
   const prevAutoShotIdRef = useRef<string | null>(null)
@@ -157,6 +161,14 @@ export function TimelineEditor({
   useEffect(() => {
     onAddMarkerRef.current = onAddMarker
   }, [onAddMarker])
+
+  // Keep onLabelEditRef and selectedShotIdRef in sync
+  useEffect(() => {
+    onLabelEditRef.current = onLabelEdit
+  }, [onLabelEdit])
+  useEffect(() => {
+    selectedShotIdRef.current = selectedShotId
+  }, [selectedShotId])
 
   // Keep isPlayingRef and runningRef in sync
   useEffect(() => {
@@ -571,9 +583,20 @@ export function TimelineEditor({
       }
       const num = parseInt(e.key, 10)
       if (num >= 1 && num <= 9 && !running) {
-        const sortedCamsLocal = [...cameras].sort((a, b) => a.number - b.number)
-        const cam = sortedCamsLocal[num - 1]
+        const cam = cameras.find((c) => c.number === num)
         if (cam) handleCamButtonClick(cam)
+      }
+      if ((e.key === 'l' || e.key === 'L') && !running) {
+        e.preventDefault()
+        const shotId = selectedShotIdRef.current
+        if (shotId) {
+          // Stop playback so the label input can retain focus
+          setIsPlaying((prev) => {
+            if (prev) getMediaEl()?.pause()
+            return false
+          })
+          onLabelEditRef.current?.(shotId)
+        }
       }
     }
     window.addEventListener('keydown', onKey)

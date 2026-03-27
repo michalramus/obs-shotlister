@@ -271,27 +271,6 @@ export default function App(): React.JSX.Element {
           liveSkipNext().catch((err: unknown) => console.error('[App] liveSkipNext:', err))
         }
       }
-
-      // Edit mode shortcuts
-      if (uiMode === 'edit' && !running && selectedShotId) {
-        // 1–9: assign camera by number
-        const digit = e.key.match(/^([1-9])$/)
-        if (digit) {
-          e.preventDefault()
-          const camNum = parseInt(digit[1], 10)
-          const cam = cameras.find((c) => c.number === camNum)
-          if (cam) {
-            editShot({ id: selectedShotId, cameraId: cam.id }).catch((err: unknown) =>
-              console.error('[App] editShot camera:', err),
-            )
-          }
-        }
-        // L: open label editor
-        if (e.key === 'l' || e.key === 'L') {
-          e.preventDefault()
-          setLabelEditingId(selectedShotId)
-        }
-      }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
@@ -305,9 +284,6 @@ export default function App(): React.JSX.Element {
     uiMode,
     liveIndex,
     startedAt,
-    selectedShotId,
-    cameras,
-    editShot,
   ])
 
   // When the active project changes, load its cameras + rundowns
@@ -707,6 +683,7 @@ export default function App(): React.JSX.Element {
                           console.error('[App] clearMedia:', err),
                         )
                     }}
+                    onLabelEdit={(id) => setLabelEditingId(id)}
                     selectedShotId={selectedShotId}
                   />
                 </div>
@@ -806,6 +783,7 @@ export default function App(): React.JSX.Element {
                           console.error('[App] clearMedia:', err),
                         )
                     }}
+                    onLabelEdit={(id) => setLabelEditingId(id)}
                     selectedShotId={selectedShotId}
                   />
                 </div>
@@ -914,6 +892,7 @@ export default function App(): React.JSX.Element {
                 onImportMedia={() => {}}
                 onUpdateMediaOffset={() => {}}
                 onClearMedia={() => {}}
+                onLabelEdit={() => {}}
                 selectedShotId={selectedShotId}
               />
             </div>
