@@ -707,6 +707,7 @@ export default function App(): React.JSX.Element {
                           console.error('[App] clearMedia:', err),
                         )
                     }}
+                    selectedShotId={selectedShotId}
                   />
                 </div>
 
@@ -805,6 +806,7 @@ export default function App(): React.JSX.Element {
                           console.error('[App] clearMedia:', err),
                         )
                     }}
+                    selectedShotId={selectedShotId}
                   />
                 </div>
 
@@ -912,6 +914,7 @@ export default function App(): React.JSX.Element {
                 onImportMedia={() => {}}
                 onUpdateMediaOffset={() => {}}
                 onClearMedia={() => {}}
+                selectedShotId={selectedShotId}
               />
             </div>
           </>

@@ -166,7 +166,7 @@ const s = {
     color: '#fff',
     fontSize: '12px',
     padding: '4px 6px',
-    width: '80px',
+    width: '90px',
   } satisfies React.CSSProperties,
 
   labelInput: {
@@ -214,18 +214,21 @@ const DROP_LINE_STYLE: React.CSSProperties = {
 }
 
 function msToMss(ms: number): string {
-  const totalSec = Math.floor(ms / 1000)
+  const totalSec = Math.max(0, ms) / 1000
   const m = Math.floor(totalSec / 60)
-  const sec = totalSec % 60
-  return `${m}:${sec.toString().padStart(2, '0')}`
+  const secFull = totalSec % 60
+  const secFloor = Math.floor(secFull)
+  const tenths = Math.floor((secFull - secFloor) * 10)
+  return `${m}:${secFloor.toString().padStart(2, '0')}.${tenths}`
 }
 
 function mssToMs(mss: string): number | null {
-  const match = mss.match(/^(\d+):([0-5]?\d)$/)
+  const match = mss.match(/^(\d+):([0-5]?\d)(?:\.(\d))?$/)
   if (!match) return null
   const m = parseInt(match[1], 10)
-  const s = parseInt(match[2], 10)
-  return (m * 60 + s) * 1000
+  const sec = parseInt(match[2], 10)
+  const tenths = match[3] !== undefined ? parseInt(match[3], 10) : 0
+  return (m * 60 + sec) * 1000 + tenths * 100
 }
 
 function parseTransitionSecs(s: string): number {
@@ -307,7 +310,7 @@ function ShotForm({ cameras, initial, onConfirm, onCancel }: ShotFormProps): Rea
         style={s.input}
         value={duration}
         onChange={(e) => setDuration(e.target.value)}
-        placeholder="m:ss"
+        placeholder="m:ss.d"
         aria-label="Duration"
       />
 

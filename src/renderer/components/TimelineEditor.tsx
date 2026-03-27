@@ -10,7 +10,12 @@ interface TimelineEditorProps {
   markers: Marker[]
   onShotClick: (shotId: string) => void
   onSplitShot: (shotId: string, atMs: number, newCameraId: string) => void
-  onResizeShots: (shotAId: string, newDurationA: number, shotBId: string, newDurationB: number) => void
+  onResizeShots: (
+    shotAId: string,
+    newDurationA: number,
+    shotBId: string,
+    newDurationB: number,
+  ) => void
   onExtendLastShot: (shotId: string, newDurationMs: number) => void
   onAddMarker: (positionMs: number) => void
   onUpdateMarker: (id: string, positionMs: number) => void
@@ -22,6 +27,7 @@ interface TimelineEditorProps {
   onDeleteShot: (shotId: string) => void
   onChangeShotCamera: (shotId: string, cameraId: string) => void
   mediaVideoRef: React.RefObject<HTMLVideoElement | null>
+  selectedShotId: string | null
 }
 
 const TRACK_HEIGHT = 50
@@ -84,6 +90,7 @@ export function TimelineEditor({
   onDeleteShot,
   onChangeShotCamera,
   mediaVideoRef,
+  selectedShotId,
 }: TimelineEditorProps): React.JSX.Element {
   const [zoomPxPerSec, setZoomPxPerSec] = useState<number>(() => {
     const saved = localStorage.getItem('obs-queuer-timeline-zoom')
@@ -100,7 +107,9 @@ export function TimelineEditor({
   const [mediaOffsetOverride, setMediaOffsetOverride] = useState<number | null>(null)
   const [mediaHovered, setMediaHovered] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; shotId: string } | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; shotId: string } | null>(
+    null,
+  )
   const [flash, setFlash] = useState(false)
   const [currentScrollLeft, setCurrentScrollLeft] = useState(0)
   const [waveformError, setWaveformError] = useState(false)
@@ -123,6 +132,7 @@ export function TimelineEditor({
   const playheadMsRef = useRef(playheadMs)
   const onAddMarkerRef = useRef(onAddMarker)
   const isFirstLiveRef = useRef(true)
+  const isFirstSelectedRef = useRef(true)
   const audioPlayRef = useRef<HTMLAudioElement | null>(null)
   const pendingDragClearRef = useRef(false)
   const rundownMediaRef = useRef(rundownMedia)
@@ -148,9 +158,15 @@ export function TimelineEditor({
   }, [onAddMarker])
 
   // Keep isPlayingRef and runningRef in sync
-  useEffect(() => { isPlayingRef.current = isPlaying }, [isPlaying])
-  useEffect(() => { runningRef.current = running }, [running])
-  useEffect(() => { rundownMediaRef.current = rundownMedia }, [rundownMedia])
+  useEffect(() => {
+    isPlayingRef.current = isPlaying
+  }, [isPlaying])
+  useEffect(() => {
+    runningRef.current = running
+  }, [running])
+  useEffect(() => {
+    rundownMediaRef.current = rundownMedia
+  }, [rundownMedia])
 
   // Sync media currentTime to playhead while stopped
   useEffect(() => {
@@ -197,6 +213,18 @@ export function TimelineEditor({
     return () => clearTimeout(t)
   }, [liveIndex])
 
+  // Flash on selectedShotId change (edit mode clip selection)
+  useEffect(() => {
+    if (isFirstSelectedRef.current) {
+      isFirstSelectedRef.current = false
+      return
+    }
+    if (selectedShotId === null) return
+    setFlash(true)
+    const t = setTimeout(() => setFlash(false), 350)
+    return () => clearTimeout(t)
+  }, [selectedShotId])
+
   // Decode waveform when media file changes
   useEffect(() => {
     if (!rundownMedia?.filePath) {
@@ -220,7 +248,9 @@ export function TimelineEditor({
 
       // Create audio playback element immediately (before waveform decode) so play() is ready
       const VIDEO_EXTS = ['.mp4', '.mov', '.webm', '.avi', '.mkv']
-      const isVideoFile = VIDEO_EXTS.some((ext) => rundownMedia!.filePath.toLowerCase().endsWith(ext))
+      const isVideoFile = VIDEO_EXTS.some((ext) =>
+        rundownMedia!.filePath.toLowerCase().endsWith(ext),
+      )
       if (!isVideoFile) {
         audioPlayRef.current?.pause()
         const audioSrc = 'media://localhost' + rundownMedia!.filePath
@@ -232,12 +262,13 @@ export function TimelineEditor({
       try {
         const buf = await window.api.mediaReadFile(rundownMedia!.filePath)
         // Save a copy of raw bytes BEFORE decodeAudioData detaches the ArrayBuffer
-        const srcBuffer: ArrayBuffer = buf instanceof ArrayBuffer
-          ? buf
-          : (buf as Buffer).buffer.slice(
-              (buf as Buffer).byteOffset,
-              (buf as Buffer).byteOffset + (buf as Buffer).byteLength,
-            )
+        const srcBuffer: ArrayBuffer =
+          buf instanceof ArrayBuffer
+            ? buf
+            : (buf as Buffer).buffer.slice(
+                (buf as Buffer).byteOffset,
+                (buf as Buffer).byteOffset + (buf as Buffer).byteLength,
+              )
         // Give decodeAudioData its own copy (it will consume/detach it)
         const arrayBufferForDecode = srcBuffer.slice(0)
         const audioCtx = new AudioContext()
@@ -298,9 +329,19 @@ export function TimelineEditor({
     // Reset wallMs to now so elapsed starts from when play() is actually called.
     if (playStartRef.current) playStartRef.current.wallMs = performance.now()
     const vid = getMediaEl()
-    console.log('[TimelineEditor] play() on:', vid?.nodeName, vid?.src, 'readyState:', vid?.readyState, 'currentTime:', vid?.currentTime)
+    console.log(
+      '[TimelineEditor] play() on:',
+      vid?.nodeName,
+      vid?.src,
+      'readyState:',
+      vid?.readyState,
+      'currentTime:',
+      vid?.currentTime,
+    )
     if (vid) {
-      void vid.play().catch((err: unknown) => { console.error('[TimelineEditor] play() failed:', err) })
+      void vid.play().catch((err: unknown) => {
+        console.error('[TimelineEditor] play() failed:', err)
+      })
     }
     function tick(): void {
       let newMs: number
@@ -390,8 +431,14 @@ export function TimelineEditor({
     function onScroll(): void {
       const sl = el.scrollLeft
       setCurrentScrollLeft(sl)
-      if (!isAutoScrollingRef.current && !isPlayingRef.current && !runningRef.current
-          && !dragStateRef.current && !markerDragStateRef.current && !mediaDragStateRef.current) {
+      if (
+        !isAutoScrollingRef.current &&
+        !isPlayingRef.current &&
+        !runningRef.current &&
+        !dragStateRef.current &&
+        !markerDragStateRef.current &&
+        !mediaDragStateRef.current
+      ) {
         const ms = Math.max(0, (sl / zoomRef.current) * 1000)
         setPlayheadMs(ms)
         // Seek media directly — bypasses React render cycle for immediate response
@@ -409,7 +456,9 @@ export function TimelineEditor({
   useLayoutEffect(() => {
     const el = scrollContainerRef.current
     if (!el) return
-    const ro = new ResizeObserver(() => { setContainerWidth(el.clientWidth) })
+    const ro = new ResizeObserver(() => {
+      setContainerWidth(el.clientWidth)
+    })
     ro.observe(el)
     setContainerWidth(el.clientWidth)
     return () => ro.disconnect()
@@ -431,7 +480,9 @@ export function TimelineEditor({
     if (!el) return
     isAutoScrollingRef.current = true
     el.scrollLeft = (ms / 1000) * zoomRef.current
-    setTimeout(() => { isAutoScrollingRef.current = false }, 0)
+    setTimeout(() => {
+      isAutoScrollingRef.current = false
+    }, 0)
   }
 
   function getMediaEl(): HTMLVideoElement | HTMLAudioElement | null {
@@ -566,7 +617,10 @@ export function TimelineEditor({
       const ds = dragStateRef.current
       if (ds) {
         const rawDeltaMs = ((ev.clientX - ds.startX) / zoomRef.current) * 1000
-        const newDurA = Math.max(1000, Math.min(ds.origDurA + ds.origDurB - 1000, ds.origDurA + rawDeltaMs))
+        const newDurA = Math.max(
+          1000,
+          Math.min(ds.origDurA + ds.origDurB - 1000, ds.origDurA + rawDeltaMs),
+        )
         const newDurB = Math.max(1000, ds.origDurA + ds.origDurB - newDurA)
         onResizeShots(ds.shotA.id, newDurA, ds.shotB.id, newDurB)
         // Keep dragOverride at final values until shots prop updates from IPC
@@ -637,7 +691,12 @@ export function TimelineEditor({
     if (trimmed !== marker.label) {
       onUpdateMarker(marker.id, markerDragOverride[marker.id] ?? marker.positionMs)
       window.api.markers
-        .upsert({ id: marker.id, rundownId: marker.rundownId, positionMs: marker.positionMs, label: trimmed })
+        .upsert({
+          id: marker.id,
+          rundownId: marker.rundownId,
+          positionMs: marker.positionMs,
+          label: trimmed,
+        })
         .catch((err: unknown) => console.error('[TimelineEditor] label save:', err))
     }
     setEditingMarkerId(null)
@@ -896,544 +955,566 @@ export function TimelineEditor({
 
         {/* Explicit width = totalPx + containerWidth so max scrollLeft = totalPx (playhead reaches end) */}
         <div style={{ paddingLeft: PLAYHEAD_FIXED_PX, width: totalPx + containerWidth }}>
-
-        {/* Row 2: Time ruler */}
-        <div
-          style={{
-            height: RULER_HEIGHT,
-            width: totalPx,
-            background: '#1a1a1a',
-            position: 'relative',
-            flexShrink: 0,
-          }}
-        >
-          {ticks.map((tick) => (
-            <div
-              key={tick.px}
-              style={{
-                position: 'absolute',
-                left: tick.px,
-                top: 0,
-                height: '100%',
-                width: '1px',
-                background: '#444',
-              }}
-            >
-              {tick.label !== undefined && (
-                <span
-                  style={{
-                    position: 'absolute',
-                    top: '2px',
-                    left: '2px',
-                    fontSize: '9px',
-                    color: '#888',
-                    whiteSpace: 'nowrap',
-                    pointerEvents: 'none',
-                  }}
-                >
-                  {tick.label}
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* Row 3: Camera track */}
-        <div
-          style={{
-            height: TRACK_HEIGHT,
-            width: totalPx,
-            background: '#0d0d0d',
-            position: 'relative',
-            cursor: 'crosshair',
-          }}
-          onClick={handleTrackClick}
-        >
-          {shots.length === 0 ? (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                height: '100%',
-                color: '#555',
-                fontSize: '12px',
-                pointerEvents: 'none',
-              }}
-            >
-              No shots — create a rundown
-            </div>
-          ) : (
-            shots.map((shot, i) => {
-              const cam = cameraMap.get(shot.cameraId)
-              const bgColor = cam?.color ?? '#555'
-              const leftPx = shotOffsets[i]
-              const effectiveDuration = dragOverride[shot.id] ?? shot.durationMs
-              const widthPx = (effectiveDuration / 1000) * zoomPxPerSec
-              const isLive = liveIndex !== null && shots[liveIndex]?.id === shot.id
-
-              // Transition triangle
-              const hasTransition = shot.transitionName !== null && shot.transitionMs > 0
-              const triWidthPx = hasTransition ? (shot.transitionMs / 1000) * zoomPxPerSec : 0
-
-              // Boundary handle (rendered after each shot except the last)
-              const nextShot = shots[i + 1]
-              const boundaryLeftPx = leftPx + widthPx
-
-              return (
-                <React.Fragment key={shot.id}>
-                  {/* Shot block */}
-                  <div
+          {/* Row 2: Time ruler */}
+          <div
+            style={{
+              height: RULER_HEIGHT,
+              width: totalPx,
+              background: '#1a1a1a',
+              position: 'relative',
+              flexShrink: 0,
+            }}
+          >
+            {ticks.map((tick) => (
+              <div
+                key={tick.px}
+                style={{
+                  position: 'absolute',
+                  left: tick.px,
+                  top: 0,
+                  height: '100%',
+                  width: '1px',
+                  background: '#444',
+                }}
+              >
+                {tick.label !== undefined && (
+                  <span
                     style={{
                       position: 'absolute',
-                      left: leftPx,
-                      top: 0,
-                      width: widthPx,
-                      height: TRACK_HEIGHT,
-                      background: bgColor,
-                      boxShadow: isLive ? 'inset 0 0 0 2px white' : undefined,
-                      overflow: 'hidden',
-                      cursor: 'pointer',
-                      userSelect: 'none',
-                      border: '1px solid rgba(0,0,0,0.5)',
-                      boxSizing: 'border-box' as const,
+                      top: '2px',
+                      left: '2px',
+                      fontSize: '9px',
+                      color: '#888',
+                      whiteSpace: 'nowrap',
+                      pointerEvents: 'none',
                     }}
-                    onClick={(e) => handleBlockClick(e, shot.id)}
-                    onContextMenu={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setContextMenu({ x: e.clientX, y: e.clientY, shotId: shot.id })
-                    }}
-                    title={cam ? `${cam.name} (${shot.durationMs}ms)` : shot.id}
                   >
-                    {widthPx > 20 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', height: '100%', justifyContent: 'center', gap: 1, paddingLeft: '4px' }}>
-                        <strong style={{ fontSize: '11px', lineHeight: 1.2, color: 'white' }}>CAM{cam ? cam.number : '?'}</strong>
-                        {shot.label && widthPx > 60 && (
-                          <span style={{ fontSize: '9px', opacity: 0.7, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.2, color: 'white' }}>
-                            {shot.label}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                    {tick.label}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
 
-                  {/* Transition triangle overlay */}
-                  {hasTransition && triWidthPx > 0 && (
-                    <svg
+          {/* Row 3: Camera track */}
+          <div
+            style={{
+              height: TRACK_HEIGHT,
+              width: totalPx,
+              background: '#0d0d0d',
+              position: 'relative',
+              cursor: 'crosshair',
+            }}
+            onClick={handleTrackClick}
+          >
+            {shots.length === 0 ? (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  height: '100%',
+                  color: '#555',
+                  fontSize: '12px',
+                  pointerEvents: 'none',
+                }}
+              >
+                No shots — create a rundown
+              </div>
+            ) : (
+              shots.map((shot, i) => {
+                const cam = cameraMap.get(shot.cameraId)
+                const bgColor = cam?.color ?? '#555'
+                const leftPx = shotOffsets[i]
+                const effectiveDuration = dragOverride[shot.id] ?? shot.durationMs
+                const widthPx = (effectiveDuration / 1000) * zoomPxPerSec
+                const isLive = liveIndex !== null && shots[liveIndex]?.id === shot.id
+
+                // Transition triangle
+                const hasTransition = shot.transitionName !== null && shot.transitionMs > 0
+                const triWidthPx = hasTransition ? (shot.transitionMs / 1000) * zoomPxPerSec : 0
+
+                // Boundary handle (rendered after each shot except the last)
+                const nextShot = shots[i + 1]
+                const boundaryLeftPx = leftPx + widthPx
+
+                return (
+                  <React.Fragment key={shot.id}>
+                    {/* Shot block */}
+                    <div
                       style={{
                         position: 'absolute',
                         left: leftPx,
                         top: 0,
-                        width: triWidthPx,
+                        width: widthPx,
                         height: TRACK_HEIGHT,
-                        pointerEvents: 'none',
-                        zIndex: 5,
+                        background: bgColor,
+                        boxShadow: isLive ? 'inset 0 0 0 2px white' : undefined,
+                        overflow: 'hidden',
+                        cursor: 'pointer',
+                        userSelect: 'none',
+                        border: '1px solid rgba(0,0,0,0.5)',
+                        boxSizing: 'border-box' as const,
                       }}
+                      onClick={(e) => handleBlockClick(e, shot.id)}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        setContextMenu({ x: e.clientX, y: e.clientY, shotId: shot.id })
+                      }}
+                      title={cam ? `${cam.name} (${shot.durationMs}ms)` : shot.id}
                     >
-                      <polygon
-                        points={`0,0 ${triWidthPx},0 0,${TRACK_HEIGHT}`}
-                        fill="rgba(255,255,255,0.4)"
+                      {widthPx > 20 && (
+                        <div
+                          style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            overflow: 'hidden',
+                            height: '100%',
+                            justifyContent: 'center',
+                            gap: 1,
+                            paddingLeft: '4px',
+                          }}
+                        >
+                          <strong style={{ fontSize: '11px', lineHeight: 1.2, color: 'white' }}>
+                            CAM{cam ? cam.number : '?'}
+                          </strong>
+                          {shot.label && widthPx > 60 && (
+                            <span
+                              style={{
+                                fontSize: '9px',
+                                opacity: 0.7,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                lineHeight: 1.2,
+                                color: 'white',
+                              }}
+                            >
+                              {shot.label}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Transition triangle overlay */}
+                    {hasTransition && triWidthPx > 0 && (
+                      <svg
+                        style={{
+                          position: 'absolute',
+                          left: leftPx,
+                          top: 0,
+                          width: triWidthPx,
+                          height: TRACK_HEIGHT,
+                          pointerEvents: 'none',
+                          zIndex: 5,
+                        }}
+                      >
+                        <polygon
+                          points={`0,0 ${triWidthPx},0 0,${TRACK_HEIGHT}`}
+                          fill="rgba(255,255,255,0.4)"
+                        />
+                      </svg>
+                    )}
+
+                    {/* Boundary drag handle between this shot and the next */}
+                    {nextShot !== undefined && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: boundaryLeftPx - 4,
+                          top: 0,
+                          width: 8,
+                          height: TRACK_HEIGHT,
+                          cursor: 'ew-resize',
+                          background: 'transparent',
+                          zIndex: 10,
+                        }}
+                        onMouseDown={(e) => handleBoundaryMouseDown(e, shot, nextShot)}
+                        onMouseEnter={(e) => {
+                          const el = e.currentTarget as HTMLDivElement
+                          el.style.background = 'rgba(255,255,255,0.2)'
+                        }}
+                        onMouseLeave={(e) => {
+                          const el = e.currentTarget as HTMLDivElement
+                          el.style.background = 'transparent'
+                        }}
                       />
-                    </svg>
-                  )}
+                    )}
+                  </React.Fragment>
+                )
+              })
+            )}
 
-                  {/* Boundary drag handle between this shot and the next */}
-                  {nextShot !== undefined && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: boundaryLeftPx - 4,
-                        top: 0,
-                        width: 8,
-                        height: TRACK_HEIGHT,
-                        cursor: 'ew-resize',
-                        background: 'transparent',
-                        zIndex: 10,
-                      }}
-                      onMouseDown={(e) => handleBoundaryMouseDown(e, shot, nextShot)}
-                      onMouseEnter={(e) => {
-                        const el = e.currentTarget as HTMLDivElement
-                        el.style.background = 'rgba(255,255,255,0.2)'
-                      }}
-                      onMouseLeave={(e) => {
-                        const el = e.currentTarget as HTMLDivElement
-                        el.style.background = 'transparent'
-                      }}
-                    />
-                  )}
-                </React.Fragment>
-              )
-            })
-          )}
-
-          {/* Extend last shot drag handle */}
-          {shots.length > 0 &&
-            (() => {
-              const lastShot = shots[shots.length - 1]
-              const lastOffset = shotOffsets[shots.length - 1]
-              const lastDur = dragOverride[lastShot.id] ?? lastShot.durationMs
-              const lastEndPx = lastOffset + (lastDur / 1000) * zoomPxPerSec
-              return (
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: lastEndPx - 4,
-                    top: 0,
-                    width: 8,
-                    height: TRACK_HEIGHT,
-                    cursor: 'ew-resize',
-                    background: 'transparent',
-                    zIndex: 10,
-                  }}
-                  onMouseEnter={(e) => {
-                    const el = e.currentTarget as HTMLDivElement
-                    el.style.background = 'rgba(255,255,255,0.3)'
-                  }}
-                  onMouseLeave={(e) => {
-                    const el = e.currentTarget as HTMLDivElement
-                    el.style.background = 'transparent'
-                  }}
-                  onMouseDown={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    extendDragRef.current = { startX: e.clientX, origDur: lastDur }
-                    function onMM(ev: MouseEvent): void {
-                      if (!extendDragRef.current) return
-                      const deltaMs =
-                        ((ev.clientX - extendDragRef.current.startX) / zoomRef.current) * 1000
-                      const newDur = Math.max(1000, extendDragRef.current.origDur + deltaMs)
-                      setDragOverride({ [lastShot.id]: newDur })
-                    }
-                    function onMU(ev: MouseEvent): void {
-                      if (extendDragRef.current) {
+            {/* Extend last shot drag handle */}
+            {shots.length > 0 &&
+              (() => {
+                const lastShot = shots[shots.length - 1]
+                const lastOffset = shotOffsets[shots.length - 1]
+                const lastDur = dragOverride[lastShot.id] ?? lastShot.durationMs
+                const lastEndPx = lastOffset + (lastDur / 1000) * zoomPxPerSec
+                return (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: lastEndPx - 4,
+                      top: 0,
+                      width: 8,
+                      height: TRACK_HEIGHT,
+                      cursor: 'ew-resize',
+                      background: 'transparent',
+                      zIndex: 10,
+                    }}
+                    onMouseEnter={(e) => {
+                      const el = e.currentTarget as HTMLDivElement
+                      el.style.background = 'rgba(255,255,255,0.3)'
+                    }}
+                    onMouseLeave={(e) => {
+                      const el = e.currentTarget as HTMLDivElement
+                      el.style.background = 'transparent'
+                    }}
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      extendDragRef.current = { startX: e.clientX, origDur: lastDur }
+                      function onMM(ev: MouseEvent): void {
+                        if (!extendDragRef.current) return
                         const deltaMs =
                           ((ev.clientX - extendDragRef.current.startX) / zoomRef.current) * 1000
                         const newDur = Math.max(1000, extendDragRef.current.origDur + deltaMs)
-                        onExtendLastShot(lastShot.id, newDur)
-                        extendDragRef.current = null
+                        setDragOverride({ [lastShot.id]: newDur })
                       }
-                      setDragOverride({})
-                      window.removeEventListener('mousemove', onMM)
-                      window.removeEventListener('mouseup', onMU)
-                    }
-                    window.addEventListener('mousemove', onMM)
-                    window.addEventListener('mouseup', onMU)
-                  }}
-                />
-              )
-            })()}
-        </div>
+                      function onMU(ev: MouseEvent): void {
+                        if (extendDragRef.current) {
+                          const deltaMs =
+                            ((ev.clientX - extendDragRef.current.startX) / zoomRef.current) * 1000
+                          const newDur = Math.max(1000, extendDragRef.current.origDur + deltaMs)
+                          onExtendLastShot(lastShot.id, newDur)
+                          extendDragRef.current = null
+                        }
+                        setDragOverride({})
+                        window.removeEventListener('mousemove', onMM)
+                        window.removeEventListener('mouseup', onMU)
+                      }
+                      window.addEventListener('mousemove', onMM)
+                      window.addEventListener('mouseup', onMU)
+                    }}
+                  />
+                )
+              })()}
+          </div>
 
-        {/* Row 4: Marker track */}
-        <div
-          style={{
-            height: MARKER_ROW_HEIGHT,
-            width: totalPx,
-            background: '#1e1e1e',
-            position: 'relative',
-            borderTop: '1px solid #2a2a2a',
-            cursor: 'crosshair',
-          }}
-          onDoubleClick={handleMarkerTrackDblClick}
-        >
-          {markers.map((marker) => {
-            const effectivePositionMs = markerDragOverride[marker.id] ?? marker.positionMs
-            const leftPx = (effectivePositionMs / 1000) * zoomPxPerSec
-            const isEditing = editingMarkerId === marker.id
-            const isHovered = hoveredMarkerId === marker.id
+          {/* Row 4: Marker track */}
+          <div
+            style={{
+              height: MARKER_ROW_HEIGHT,
+              width: totalPx,
+              background: '#1e1e1e',
+              position: 'relative',
+              borderTop: '1px solid #2a2a2a',
+              cursor: 'crosshair',
+            }}
+            onDoubleClick={handleMarkerTrackDblClick}
+          >
+            {markers.map((marker) => {
+              const effectivePositionMs = markerDragOverride[marker.id] ?? marker.positionMs
+              const leftPx = (effectivePositionMs / 1000) * zoomPxPerSec
+              const isEditing = editingMarkerId === marker.id
+              const isHovered = hoveredMarkerId === marker.id
+
+              return (
+                <div
+                  key={marker.id}
+                  style={{
+                    position: 'absolute',
+                    left: leftPx,
+                    top: 0,
+                    height: MARKER_ROW_HEIGHT,
+                    width: 1,
+                    zIndex: 10,
+                  }}
+                  onMouseEnter={() => setHoveredMarkerId(marker.id)}
+                  onMouseLeave={() => setHoveredMarkerId(null)}
+                >
+                  {/* Dotted vertical line */}
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      width: '2px',
+                      height: MARKER_ROW_HEIGHT,
+                      borderLeft: '2px dashed #f39c12',
+                      cursor: 'ew-resize',
+                    }}
+                    onMouseDown={(e) => handleMarkerMouseDown(e, marker)}
+                  />
+
+                  {/* Label / inline edit */}
+                  {isEditing ? (
+                    <input
+                      autoFocus
+                      value={editingMarkerLabel}
+                      onChange={(e) => setEditingMarkerLabel(e.target.value)}
+                      onBlur={() => handleMarkerLabelSave(marker)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleMarkerLabelSave(marker)
+                        if (e.key === 'Escape') setEditingMarkerId(null)
+                      }}
+                      style={{
+                        position: 'absolute',
+                        left: '4px',
+                        top: '2px',
+                        width: '80px',
+                        fontSize: '9px',
+                        background: '#2a2a2a',
+                        border: '1px solid #f39c12',
+                        color: '#f39c12',
+                        padding: '1px 2px',
+                        zIndex: 20,
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        left: '4px',
+                        top: '2px',
+                        fontSize: '9px',
+                        color: '#f39c12',
+                        whiteSpace: 'nowrap',
+                        cursor: 'text',
+                        userSelect: 'none',
+                      }}
+                      onClick={(e) => handleMarkerLabelClick(e, marker)}
+                    >
+                      {marker.label ?? ''}
+                    </span>
+                  )}
+
+                  {/* Delete button on hover */}
+                  {isHovered && !isEditing && (
+                    <button
+                      style={{
+                        position: 'absolute',
+                        left: '4px',
+                        top: '14px',
+                        fontSize: '9px',
+                        background: 'none',
+                        border: 'none',
+                        color: '#f39c12',
+                        cursor: 'pointer',
+                        padding: 0,
+                        lineHeight: 1,
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onDeleteMarker(marker.id)
+                      }}
+                      title="Delete marker"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+
+            {markers.length === 0 && (
+              <span
+                style={{
+                  position: 'absolute',
+                  left: '8px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: '#444',
+                  fontSize: '10px',
+                  fontFamily: 'monospace',
+                  pointerEvents: 'none',
+                }}
+              >
+                double-click to add marker
+              </span>
+            )}
+          </div>
+
+          {/* Row 5: Media track */}
+          {(() => {
+            const effectiveOffset = mediaOffsetOverride ?? rundownMedia?.offsetMs ?? 0
+            const offsetPx = (effectiveOffset / 1000) * zoomPxPerSec
+            const svgWidth = (mediaDurationMs / 1000) * zoomPxPerSec
+            const trackHeightPx = MEDIA_ROW_HEIGHT
+            const halfHeight = trackHeightPx / 2
 
             return (
               <div
-                key={marker.id}
                 style={{
-                  position: 'absolute',
-                  left: leftPx,
-                  top: 0,
-                  height: MARKER_ROW_HEIGHT,
-                  width: 1,
-                  zIndex: 10,
+                  height: MEDIA_ROW_HEIGHT,
+                  width: totalPx,
+                  background: '#0d0d0d',
+                  position: 'relative',
+                  borderTop: '1px solid #2a2a2a',
+                  overflow: 'hidden',
+                  cursor: rundownMedia ? 'grab' : 'default',
+                  userSelect: 'none',
                 }}
-                onMouseEnter={() => setHoveredMarkerId(marker.id)}
-                onMouseLeave={() => setHoveredMarkerId(null)}
+                onMouseEnter={() => setMediaHovered(true)}
+                onMouseLeave={() => setMediaHovered(false)}
+                onMouseDown={rundownMedia ? handleMediaTrackMouseDown : undefined}
+                onDoubleClick={!rundownMedia ? onImportMedia : undefined}
               >
-                {/* Dotted vertical line */}
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    top: 0,
-                    width: '2px',
-                    height: MARKER_ROW_HEIGHT,
-                    borderLeft: '2px dashed #f39c12',
-                    cursor: 'ew-resize',
-                  }}
-                  onMouseDown={(e) => handleMarkerMouseDown(e, marker)}
-                />
-
-                {/* Label / inline edit */}
-                {isEditing ? (
-                  <input
-                    autoFocus
-                    value={editingMarkerLabel}
-                    onChange={(e) => setEditingMarkerLabel(e.target.value)}
-                    onBlur={() => handleMarkerLabelSave(marker)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleMarkerLabelSave(marker)
-                      if (e.key === 'Escape') setEditingMarkerId(null)
-                    }}
-                    style={{
-                      position: 'absolute',
-                      left: '4px',
-                      top: '2px',
-                      width: '80px',
-                      fontSize: '9px',
-                      background: '#2a2a2a',
-                      border: '1px solid #f39c12',
-                      color: '#f39c12',
-                      padding: '1px 2px',
-                      zIndex: 20,
-                    }}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                ) : (
+                {!rundownMedia && (
                   <span
                     style={{
                       position: 'absolute',
-                      left: '4px',
-                      top: '2px',
-                      fontSize: '9px',
-                      color: '#f39c12',
-                      whiteSpace: 'nowrap',
-                      cursor: 'text',
-                      userSelect: 'none',
+                      left: '8px',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      color: '#333',
+                      fontSize: '10px',
+                      fontFamily: 'monospace',
+                      pointerEvents: 'none',
                     }}
-                    onClick={(e) => handleMarkerLabelClick(e, marker)}
                   >
-                    {marker.label ?? ''}
+                    Double-click or use &apos;Import media&apos; to add a reference track
                   </span>
                 )}
 
-                {/* Delete button on hover */}
-                {isHovered && !isEditing && (
-                  <button
+                {rundownMedia && (
+                  <div
                     style={{
                       position: 'absolute',
-                      left: '4px',
-                      top: '14px',
-                      fontSize: '9px',
-                      background: 'none',
-                      border: 'none',
-                      color: '#f39c12',
-                      cursor: 'pointer',
-                      padding: 0,
-                      lineHeight: 1,
+                      left: 0,
+                      top: 0,
+                      width: '100%',
+                      height: '100%',
+                      transform: `translateX(${offsetPx}px)`,
                     }}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onDeleteMarker(marker.id)
-                    }}
-                    title="Delete marker"
                   >
-                    ×
-                  </button>
+                    {mediaFileNotFound ? (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          left: '8px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          color: '#e67e22',
+                          fontSize: '10px',
+                          fontFamily: 'monospace',
+                          pointerEvents: 'none',
+                        }}
+                      >
+                        Media file not found — relink or clear
+                      </span>
+                    ) : waveformError ? (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          left: '8px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          color: '#e74c3c',
+                          fontSize: '10px',
+                          fontFamily: 'monospace',
+                          pointerEvents: 'none',
+                        }}
+                      >
+                        Failed to load waveform — unsupported format?
+                      </span>
+                    ) : waveformData === null ? (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          left: '8px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          color: '#555',
+                          fontSize: '10px',
+                          fontFamily: 'monospace',
+                          pointerEvents: 'none',
+                        }}
+                      >
+                        Loading waveform...
+                      </span>
+                    ) : (
+                      <svg width={svgWidth} height={trackHeightPx} style={{ display: 'block' }}>
+                        {waveformData.map((peak, i) => {
+                          const x = (i / waveformData.length) * svgWidth
+                          const barWidth = Math.max(1, svgWidth / waveformData.length)
+                          const barHeight = peak * halfHeight * 2
+                          return (
+                            <rect
+                              key={i}
+                              x={x}
+                              y={halfHeight - barHeight / 2}
+                              width={barWidth}
+                              height={barHeight}
+                              fill="rgba(39,174,96,0.7)"
+                            />
+                          )
+                        })}
+                      </svg>
+                    )}
+
+                    {/* Filename + clear overlay */}
+                    {mediaHovered && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '2px 6px',
+                          pointerEvents: 'none',
+                        }}
+                      >
+                        <span
+                          style={{
+                            color: '#888',
+                            fontSize: '9px',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            maxWidth: '200px',
+                          }}
+                        >
+                          {rundownMedia.filePath.split('/').pop() ?? rundownMedia.filePath}
+                        </span>
+                        <button
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#888',
+                            fontSize: '9px',
+                            cursor: 'pointer',
+                            padding: '0 2px',
+                            pointerEvents: 'all',
+                          }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onClearMedia()
+                          }}
+                          title="Remove media track"
+                        >
+                          × Clear
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )
-          })}
+          })()}
 
-          {markers.length === 0 && (
-            <span
-              style={{
-                position: 'absolute',
-                left: '8px',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: '#444',
-                fontSize: '10px',
-                fontFamily: 'monospace',
-                pointerEvents: 'none',
-              }}
-            >
-              double-click to add marker
-            </span>
-          )}
+          {/* Spacer: ensures the timeline can scroll far enough right for the playhead to reach the end of the last clip */}
+          <div style={{ width: totalPx + Math.max(0, containerWidth), height: 0, flexShrink: 0 }} />
         </div>
-
-        {/* Row 5: Media track */}
-        {(() => {
-          const effectiveOffset = mediaOffsetOverride ?? rundownMedia?.offsetMs ?? 0
-          const offsetPx = (effectiveOffset / 1000) * zoomPxPerSec
-          const svgWidth = (mediaDurationMs / 1000) * zoomPxPerSec
-          const trackHeightPx = MEDIA_ROW_HEIGHT
-          const halfHeight = trackHeightPx / 2
-
-          return (
-            <div
-              style={{
-                height: MEDIA_ROW_HEIGHT,
-                width: totalPx,
-                background: '#0d0d0d',
-                position: 'relative',
-                borderTop: '1px solid #2a2a2a',
-                overflow: 'hidden',
-                cursor: rundownMedia ? 'grab' : 'default',
-                userSelect: 'none',
-              }}
-              onMouseEnter={() => setMediaHovered(true)}
-              onMouseLeave={() => setMediaHovered(false)}
-              onMouseDown={rundownMedia ? handleMediaTrackMouseDown : undefined}
-              onDoubleClick={!rundownMedia ? onImportMedia : undefined}
-            >
-              {!rundownMedia && (
-                <span
-                  style={{
-                    position: 'absolute',
-                    left: '8px',
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    color: '#333',
-                    fontSize: '10px',
-                    fontFamily: 'monospace',
-                    pointerEvents: 'none',
-                  }}
-                >
-                  Double-click or use &apos;Import media&apos; to add a reference track
-                </span>
-              )}
-
-              {rundownMedia && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    top: 0,
-                    width: '100%',
-                    height: '100%',
-                    transform: `translateX(${offsetPx}px)`,
-                  }}
-                >
-                  {mediaFileNotFound ? (
-                    <span
-                      style={{
-                        position: 'absolute',
-                        left: '8px',
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        color: '#e67e22',
-                        fontSize: '10px',
-                        fontFamily: 'monospace',
-                        pointerEvents: 'none',
-                      }}
-                    >
-                      Media file not found — relink or clear
-                    </span>
-                  ) : waveformError ? (
-                    <span
-                      style={{
-                        position: 'absolute',
-                        left: '8px',
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        color: '#e74c3c',
-                        fontSize: '10px',
-                        fontFamily: 'monospace',
-                        pointerEvents: 'none',
-                      }}
-                    >
-                      Failed to load waveform — unsupported format?
-                    </span>
-                  ) : waveformData === null ? (
-                    <span
-                      style={{
-                        position: 'absolute',
-                        left: '8px',
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        color: '#555',
-                        fontSize: '10px',
-                        fontFamily: 'monospace',
-                        pointerEvents: 'none',
-                      }}
-                    >
-                      Loading waveform...
-                    </span>
-                  ) : (
-                    <svg width={svgWidth} height={trackHeightPx} style={{ display: 'block' }}>
-                      {waveformData.map((peak, i) => {
-                        const x = (i / waveformData.length) * svgWidth
-                        const barWidth = Math.max(1, svgWidth / waveformData.length)
-                        const barHeight = peak * halfHeight * 2
-                        return (
-                          <rect
-                            key={i}
-                            x={x}
-                            y={halfHeight - barHeight / 2}
-                            width={barWidth}
-                            height={barHeight}
-                            fill="rgba(39,174,96,0.7)"
-                          />
-                        )
-                      })}
-                    </svg>
-                  )}
-
-                  {/* Filename + clear overlay */}
-                  {mediaHovered && (
-                    <div
-                      style={{
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '2px 6px',
-                        pointerEvents: 'none',
-                      }}
-                    >
-                      <span
-                        style={{
-                          color: '#888',
-                          fontSize: '9px',
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          maxWidth: '200px',
-                        }}
-                      >
-                        {rundownMedia.filePath.split('/').pop() ?? rundownMedia.filePath}
-                      </span>
-                      <button
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: '#888',
-                          fontSize: '9px',
-                          cursor: 'pointer',
-                          padding: '0 2px',
-                          pointerEvents: 'all',
-                        }}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onClearMedia()
-                        }}
-                        title="Remove media track"
-                      >
-                        × Clear
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        })()}
-
-        {/* Spacer: ensures the timeline can scroll far enough right for the playhead to reach the end of the last clip */}
-        <div style={{ width: totalPx + Math.max(0, containerWidth), height: 0, flexShrink: 0 }} />
-        </div>{/* end content wrapper */}
+        {/* end content wrapper */}
       </div>
 
       {/* Row 6: Mini overview */}
@@ -1459,7 +1540,9 @@ export function TimelineEditor({
             const el2 = scrollContainerRef.current
             isAutoScrollingRef.current = true
             el2.scrollLeft = Math.max(0, targetScrollLeft)
-            setTimeout(() => { isAutoScrollingRef.current = false }, 0)
+            setTimeout(() => {
+              isAutoScrollingRef.current = false
+            }, 0)
           }
         }}
       >

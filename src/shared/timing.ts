@@ -6,13 +6,16 @@
 import type { Shot, Camera } from './types'
 
 /**
- * Formats milliseconds as m:ss (e.g. 90500 → "1:30")
+ * Formats milliseconds as m:ss.d (e.g. 90500 → "1:30.5")
  */
 export function formatMs(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000))
-  const minutes = Math.floor(totalSeconds / 60)
-  const seconds = totalSeconds % 60
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+  const totalMs = Math.max(0, ms)
+  const totalSec = totalMs / 1000
+  const minutes = Math.floor(totalSec / 60)
+  const secFull = totalSec % 60
+  const secFloor = Math.floor(secFull)
+  const tenths = Math.floor((secFull - secFloor) * 10)
+  return `${minutes}:${secFloor.toString().padStart(2, '0')}.${tenths}`
 }
 
 export interface TimingResult {
@@ -104,7 +107,14 @@ export function computeTiming(
   }
 
   if (nextVisibleIndex === null) {
-    return { liveIndex, nextVisibleIndex: null, remainingMs, timeUntilNextVisibleMs: null, totalTimeUntilNextVisibleMs: null, effectiveDurationMs }
+    return {
+      liveIndex,
+      nextVisibleIndex: null,
+      remainingMs,
+      timeUntilNextVisibleMs: null,
+      totalTimeUntilNextVisibleMs: null,
+      effectiveDurationMs,
+    }
   }
 
   // timeUntilLive = remainingMs on live shot + sum of durations of all shots
@@ -117,7 +127,14 @@ export function computeTiming(
   const timeUntilNextVisibleMs = remainingMs + intermediateMs
   const totalTimeUntilNextVisibleMs = effectiveDurationMs + intermediateMs
 
-  return { liveIndex, nextVisibleIndex, remainingMs, timeUntilNextVisibleMs, totalTimeUntilNextVisibleMs, effectiveDurationMs }
+  return {
+    liveIndex,
+    nextVisibleIndex,
+    remainingMs,
+    timeUntilNextVisibleMs,
+    totalTimeUntilNextVisibleMs,
+    effectiveDurationMs,
+  }
 }
 
 /**
@@ -133,5 +150,5 @@ export function isInTransition(
   if (!running || liveIndex === null || startedAt === null) return false
   const shot = shots[liveIndex]
   if (!shot || shot.transitionMs <= 0) return false
-  return (now - startedAt) < shot.transitionMs
+  return now - startedAt < shot.transitionMs
 }
