@@ -69,6 +69,7 @@ const s = {
   row: {
     display: 'flex',
     alignItems: 'center',
+    flexWrap: 'wrap' as const,
     gap: '8px',
     padding: '8px 12px',
     borderBottom: '1px solid #222',
@@ -97,9 +98,12 @@ const s = {
     fontSize: '13px',
     color: '#ccc',
     flex: 1,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap' as const,
+    wordBreak: 'break-word' as const,
+  } satisfies React.CSSProperties,
+
+  labelEditRow: {
+    width: '100%',
+    paddingTop: '4px',
   } satisfies React.CSSProperties,
 
   duration: {
@@ -449,41 +453,7 @@ function SortableShotRow({
         {camera && <span style={s.cameraBadge(camera.color)}>CAM{camera.number}</span>}
         <span style={s.name}>
           {camera?.name ?? '—'}
-          {isLabelEditing ? (
-            <input
-              ref={labelInputRef}
-              style={{
-                marginLeft: '6px',
-                background: '#2a2a2a',
-                border: '1px solid #5a9fd4',
-                borderRadius: '3px',
-                color: '#fff',
-                fontSize: '12px',
-                padding: '1px 5px',
-                width: '120px',
-                outline: 'none',
-              }}
-              value={labelDraft}
-              onChange={(e) => setLabelDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  onLabelCommit(shot.id, labelDraft)
-                }
-                if (e.key === 'Escape') {
-                  e.preventDefault()
-                  onLabelCancel()
-                }
-              }}
-              onBlur={() => onLabelCommit(shot.id, labelDraft)}
-              placeholder="Label…"
-              aria-label="Edit label"
-            />
-          ) : shot.label ? (
-            ` "${shot.label}"`
-          ) : (
-            ''
-          )}
+          {!isLabelEditing && shot.label ? ` "${shot.label}"` : ''}
         </span>
         <span style={s.duration}>{msToMss(shot.durationMs)}</span>
         {shot.transitionName && shot.transitionName !== 'cut' && (
@@ -511,6 +481,40 @@ function SortableShotRow({
               🗑
             </button>
           </>
+        )}
+
+        {isLabelEditing && (
+          <div style={s.labelEditRow}>
+            <input
+              ref={labelInputRef}
+              style={{
+                background: '#2a2a2a',
+                border: '1px solid #5a9fd4',
+                borderRadius: '3px',
+                color: '#fff',
+                fontSize: '12px',
+                padding: '3px 6px',
+                width: '100%',
+                boxSizing: 'border-box',
+                outline: 'none',
+              }}
+              value={labelDraft}
+              onChange={(e) => setLabelDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  onLabelCommit(shot.id, labelDraft)
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  onLabelCancel()
+                }
+              }}
+              onBlur={() => onLabelCommit(shot.id, labelDraft)}
+              placeholder="Label…"
+              aria-label="Edit label"
+            />
+          </div>
         )}
       </li>
     </>

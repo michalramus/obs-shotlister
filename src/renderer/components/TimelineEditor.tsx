@@ -141,6 +141,8 @@ export function TimelineEditor({
   const audioPlayRef = useRef<HTMLAudioElement | null>(null)
   const pendingDragClearRef = useRef(false)
   const rundownMediaRef = useRef(rundownMedia)
+  const shotsRef = useRef(shots)
+  const camerasRef = useRef(cameras)
 
   // Keep zoomRef in sync
   useEffect(() => {
@@ -180,6 +182,12 @@ export function TimelineEditor({
   useEffect(() => {
     rundownMediaRef.current = rundownMedia
   }, [rundownMedia])
+  useEffect(() => {
+    shotsRef.current = shots
+  }, [shots])
+  useEffect(() => {
+    camerasRef.current = cameras
+  }, [cameras])
 
   // Sync media currentTime to playhead while stopped
   useEffect(() => {
@@ -583,18 +591,30 @@ export function TimelineEditor({
       }
       const num = parseInt(e.key, 10)
       if (num >= 1 && num <= 9 && !running) {
-        const cam = cameras.find((c) => c.number === num)
+        const cam = camerasRef.current.find((c) => c.number === num)
         if (cam) handleCamButtonClick(cam)
       }
       if ((e.key === 'l' || e.key === 'L') && !running) {
         e.preventDefault()
-        const shotId = selectedShotIdRef.current
+        // Use selected shot, or fall back to shot under playhead
+        let shotId = selectedShotIdRef.current
+        if (!shotId) {
+          let acc = 0
+          for (const shot of shotsRef.current) {
+            if (playheadMsRef.current < acc + shot.durationMs) {
+              shotId = shot.id
+              break
+            }
+            acc += shot.durationMs
+          }
+        }
         if (shotId) {
           // Stop playback so the label input can retain focus
           setIsPlaying((prev) => {
             if (prev) getMediaEl()?.pause()
             return false
           })
+          onShotClick(shotId)
           onLabelEditRef.current?.(shotId)
         }
       }
@@ -622,7 +642,7 @@ export function TimelineEditor({
 
   function handleCamButtonClick(camera: Camera): void {
     let accumulated = 0
-    for (const shot of shots) {
+    for (const shot of shotsRef.current) {
       const shotStart = accumulated
       const shotEnd = accumulated + shot.durationMs
       if (playheadMsRef.current >= shotStart && playheadMsRef.current < shotEnd) {
