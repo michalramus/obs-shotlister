@@ -133,6 +133,7 @@ export function TimelineEditor({
   const onAddMarkerRef = useRef(onAddMarker)
   const isFirstLiveRef = useRef(true)
   const isFirstSelectedRef = useRef(true)
+  const prevAutoShotIdRef = useRef<string | null>(null)
   const audioPlayRef = useRef<HTMLAudioElement | null>(null)
   const pendingDragClearRef = useRef(false)
   const rundownMediaRef = useRef(rundownMedia)
@@ -224,6 +225,25 @@ export function TimelineEditor({
     const t = setTimeout(() => setFlash(false), 350)
     return () => clearTimeout(t)
   }, [selectedShotId])
+
+  // Auto-select shot under playhead during edit-mode playback
+  useEffect(() => {
+    if (!isPlaying || running) return
+    // Find which shot the playhead is on
+    let acc = 0
+    let shotUnderPlayhead: string | null = null
+    for (const shot of shots) {
+      if (playheadMs < acc + shot.durationMs) {
+        shotUnderPlayhead = shot.id
+        break
+      }
+      acc += shot.durationMs
+    }
+    if (shotUnderPlayhead !== null && shotUnderPlayhead !== prevAutoShotIdRef.current) {
+      prevAutoShotIdRef.current = shotUnderPlayhead
+      onShotClick(shotUnderPlayhead)
+    }
+  }, [playheadMs, isPlaying, running, shots, onShotClick])
 
   // Decode waveform when media file changes
   useEffect(() => {

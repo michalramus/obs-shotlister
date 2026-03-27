@@ -564,6 +564,12 @@ export function ShotListPanel({
     }
   }, [selectedShotId])
 
+  useEffect(() => {
+    if (labelEditingId !== null) {
+      selectedRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [labelEditingId])
+
   const sensors = useSensors(useSensor(PointerSensor))
 
   async function handleAdd(values: {
