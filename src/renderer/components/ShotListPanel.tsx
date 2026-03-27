@@ -369,10 +369,13 @@ interface SortableShotRowProps {
   isSelected: boolean
   isDraggingThis: boolean
   isDropTarget: boolean
+  isLabelEditing: boolean
   liveRefCallback?: (el: HTMLLIElement | null) => void
   selectedRefCallback?: (el: HTMLLIElement | null) => void
   onEdit: (shot: Shot) => void
   onDelete: (shot: Shot) => void
+  onLabelCommit: (shotId: string, label: string) => void
+  onLabelCancel: () => void
 }
 
 function SortableShotRow({
@@ -383,11 +386,25 @@ function SortableShotRow({
   isSelected,
   isDraggingThis,
   isDropTarget,
+  isLabelEditing,
   liveRefCallback,
   selectedRefCallback,
   onEdit,
   onDelete,
+  onLabelCommit,
+  onLabelCancel,
 }: SortableShotRowProps): React.JSX.Element {
+  const [labelDraft, setLabelDraft] = useState(shot.label ?? '')
+  const labelInputRef = useRef<HTMLInputElement>(null)
+
+  // Sync draft when editing starts
+  useEffect(() => {
+    if (isLabelEditing) {
+      setLabelDraft(shot.label ?? '')
+      // Focus after render
+      setTimeout(() => labelInputRef.current?.focus(), 0)
+    }
+  }, [isLabelEditing, shot.label])
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
     id: shot.id,
     disabled: isLocked,
@@ -429,7 +446,41 @@ function SortableShotRow({
         {camera && <span style={s.cameraBadge(camera.color)}>CAM{camera.number}</span>}
         <span style={s.name}>
           {camera?.name ?? '—'}
-          {shot.label ? ` "${shot.label}"` : ''}
+          {isLabelEditing ? (
+            <input
+              ref={labelInputRef}
+              style={{
+                marginLeft: '6px',
+                background: '#2a2a2a',
+                border: '1px solid #5a9fd4',
+                borderRadius: '3px',
+                color: '#fff',
+                fontSize: '12px',
+                padding: '1px 5px',
+                width: '120px',
+                outline: 'none',
+              }}
+              value={labelDraft}
+              onChange={(e) => setLabelDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  onLabelCommit(shot.id, labelDraft)
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  onLabelCancel()
+                }
+              }}
+              onBlur={() => onLabelCommit(shot.id, labelDraft)}
+              placeholder="Label…"
+              aria-label="Edit label"
+            />
+          ) : shot.label ? (
+            ` "${shot.label}"`
+          ) : (
+            ''
+          )}
         </span>
         <span style={s.duration}>{msToMss(shot.durationMs)}</span>
         {shot.transitionName && shot.transitionName !== 'cut' && (
@@ -469,9 +520,15 @@ function SortableShotRow({
 
 interface ShotListPanelProps {
   selectedShotId: string | null
+  labelEditingId: string | null
+  onLabelEditDone: () => void
 }
 
-export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX.Element {
+export function ShotListPanel({
+  selectedShotId,
+  labelEditingId,
+  onLabelEditDone,
+}: ShotListPanelProps): React.JSX.Element {
   const shots = useAppStore((s) => s.shots)
   const cameras = useAppStore((s) => s.cameras)
   const running = useAppStore((s) => s.running)
@@ -552,6 +609,20 @@ export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX
       console.error('[ShotListPanel] editShot error:', err)
     }
     setEditingShot(null)
+  }
+
+  async function handleLabelCommit(shotId: string, label: string): Promise<void> {
+    const shot = shots.find((s) => s.id === shotId)
+    if (!shot) {
+      onLabelEditDone()
+      return
+    }
+    try {
+      await editShot({ id: shotId, label: label.trim() || null })
+    } catch (err) {
+      console.error('[ShotListPanel] label commit error:', err)
+    }
+    onLabelEditDone()
   }
 
   async function handleDelete(shot: Shot): Promise<void> {
@@ -667,6 +738,7 @@ export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX
                   isSelected={shot.id === selectedShotId}
                   isDraggingThis={shot.id === activeId}
                   isDropTarget={shot.id === overId && shot.id !== activeId}
+                  isLabelEditing={shot.id === labelEditingId}
                   liveRefCallback={liveIndex === shots.indexOf(shot) ? setLiveRef : undefined}
                   selectedRefCallback={
                     shot.id === selectedShotId
@@ -680,6 +752,8 @@ export function ShotListPanel({ selectedShotId }: ShotListPanelProps): React.JSX
                     setShowAddForm(false)
                   }}
                   onDelete={(s) => void handleDelete(s)}
+                  onLabelCommit={(id, label) => void handleLabelCommit(id, label)}
+                  onLabelCancel={onLabelEditDone}
                 />
               ),
             )}

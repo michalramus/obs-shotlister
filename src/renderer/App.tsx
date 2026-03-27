@@ -187,6 +187,7 @@ export default function App(): React.JSX.Element {
   const markShotHidden = useAppStore((s) => s.markShotHidden)
 
   const [selectedShotId, setSelectedShotId] = useState<string | null>(null)
+  const [labelEditingId, setLabelEditingId] = useState<string | null>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const [muteCount, setMuteCount] = useState(
     () => localStorage.getItem('obs-queuer-mute-count') === 'true',
@@ -270,6 +271,27 @@ export default function App(): React.JSX.Element {
           liveSkipNext().catch((err: unknown) => console.error('[App] liveSkipNext:', err))
         }
       }
+
+      // Edit mode shortcuts
+      if (uiMode === 'edit' && !running && selectedShotId) {
+        // 1–9: assign camera by number
+        const digit = e.key.match(/^([1-9])$/)
+        if (digit) {
+          e.preventDefault()
+          const camNum = parseInt(digit[1], 10)
+          const cam = cameras.find((c) => c.number === camNum)
+          if (cam) {
+            editShot({ id: selectedShotId, cameraId: cam.id }).catch((err: unknown) =>
+              console.error('[App] editShot camera:', err),
+            )
+          }
+        }
+        // L: open label editor
+        if (e.key === 'l' || e.key === 'L') {
+          e.preventDefault()
+          setLabelEditingId(selectedShotId)
+        }
+      }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
@@ -283,6 +305,9 @@ export default function App(): React.JSX.Element {
     uiMode,
     liveIndex,
     startedAt,
+    selectedShotId,
+    cameras,
+    editShot,
   ])
 
   // When the active project changes, load its cameras + rundowns
@@ -687,7 +712,11 @@ export default function App(): React.JSX.Element {
 
                 {activeRundown !== null && (
                   <div style={styles.right}>
-                    <ShotListPanel selectedShotId={selectedShotId} />
+                    <ShotListPanel
+                      selectedShotId={selectedShotId}
+                      labelEditingId={labelEditingId}
+                      onLabelEditDone={() => setLabelEditingId(null)}
+                    />
                   </div>
                 )}
               </>
@@ -695,7 +724,11 @@ export default function App(): React.JSX.Element {
               <>
                 <div style={styles.center}>
                   {activeRundownId !== null && <LiveControls />}
-                  <ShotListPanel selectedShotId={selectedShotId} />
+                  <ShotListPanel
+                    selectedShotId={selectedShotId}
+                    labelEditingId={labelEditingId}
+                    onLabelEditDone={() => setLabelEditingId(null)}
+                  />
                   <TimelineEditor
                     shots={shots}
                     cameras={cameras}

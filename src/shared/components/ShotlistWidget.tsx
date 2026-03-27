@@ -93,7 +93,8 @@ const s = {
 
   label: {
     fontSize: '13px',
-    color: '#888',
+    fontWeight: 700,
+    color: '#ddd',
     flex: 1,
     wordBreak: 'break-word' as const,
   } satisfies React.CSSProperties,
@@ -607,7 +608,7 @@ export function ShotlistWidget({
                 <div style={s.rowContent}>
                   {camera && <span style={s.cameraBadge(camera.color)}>CAM{camera.number}</span>}
                   <span style={s.cameraName}>{camera?.name ?? '—'}</span>
-                  {shot.label && <span style={s.label}>"{shot.label}"</span>}
+                  {shot.label && <span style={s.label}>{shot.label}</span>}
                   <span style={s.timeDisplay}>{timeLabel}</span>
                 </div>
               </li>
