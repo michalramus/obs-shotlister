@@ -52,24 +52,49 @@ export function applyMigrations(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS live_state (
       id           INTEGER PRIMARY KEY CHECK (id = 1),
       rundown_id   TEXT,
-      live_shot_id TEXT,
-      started_at   INTEGER,
-      running      INTEGER NOT NULL DEFAULT 0,
       skipped_ids  TEXT NOT NULL DEFAULT '[]'
     );
 
     -- Ensure singleton row exists
-    INSERT OR IGNORE INTO live_state (id, running, skipped_ids) VALUES (1, 0, '[]');
+    INSERT OR IGNORE INTO live_state (id, skipped_ids) VALUES (1, '[]');
   `)
 
   // Idempotent column additions (ALTER TABLE is not in CREATE TABLE IF NOT EXISTS)
-  try { database.exec('ALTER TABLE cameras ADD COLUMN obs_scene TEXT') } catch (_) { /* column exists */ }
-  try { database.exec('ALTER TABLE live_state ADD COLUMN project_id TEXT') } catch (_) { /* column exists */ }
-  try { database.exec('ALTER TABLE shots ADD COLUMN transition_name TEXT') } catch (_) { /* column exists */ }
-  try { database.exec('ALTER TABLE shots ADD COLUMN transition_ms INTEGER NOT NULL DEFAULT 0') } catch (_) { /* column exists */ }
-  try { database.exec('ALTER TABLE rundowns ADD COLUMN order_index INTEGER NOT NULL DEFAULT 0') } catch (_) { /* column exists */ }
-  try { database.exec('ALTER TABLE rundowns ADD COLUMN folder TEXT') } catch (_) { /* column exists */ }
-  try { database.exec('ALTER TABLE transition_mappings ADD COLUMN const_length_ms INTEGER') } catch (_) { /* column exists */ }
+  try {
+    database.exec('ALTER TABLE cameras ADD COLUMN obs_scene TEXT')
+  } catch (_) {
+    /* column exists */
+  }
+  try {
+    database.exec('ALTER TABLE live_state ADD COLUMN project_id TEXT')
+  } catch (_) {
+    /* column exists */
+  }
+  try {
+    database.exec('ALTER TABLE shots ADD COLUMN transition_name TEXT')
+  } catch (_) {
+    /* column exists */
+  }
+  try {
+    database.exec('ALTER TABLE shots ADD COLUMN transition_ms INTEGER NOT NULL DEFAULT 0')
+  } catch (_) {
+    /* column exists */
+  }
+  try {
+    database.exec('ALTER TABLE rundowns ADD COLUMN order_index INTEGER NOT NULL DEFAULT 0')
+  } catch (_) {
+    /* column exists */
+  }
+  try {
+    database.exec('ALTER TABLE rundowns ADD COLUMN folder TEXT')
+  } catch (_) {
+    /* column exists */
+  }
+  try {
+    database.exec('ALTER TABLE transition_mappings ADD COLUMN const_length_ms INTEGER')
+  } catch (_) {
+    /* column exists */
+  }
   database.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       key   TEXT PRIMARY KEY,

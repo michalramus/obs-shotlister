@@ -1,7 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { applyMigrations } from '../db/index'
-import { getLiveState, startLive, stopLive, nextShot, skipNext, restartLive, getLiveQueue, getVisibleQueue } from './live'
+import {
+  getLiveState,
+  startLive,
+  stopLive,
+  nextShot,
+  skipNext,
+  restartLive,
+  getLiveQueue,
+  getVisibleQueue,
+  resetInMemoryLiveState,
+} from './live'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -23,20 +33,20 @@ function seedRundownWithShots(
   const projectId = 'p1'
   const rundownId = 'rd-1'
   const cameraId = 'cam-1'
-  db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(projectId, 'P', 1000)
+  db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+    projectId,
+    'P',
+    1000,
+  )
   db.prepare('INSERT INTO rundowns (id, project_id, name, created_at) VALUES (?, ?, ?, ?)').run(
     rundownId,
     projectId,
     'Morning',
     1000,
   )
-  db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-    cameraId,
-    projectId,
-    1,
-    'Wide',
-    '#e74c3c',
-  )
+  db.prepare(
+    'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+  ).run(cameraId, projectId, 1, 'Wide', '#e74c3c')
   const shotIds: string[] = []
   for (let i = 0; i < shotCount; i++) {
     const id = `shot-${i}`
@@ -49,7 +59,11 @@ function seedRundownWithShots(
 }
 
 function getShotIds(db: Database.Database, rundownId: string): string[] {
-  return (db.prepare('SELECT id FROM shots WHERE rundown_id = ? ORDER BY order_index ASC').all(rundownId) as { id: string }[]).map((r) => r.id)
+  return (
+    db
+      .prepare('SELECT id FROM shots WHERE rundown_id = ? ORDER BY order_index ASC')
+      .all(rundownId) as { id: string }[]
+  ).map((r) => r.id)
 }
 
 // ---------------------------------------------------------------------------
@@ -60,6 +74,7 @@ describe('getLiveState', () => {
   let db: Database.Database
 
   beforeEach(() => {
+    resetInMemoryLiveState()
     db = openMemoryDb()
   })
 
@@ -84,6 +99,7 @@ describe('startLive', () => {
   let db: Database.Database
 
   beforeEach(() => {
+    resetInMemoryLiveState()
     db = openMemoryDb()
   })
 
@@ -104,7 +120,7 @@ describe('startLive', () => {
     expect(state.startedAt).toBeLessThanOrEqual(after)
   })
 
-  it('persists state so getLiveState returns updated values', () => {
+  it('getLiveState returns updated in-memory values after startLive', () => {
     const { rundownId } = seedRundownWithShots(db)
     startLive(db, rundownId)
     const state = getLiveState(db)
@@ -121,6 +137,7 @@ describe('stopLive', () => {
   let db: Database.Database
 
   beforeEach(() => {
+    resetInMemoryLiveState()
     db = openMemoryDb()
   })
 
@@ -147,6 +164,7 @@ describe('nextShot', () => {
   let db: Database.Database
 
   beforeEach(() => {
+    resetInMemoryLiveState()
     db = openMemoryDb()
   })
 
@@ -196,6 +214,7 @@ describe('skipNext', () => {
   let db: Database.Database
 
   beforeEach(() => {
+    resetInMemoryLiveState()
     db = openMemoryDb()
   })
 
@@ -272,6 +291,7 @@ describe('restartLive', () => {
   let db: Database.Database
 
   beforeEach(() => {
+    resetInMemoryLiveState()
     db = openMemoryDb()
   })
 

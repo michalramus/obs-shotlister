@@ -2,8 +2,9 @@
  * IPC handler logic for live playback state.
  *
  * State machine: idle → running → idle
- * All mutations persist to the live_state singleton row in SQLite.
- * During live, the shots table is never modified — only live_state is written.
+ * Progress fields (running, live_shot_id, started_at) are kept in memory only —
+ * they are never persisted to the database.
+ * Selection fields (rundown_id, project_id) are persisted to the live_state row.
  * An in-memory liveQueue tracks which shots are visible during the session.
  *
  * IPC registration (ipcMain.handle) happens in src/main/index.ts.
@@ -27,9 +28,6 @@ export interface LiveState {
 interface LiveStateRow {
   rundown_id: string | null
   project_id: string | null
-  live_shot_id: string | null
-  started_at: number | null
-  running: number
 }
 
 interface ShotRow {
@@ -43,10 +41,13 @@ interface LiveQueueEntry extends ShotRow {
 }
 
 // ---------------------------------------------------------------------------
-// In-memory live queue
+// In-memory live progress state
 // ---------------------------------------------------------------------------
 
 let liveQueue: LiveQueueEntry[] = []
+let liveShotId: string | null = null
+let startedAt: number | null = null
+let running = false
 
 export function getLiveQueue(): LiveQueueEntry[] {
   return liveQueue
@@ -56,11 +57,20 @@ export function getVisibleQueue(): LiveQueueEntry[] {
   return liveQueue.filter((s) => !s.hidden)
 }
 
-export function clearLiveState(db: Database): void {
-  db.prepare(
-    `UPDATE live_state SET rundown_id = NULL, live_shot_id = NULL, started_at = NULL, running = 0 WHERE id = 1`,
-  ).run()
-  liveQueue.length = 0
+/** Resets all in-memory live progress state. Use in tests or on app shutdown. */
+export function resetInMemoryLiveState(): void {
+  liveQueue = []
+  liveShotId = null
+  startedAt = null
+  running = false
+}
+
+export function clearLiveState(db: Database.Database): void {
+  db.prepare(`UPDATE live_state SET rundown_id = NULL WHERE id = 1`).run()
+  liveQueue = []
+  liveShotId = null
+  startedAt = null
+  running = false
 }
 
 // ---------------------------------------------------------------------------
@@ -72,21 +82,17 @@ function rowToLiveState(row: LiveStateRow, liveIndex: number | null): LiveState 
     rundownId: row.rundown_id,
     projectId: row.project_id,
     liveIndex,
-    startedAt: row.started_at,
-    running: row.running === 1,
+    startedAt,
+    running,
   }
 }
 
 function getShotsForRundown(db: Database.Database, rundownId: string): ShotRow[] {
   return db
-    .prepare('SELECT id, order_index, duration_ms FROM shots WHERE rundown_id = ? ORDER BY order_index ASC')
+    .prepare(
+      'SELECT id, order_index, duration_ms FROM shots WHERE rundown_id = ? ORDER BY order_index ASC',
+    )
     .all(rundownId) as ShotRow[]
-}
-
-function liveShotIdToIndex(shots: ShotRow[], liveShotId: string | null): number | null {
-  if (!liveShotId) return null
-  const idx = shots.findIndex((s) => s.id === liveShotId)
-  return idx === -1 ? null : idx
 }
 
 // ---------------------------------------------------------------------------
@@ -94,15 +100,14 @@ function liveShotIdToIndex(shots: ShotRow[], liveShotId: string | null): number 
 // ---------------------------------------------------------------------------
 
 export function getLiveState(db: Database.Database): LiveState {
-  const row = db.prepare('SELECT * FROM live_state WHERE id = 1').get() as LiveStateRow
-  let liveIndex: number | null = null
+  const row = db
+    .prepare('SELECT rundown_id, project_id FROM live_state WHERE id = 1')
+    .get() as LiveStateRow
 
-  if (row.running && liveQueue.length > 0) {
-    liveIndex = liveQueue.findIndex((s) => s.id === row.live_shot_id)
+  let liveIndex: number | null = null
+  if (running && liveQueue.length > 0) {
+    liveIndex = liveQueue.findIndex((s) => s.id === liveShotId)
     if (liveIndex === -1) liveIndex = null
-  } else if (row.rundown_id && row.live_shot_id) {
-    const shots = getShotsForRundown(db, row.rundown_id)
-    liveIndex = liveShotIdToIndex(shots, row.live_shot_id)
   }
 
   return rowToLiveState(row, liveIndex)
@@ -127,14 +132,17 @@ export function startLive(db: Database.Database, rundownId: string): LiveState {
     throw new Error('Cannot start: rundown has no shots')
   }
 
-  const stateRow = db.prepare('SELECT project_id FROM live_state WHERE id = 1').get() as Pick<LiveStateRow, 'project_id'>
-  const liveShotId = shots[0].id
-  const startedAt = Date.now()
+  const stateRow = db.prepare('SELECT project_id FROM live_state WHERE id = 1').get() as Pick<
+    LiveStateRow,
+    'project_id'
+  >
 
-  db.prepare(
-    'UPDATE live_state SET rundown_id = ?, live_shot_id = ?, started_at = ?, running = 1 WHERE id = 1',
-  ).run(rundownId, liveShotId, startedAt)
+  // Persist rundown selection (not progress)
+  db.prepare('UPDATE live_state SET rundown_id = ? WHERE id = 1').run(rundownId)
 
+  liveShotId = shots[0].id
+  startedAt = Date.now()
+  running = true
   liveQueue = shots.map((s) => ({ ...s, hidden: false }))
 
   return {
@@ -147,12 +155,13 @@ export function startLive(db: Database.Database, rundownId: string): LiveState {
 }
 
 export function stopLive(db: Database.Database): LiveState {
-  const row = db.prepare('SELECT * FROM live_state WHERE id = 1').get() as LiveStateRow
+  const row = db
+    .prepare('SELECT rundown_id, project_id FROM live_state WHERE id = 1')
+    .get() as LiveStateRow
 
-  db.prepare(
-    'UPDATE live_state SET live_shot_id = NULL, started_at = NULL, running = 0 WHERE id = 1',
-  ).run()
-
+  liveShotId = null
+  startedAt = null
+  running = false
   liveQueue = []
 
   return {
@@ -170,21 +179,23 @@ export interface NextShotResult {
 }
 
 export function nextShot(db: Database.Database): NextShotResult {
-  const row = db.prepare('SELECT * FROM live_state WHERE id = 1').get() as LiveStateRow
+  const row = db
+    .prepare('SELECT rundown_id, project_id FROM live_state WHERE id = 1')
+    .get() as LiveStateRow
 
-  if (!row.running || !row.rundown_id) {
+  if (!running || !row.rundown_id) {
     throw new Error('Cannot advance: not running')
   }
 
   const visible = getVisibleQueue()
-  const currentIndex = visible.findIndex((s) => s.id === row.live_shot_id)
+  const currentIndex = visible.findIndex((s) => s.id === liveShotId)
   const nextEntry = visible[currentIndex + 1]
 
   if (!nextEntry) {
     // Past last shot → transition to idle
-    db.prepare(
-      'UPDATE live_state SET live_shot_id = NULL, started_at = NULL, running = 0 WHERE id = 1',
-    ).run()
+    liveShotId = null
+    startedAt = null
+    running = false
     liveQueue = []
     return {
       state: {
@@ -198,18 +209,15 @@ export function nextShot(db: Database.Database): NextShotResult {
     }
   }
 
-  const hiddenShotId = row.live_shot_id
+  const hiddenShotId = liveShotId
 
   // Mark current shot as hidden
-  liveQueue = liveQueue.map((s) => (s.id === row.live_shot_id ? { ...s, hidden: true } : s))
+  liveQueue = liveQueue.map((s) => (s.id === liveShotId ? { ...s, hidden: true } : s))
 
   const newLiveIndex = liveQueue.findIndex((s) => s.id === nextEntry.id)
 
-  const startedAt = Date.now()
-
-  db.prepare(
-    'UPDATE live_state SET live_shot_id = ?, started_at = ? WHERE id = 1',
-  ).run(nextEntry.id, startedAt)
+  liveShotId = nextEntry.id
+  startedAt = Date.now()
 
   return {
     state: {
@@ -229,31 +237,41 @@ export interface SkipNextResult {
 }
 
 export function skipNext(db: Database.Database): SkipNextResult {
-  const row = db.prepare('SELECT * FROM live_state WHERE id = 1').get() as LiveStateRow
+  const row = db
+    .prepare('SELECT rundown_id, project_id FROM live_state WHERE id = 1')
+    .get() as LiveStateRow
 
-  if (!row.running || !row.rundown_id) {
+  if (!running || !row.rundown_id) {
     throw new Error('Cannot skip: not running')
   }
 
   const visible = getVisibleQueue()
-  const currentIndex = visible.findIndex((s) => s.id === row.live_shot_id)
+  const currentIndex = visible.findIndex((s) => s.id === liveShotId)
 
   const toSkip = visible[currentIndex + 1]
   if (!toSkip) {
     // Nothing to skip — return current state unchanged
-    return { state: rowToLiveState(row, currentIndex === -1 ? null : currentIndex), hiddenShotId: null }
+    return {
+      state: rowToLiveState(row, currentIndex === -1 ? null : currentIndex),
+      hiddenShotId: null,
+    }
   }
 
   // Mark the next visible shot as hidden (no DB deletion)
   liveQueue = liveQueue.map((s) => (s.id === toSkip.id ? { ...s, hidden: true } : s))
 
-  const newLiveIndex = liveQueue.findIndex((s) => s.id === row.live_shot_id)
+  const newLiveIndex = liveQueue.findIndex((s) => s.id === liveShotId)
 
-  return { state: rowToLiveState(row, newLiveIndex === -1 ? null : newLiveIndex), hiddenShotId: toSkip.id }
+  return {
+    state: rowToLiveState(row, newLiveIndex === -1 ? null : newLiveIndex),
+    hiddenShotId: toSkip.id,
+  }
 }
 
 export function restartLive(db: Database.Database): LiveState {
-  const row = db.prepare('SELECT * FROM live_state WHERE id = 1').get() as LiveStateRow
+  const row = db
+    .prepare('SELECT rundown_id, project_id FROM live_state WHERE id = 1')
+    .get() as LiveStateRow
 
   if (!row.rundown_id) {
     throw new Error('Cannot restart: no active rundown')
@@ -266,12 +284,9 @@ export function restartLive(db: Database.Database): LiveState {
 
   liveQueue = shots.map((s) => ({ ...s, hidden: false }))
 
-  const liveShotId = shots[0].id
-  const startedAt = Date.now()
-
-  db.prepare(
-    'UPDATE live_state SET live_shot_id = ?, started_at = ?, running = 1 WHERE id = 1',
-  ).run(liveShotId, startedAt)
+  liveShotId = shots[0].id
+  startedAt = Date.now()
+  running = true
 
   return {
     rundownId: row.rundown_id,
