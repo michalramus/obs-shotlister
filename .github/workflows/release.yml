@@ -18,7 +18,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: yarn
 
       - name: Extract version from tag
@@ -45,7 +45,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: yarn
 
       - run: yarn install --frozen-lockfile
@@ -72,7 +72,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: yarn
 
       - run: yarn install --frozen-lockfile
@@ -97,7 +97,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: yarn
 
       - run: yarn install --frozen-lockfile
