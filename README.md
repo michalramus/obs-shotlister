@@ -186,7 +186,9 @@ OBS ←→ obs-websocket ←→ Electron main ←→ SQLite
 
 14. editing timeline in live mode should be forgidden
 15. waveform generation and video playback on large files
-
+16. When OBS IP is provided, there is no possibility to change it
+17. when creating new cameras, automatically assign correct camera colors
+18. when switching projects, folders are not refreshed
 ```
 Error occurred in handler for 'media:read-file': RangeError [ERR_FS_FILE_TOO_LARGE]: File size (3180545949) is greater than 2 GiB
     at new NodeError (node:internal/errors:406:5)
