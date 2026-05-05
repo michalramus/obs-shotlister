@@ -499,7 +499,20 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
     await window.api.obs.setEnabled(enabled)
   }
 
+  async function handleSaveSettings(): Promise<void> {
+    setError(null)
+    try {
+      await window.api.obs.saveSettings({ url, password })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed.')
+    }
+  }
+
   async function handleConnect(): Promise<void> {
+    if (obsStatus === 'connecting') {
+      window.api.obs.disconnect()
+      setObsStatus('disconnected')
+    }
     setLoading(true)
     setError(null)
     setValidationResult(null)
@@ -608,6 +621,13 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
               disabled={!obsEnabled || obsStatus === 'connected'}
             />
           </div>
+          {obsEnabled && obsStatus !== 'connected' && (
+            <div style={{ marginTop: '8px' }}>
+              <button style={s.refreshBtn} onClick={() => void handleSaveSettings()}>
+                Save settings
+              </button>
+            </div>
+          )}
 
           <div style={{ ...s.statusRow, marginTop: '12px' }}>
             <div style={s.dot(obsStatus)} />
@@ -622,9 +642,9 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
               <button
                 style={s.connectBtn(obsStatus)}
                 onClick={() => void handleConnect()}
-                disabled={loading || obsStatus === 'connecting' || !obsEnabled}
+                disabled={loading || !obsEnabled}
               >
-                {loading ? 'Connecting...' : 'Connect'}
+                {loading ? 'Connecting...' : obsStatus === 'connecting' ? 'Reconnect' : 'Connect'}
               </button>
             )}
           </div>
