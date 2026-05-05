@@ -1,6 +1,6 @@
 {
   "name": "obs-queuer",
-  "version": "0.1.0",
+  "version": "0.1.1-test",
   "description": "Electron app for OBS camera queue management with embedded web server for phone browsers",
   "author": "obs-queuer",
   "main": "./out/main/index.js",
