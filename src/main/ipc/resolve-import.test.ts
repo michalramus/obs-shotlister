@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { applyMigrations } from '../db/index'
-import { parseTimecode, parseResolveCSV, confirmResolveImport } from './resolve-import'
+import { parseTimecode, parseResolveCSV, confirmResolveImport, splitCsvLine } from './resolve-import'
 import { listShots } from './shots'
 
 // ---------------------------------------------------------------------------
@@ -239,5 +239,121 @@ describe('confirmResolveImport — replace', () => {
     expect(allShots[0].label).toBe('New')
 
     db.close()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// CSV field splitting
+// ---------------------------------------------------------------------------
+
+describe('splitCsvLine', () => {
+  it('splits unquoted fields', () => {
+    expect(splitCsvLine('Wide,00:00:05:00,Red')).toEqual(['Wide', '00:00:05:00', 'Red'])
+  })
+
+  it('keeps commas inside quoted fields', () => {
+    expect(splitCsvLine('"Wide, then push in",00:00:05:00,Red')).toEqual([
+      'Wide, then push in',
+      '00:00:05:00',
+      'Red',
+    ])
+  })
+
+  it('unescapes doubled quotes', () => {
+    expect(splitCsvLine('"He said ""go""",00:00:01:00,Blue')).toEqual([
+      'He said "go"',
+      '00:00:01:00',
+      'Blue',
+    ])
+  })
+
+  it('preserves empty fields', () => {
+    expect(splitCsvLine('a,,c')).toEqual(['a', '', 'c'])
+  })
+})
+
+describe('parseResolveCSV with quoted names', () => {
+  it('does not shift columns when a marker name contains a comma', () => {
+    const csv = ['Name,Duration,Color', '"Wide, then push in",00:00:05:00,Red'].join('\n')
+    const result = parseResolveCSV(csv)
+    expect(result.rows).toEqual([
+      { label: 'Wide, then push in', durationTimecode: '00:00:05:00', resolveColor: 'Red' },
+    ])
+    expect(result.colors).toEqual(['Red'])
+  })
+})
+
+describe('parseTimecode fps validation', () => {
+  it.each([0, -1, NaN, Infinity])('rejects fps %s', (fps) => {
+    expect(() => parseTimecode('00:00:01:12', fps)).toThrow(/Invalid fps/)
+  })
+})
+
+describe('confirmResolveImport atomicity', () => {
+  let db: Database.Database
+  let rundownId: string
+  let cameraId: string
+
+  beforeEach(() => {
+    db = new Database(':memory:')
+    applyMigrations(db)
+    db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run('p1', 'P', 0)
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('c1', 'p1', 1, 'CAM1', '#fff')
+    db.prepare('INSERT INTO rundowns (id, project_id, name, created_at) VALUES (?, ?, ?, ?)').run(
+      'r1',
+      'p1',
+      'R',
+      0,
+    )
+    rundownId = 'r1'
+    cameraId = 'c1'
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('imports nothing when a later row has a bad timecode', () => {
+    expect(() =>
+      confirmResolveImport(db, {
+        rundownId,
+        mode: 'append',
+        mapping: { Red: cameraId },
+        rows: [
+          { label: 'ok', durationTimecode: '00:00:05:00', resolveColor: 'Red' },
+          { label: 'bad', durationTimecode: 'nonsense', resolveColor: 'Red' },
+        ],
+        fps: 25,
+      }),
+    ).toThrow()
+
+    expect(listShots(db, rundownId)).toEqual([])
+  })
+
+  it('does not drop existing shots when a replace import fails', () => {
+    confirmResolveImport(db, {
+      rundownId,
+      mode: 'append',
+      mapping: { Red: cameraId },
+      rows: [{ label: 'existing', durationTimecode: '00:00:05:00', resolveColor: 'Red' }],
+      fps: 25,
+    })
+    expect(listShots(db, rundownId)).toHaveLength(1)
+
+    expect(() =>
+      confirmResolveImport(db, {
+        rundownId,
+        mode: 'replace',
+        mapping: { Red: cameraId },
+        rows: [{ label: 'bad', durationTimecode: 'nonsense', resolveColor: 'Red' }],
+        fps: 25,
+      }),
+    ).toThrow()
+
+    const remaining = listShots(db, rundownId)
+    expect(remaining).toHaveLength(1)
+    expect(remaining[0].label).toBe('existing')
   })
 })

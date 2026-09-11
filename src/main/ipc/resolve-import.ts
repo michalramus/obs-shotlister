@@ -42,6 +42,9 @@ export interface ConfirmImportInput {
  * durationMs = (HH*3600 + MM*60 + SS) * 1000 + (FF / fps) * 1000
  */
 export function parseTimecode(timecode: string, fps: number): number {
+  if (!Number.isFinite(fps) || fps <= 0) {
+    throw new Error(`Invalid fps: ${fps}`)
+  }
   const parts = timecode.split(':')
   if (parts.length !== 4) {
     throw new Error(`Invalid timecode format: "${timecode}". Expected HH:MM:SS:FF`)
@@ -61,6 +64,42 @@ export function parseTimecode(timecode: string, fps: number): number {
 // ---------------------------------------------------------------------------
 
 /**
+ * Splits one CSV record into fields, honouring double-quoted fields so that a
+ * marker name containing a comma does not shift every later column.
+ * A doubled quote inside a quoted field is a literal quote.
+ */
+export function splitCsvLine(line: string): string[] {
+  const fields: string[] = []
+  let field = ''
+  let inQuotes = false
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]
+    if (inQuotes) {
+      if (char === '"') {
+        if (line[i + 1] === '"') {
+          field += '"'
+          i++
+        } else {
+          inQuotes = false
+        }
+      } else {
+        field += char
+      }
+    } else if (char === '"') {
+      inQuotes = true
+    } else if (char === ',') {
+      fields.push(field)
+      field = ''
+    } else {
+      field += char
+    }
+  }
+  fields.push(field)
+  return fields
+}
+
+/**
  * Parses a DaVinci Resolve marker CSV export.
  * Expects columns: Name, Duration, Color (case-insensitive header matching).
  */
@@ -70,7 +109,7 @@ export function parseResolveCSV(csvContent: string): ParseResult {
     throw new Error('CSV is empty')
   }
 
-  const headers = lines[0].split(',').map((h) => h.trim().toLowerCase())
+  const headers = splitCsvLine(lines[0]).map((h) => h.trim().toLowerCase())
 
   const nameIdx = headers.indexOf('name')
   const durationIdx = headers.indexOf('duration')
@@ -89,7 +128,7 @@ export function parseResolveCSV(csvContent: string): ParseResult {
     const line = lines[i].trim()
     if (!line) continue
 
-    const cols = line.split(',')
+    const cols = splitCsvLine(line)
     const label = (cols[nameIdx] ?? '').trim()
     const durationTimecode = (cols[durationIdx] ?? '').trim()
     const resolveColor = (cols[colorIdx] ?? '').trim()
@@ -105,30 +144,39 @@ export function parseResolveCSV(csvContent: string): ParseResult {
 // Import confirmation
 // ---------------------------------------------------------------------------
 
-export function confirmResolveImport(db: Database.Database, input: ConfirmImportInput): import('../../shared/types').Shot[] {
+export function confirmResolveImport(
+  db: Database.Database,
+  input: ConfirmImportInput,
+): import('../../shared/types').Shot[] {
   const { rundownId, mode, mapping, rows, fps } = input
 
-  if (mode === 'replace') {
-    db.prepare('DELETE FROM shots WHERE rundown_id = ?').run(rundownId)
-  }
+  // All-or-nothing: a bad timecode partway through must not leave the rundown
+  // holding half an import.
+  const run = db.transaction((): import('../../shared/types').Shot[] => {
+    if (mode === 'replace') {
+      db.prepare('DELETE FROM shots WHERE rundown_id = ?').run(rundownId)
+    }
 
-  const imported: import('../../shared/types').Shot[] = []
+    const imported: import('../../shared/types').Shot[] = []
 
-  for (const row of rows) {
-    const cameraId = mapping[row.resolveColor]
-    if (!cameraId) continue // unmapped — skip
+    for (const row of rows) {
+      const cameraId = mapping[row.resolveColor]
+      if (!cameraId) continue // unmapped — skip
 
-    const durationMs = parseTimecode(row.durationTimecode, fps)
+      const durationMs = parseTimecode(row.durationTimecode, fps)
 
-    const shot = createShot(db, {
-      rundownId,
-      cameraId,
-      durationMs,
-      label: row.label || null,
-    })
+      const shot = createShot(db, {
+        rundownId,
+        cameraId,
+        durationMs,
+        label: row.label || null,
+      })
 
-    imported.push(shot)
-  }
+      imported.push(shot)
+    }
 
-  return imported
+    return imported
+  })
+
+  return run()
 }
