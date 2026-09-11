@@ -1,0 +1,22 @@
+[package]
+name = "shotlister-tray"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "Plays a shotlister Live session's audio cues on the video switching computer"
+license = "MIT"
+publish = false
+
+[dependencies]
+
+[build-dependencies]
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+# Deliberately unwind, not abort: this runs unattended during a show, so a panic in the
+# socket or audio thread must be contained and recovered rather than killing the process
+# mid-programme. The ~300 KB abort would save is bought back by pruning rodio's features.
+panic = "unwind"
