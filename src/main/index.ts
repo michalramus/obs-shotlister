@@ -16,7 +16,6 @@ import type {
   OBSConnectionStatus,
   OBSValidateResult,
   TransitionMapping,
-  LiveState,
 } from '../shared/ipc-contract'
 import { getDatabase } from './db/index'
 import {
@@ -41,6 +40,8 @@ import { createLiveSession } from './live/session'
 import type { LiveSession } from './live/session'
 import { createOBSSwitcher } from './obs/switcher'
 import type { OBSSwitcher } from './obs/switcher'
+import { createChangePublisher } from './publisher'
+import type { ChangePublisher } from './publisher'
 import { parseResolveCSV, confirmResolveImport } from './ipc/resolve-import'
 import { createOBSClient } from './obs/client'
 import { runOBSValidation } from './obs/validation'
@@ -84,6 +85,7 @@ const obsClient = createOBSClient()
 // Created once the database is open, in app.whenReady().
 let live: LiveSession
 let obs: OBSSwitcher
+let publish: ChangePublisher
 let obsAutoReconnect = false
 let obsReconnectTimer: ReturnType<typeof setTimeout> | null = null
 let currentUiMode: 'edit' | 'live' = 'edit'
@@ -129,8 +131,8 @@ function handleOscNext(): void {
       if (!liveState.rundownId) return
       const previewFirst = getPreviewFirst(db)
       const state = live.start(liveState.rundownId)
-      broadcastLiveState(state)
-      broadcastRundown()
+      publish.liveStateChanged(state)
+      publish.rundownChanged()
       if (previewFirst) {
         obs.startFromPreview().catch(console.error)
       } else {
@@ -141,9 +143,9 @@ function handleOscNext(): void {
 
     if (live.isInTransition()) return
     const { state, hiddenShotId } = live.next()
-    broadcastLiveState(state)
-    if (!state.running) broadcastRundown()
-    if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
+    publish.liveStateChanged(state)
+    if (!state.running) publish.rundownChanged()
+    if (hiddenShotId) publish.shotHidden(hiddenShotId)
     obs.takeLiveShot().catch(console.error)
   } catch (err) {
     console.error('[osc] next error:', err)
@@ -154,10 +156,9 @@ function handleOscSkip(): void {
   if (currentUiMode !== 'live') return
   try {
     const { state, hiddenShotId } = live.skipNext()
-    broadcastLiveState(state)
+    publish.liveStateChanged(state)
     if (hiddenShotId) {
-      if (_io) broadcastShotHidden(_io, hiddenShotId)
-      broadcastShotHiddenToRenderer(hiddenShotId)
+      publish.shotHidden(hiddenShotId)
     }
     obs.cueNextShot().catch(console.error)
   } catch (err) {
@@ -223,24 +224,24 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler('rundowns:create', (payload: { projectId: string; name: string }) => {
     const rundown = createRundown(db, payload.projectId, payload.name)
-    broadcastRundown()
+    publish.rundownChanged()
     return rundown
   })
 
   registerIpcHandler('rundowns:rename', (payload: { id: string; name: string }) => {
     const rundown = renameRundown(db, payload.id, payload.name)
-    broadcastRundown()
+    publish.rundownChanged()
     return rundown
   })
 
   registerIpcHandler('rundowns:delete', (payload: { id: string }) => {
     deleteRundown(db, payload.id)
-    broadcastRundown()
+    publish.rundownChanged()
   })
 
   registerIpcHandler('rundowns:setActive', (payload: { rundownId: string | null }) => {
     live.setActiveRundown(payload.rundownId)
-    broadcastRundown()
+    publish.rundownChanged()
     if (payload.rundownId) {
       obs.cueRundownStart(payload.rundownId).catch((e: unknown) =>
         console.error('[OBS] cueRundownStart:', e),
@@ -261,7 +262,7 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler('project:setActive', (payload: { projectId: string | null }) => {
     live.setActiveProject(payload.projectId)
-    broadcastRundown()
+    publish.rundownChanged()
   })
 
   // Shots
@@ -275,29 +276,29 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler('shots:create', (payload: CreateShotInput) => {
     const shot = createShot(db, payload)
-    broadcastRundown()
+    publish.rundownChanged()
     return shot
   })
 
   registerIpcHandler('shots:update', (payload: UpdateShotInput) => {
     const shot = updateShot(db, payload)
-    broadcastRundown()
+    publish.rundownChanged()
     return shot
   })
 
   registerIpcHandler('shots:delete', (payload: { id: string; mode?: DeleteShotMode }) => {
     deleteShot(db, payload.id, payload.mode)
-    broadcastRundown()
+    publish.rundownChanged()
   })
 
   registerIpcHandler('shots:reorder', (payload: { ids: string[] }) => {
     reorderShots(db, payload.ids)
-    broadcastRundown()
+    publish.rundownChanged()
   })
 
   registerIpcHandler('shots:split', (payload: SplitShotInput) => {
     const result = splitShot(db, payload)
-    broadcastRundown()
+    publish.rundownChanged()
     return result
   })
 
@@ -306,8 +307,8 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler('live:start', (payload: { rundownId: string; previewFirst?: boolean }) => {
     const state = live.start(payload.rundownId)
-    broadcastLiveState(state)
-    broadcastRundown()
+    publish.liveStateChanged(state)
+    publish.rundownChanged()
     if (payload.previewFirst) {
       obs.startFromPreview().catch(console.error)
     } else {
@@ -318,30 +319,30 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler('live:stop', () => {
     const state = live.stop()
-    broadcastLiveState(state)
-    broadcastRundown()
+    publish.liveStateChanged(state)
+    publish.rundownChanged()
     return state
   })
 
   registerIpcHandler('live:next', () => {
     const { state, hiddenShotId } = live.next()
-    broadcastLiveState(state)
-    if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
+    publish.liveStateChanged(state)
+    if (hiddenShotId) publish.shotHidden(hiddenShotId)
     obs.takeLiveShot().catch(console.error)
     return state
   })
 
   registerIpcHandler('live:skip-next', () => {
     const { state, hiddenShotId } = live.skipNext()
-    broadcastLiveState(state)
-    if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
+    publish.liveStateChanged(state)
+    if (hiddenShotId) publish.shotHidden(hiddenShotId)
     obs.cueNextShot().catch(console.error)
     return state
   })
 
   registerIpcHandler('live:restart', () => {
     const state = live.restart()
-    broadcastLiveState(state)
+    publish.liveStateChanged(state)
     obs.takeLiveShot().catch(console.error)
     return state
   })
@@ -634,7 +635,7 @@ function registerIpcHandlers(): void {
     const raw = await fsPromises.readFile(result.filePaths[0], 'utf-8')
     const data = JSON.parse(raw)
     const newProjectId = importProjectData(getDatabase(), data)
-    broadcastRundown()
+    publish.rundownChanged()
     return newProjectId
   })
 
@@ -647,7 +648,7 @@ function registerIpcHandlers(): void {
     const raw = await fsPromises.readFile(result.filePaths[0], 'utf-8')
     const data = JSON.parse(raw)
     const newRundownId = importRundownData(getDatabase(), projectId, data)
-    broadcastRundown()
+    publish.rundownChanged()
     return newRundownId
   })
 
@@ -660,7 +661,7 @@ function registerIpcHandlers(): void {
     const raw = await fsPromises.readFile(result.filePaths[0], 'utf-8')
     const data = JSON.parse(raw)
     importDatabaseData(getDatabase(), data)
-    broadcastRundown()
+    publish.rundownChanged()
     return true
   })
 }
@@ -671,7 +672,6 @@ function registerIpcHandlers(): void {
 // ---------------------------------------------------------------------------
 
 import type { Server as SocketServer } from 'socket.io'
-import { broadcastRundownState, broadcastShotHidden } from './server/socket'
 
 let _io: SocketServer | null = null
 let _db: ReturnType<typeof getDatabase> | null = null
@@ -680,25 +680,6 @@ export function setSocketServer(io: SocketServer): void {
   _io = io
 }
 
-function broadcastLiveState(state: LiveState): void {
-  if (!_io) return
-  _io.emit('state:live', {
-    liveIndex: state.liveIndex,
-    elapsedMs: state.startedAt !== null ? Date.now() - state.startedAt : null,
-  })
-  _io.emit('state:playback', { running: state.running })
-  pushToWindow('live:state-push', state)
-}
-
-function broadcastShotHiddenToRenderer(shotId: string): void {
-  pushToWindow('live:shot-hidden-push', shotId)
-}
-
-function broadcastRundown(): void {
-  if (!_io || !_db) return
-  const shots = live.getQueue().length > 0 ? live.getShotsWithHiddenFlags() : undefined
-  broadcastRundownState(_io, _db, live, shots)
-}
 
 app.whenReady().then(() => {
   // Serve local media files via media:// protocol (avoids cross-origin issues in dev mode)
@@ -763,6 +744,7 @@ app.whenReady().then(() => {
   _db = getDatabase()
   live = createLiveSession(_db)
   obs = createOBSSwitcher(_db, obsClient, live)
+  publish = createChangePublisher(_db, live, () => _io)
   live.clear()
   registerIpcHandlers()
   const audioDir = app.isPackaged
