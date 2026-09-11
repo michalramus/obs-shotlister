@@ -706,7 +706,7 @@ function registerIpcHandlers(): void {
     const raw = await fsPromises.readFile(result.filePaths[0], 'utf-8')
     const data = JSON.parse(raw)
     const newProjectId = importProjectData(getDatabase(), data)
-    broadcastRundownState(getDatabase(), _io)
+    broadcastRundown()
     return newProjectId
   })
 
@@ -719,7 +719,7 @@ function registerIpcHandlers(): void {
     const raw = await fsPromises.readFile(result.filePaths[0], 'utf-8')
     const data = JSON.parse(raw)
     const newRundownId = importRundownData(getDatabase(), projectId, data)
-    broadcastRundownState(getDatabase(), _io)
+    broadcastRundown()
     return newRundownId
   })
 
@@ -732,7 +732,7 @@ function registerIpcHandlers(): void {
     const raw = await fsPromises.readFile(result.filePaths[0], 'utf-8')
     const data = JSON.parse(raw)
     importDatabaseData(getDatabase(), data)
-    broadcastRundownState(getDatabase(), _io)
+    broadcastRundown()
     return true
   })
 }
