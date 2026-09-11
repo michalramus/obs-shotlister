@@ -204,3 +204,46 @@ describe('applyMigrations', () => {
     })
   })
 })
+
+describe('indexes', () => {
+  let database: Database.Database
+
+  beforeEach(() => {
+    database = new Database(':memory:')
+    applyMigrations(database)
+  })
+
+  afterEach(() => {
+    database.close()
+  })
+
+  it.each([
+    ['idx_shots_rundown', 'shots'],
+    ['idx_cameras_project', 'cameras'],
+    ['idx_rundowns_project', 'rundowns'],
+    ['idx_markers_rundown', 'markers'],
+  ])('creates %s', (name, table) => {
+    const row = database
+      .prepare("SELECT name, tbl_name FROM sqlite_master WHERE type = 'index' AND name = ?")
+      .get(name) as { name: string; tbl_name: string } | undefined
+    expect(row).toEqual({ name, tbl_name: table })
+  })
+
+  it('uses the shots index instead of scanning when listing a rundown', () => {
+    const plan = database
+      .prepare(
+        'EXPLAIN QUERY PLAN SELECT id FROM shots WHERE rundown_id = ? ORDER BY order_index ASC',
+      )
+      .all('r1') as Array<{ detail: string }>
+    const detail = plan.map((p) => p.detail).join(' ')
+    expect(detail).toContain('idx_shots_rundown')
+    expect(detail).not.toContain('SCAN shots')
+  })
+
+  it('adds const_length_ms to transition_mappings on a fresh database', () => {
+    const cols = database
+      .prepare('PRAGMA table_info(transition_mappings)')
+      .all() as Array<{ name: string }>
+    expect(cols.map((c) => c.name)).toContain('const_length_ms')
+  })
+})

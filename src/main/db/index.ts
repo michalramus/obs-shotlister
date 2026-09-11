@@ -90,11 +90,6 @@ export function applyMigrations(database: Database.Database): void {
   } catch (_) {
     /* column exists */
   }
-  try {
-    database.exec('ALTER TABLE transition_mappings ADD COLUMN const_length_ms INTEGER')
-  } catch (_) {
-    /* column exists */
-  }
   database.exec(`
     CREATE TABLE IF NOT EXISTS settings (
       key   TEXT PRIMARY KEY,
@@ -117,6 +112,22 @@ export function applyMigrations(database: Database.Database): void {
     INSERT OR IGNORE INTO transition_mappings (logical_name, obs_transition_name) VALUES
       ('cut', 'Cut'),
       ('fade', 'Fade');
+  `)
+
+  // Must run after transition_mappings exists, or it always throws on a fresh DB.
+  try {
+    database.exec('ALTER TABLE transition_mappings ADD COLUMN const_length_ms INTEGER')
+  } catch (_) {
+    /* column exists */
+  }
+
+  // Every hot read filters by a foreign key: listShots runs on each OBS cut and
+  // on each broadcast, so without these each one is a full scan plus a sort.
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_shots_rundown ON shots(rundown_id, order_index);
+    CREATE INDEX IF NOT EXISTS idx_cameras_project ON cameras(project_id);
+    CREATE INDEX IF NOT EXISTS idx_rundowns_project ON rundowns(project_id);
+    CREATE INDEX IF NOT EXISTS idx_markers_rundown ON markers(rundown_id);
   `)
 }
 
