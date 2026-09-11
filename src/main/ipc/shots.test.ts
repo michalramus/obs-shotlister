@@ -277,3 +277,125 @@ describe('reorderShots', () => {
     expect(result[1].orderIndex).toBe(1)
   })
 })
+
+describe('deleteShot modes', () => {
+  let db: Database.Database
+  let rundownId: string
+  let cameraId: string
+
+  beforeEach(() => {
+    db = new Database(':memory:')
+    applyMigrations(db)
+    db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run('p1', 'P', 0)
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('c1', 'p1', 1, 'CAM1', '#fff')
+    db.prepare('INSERT INTO rundowns (id, project_id, name, created_at) VALUES (?, ?, ?, ?)').run(
+      'r1',
+      'p1',
+      'R',
+      0,
+    )
+    rundownId = 'r1'
+    cameraId = 'c1'
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  function seed(durations: number[]): Shot[] {
+    return durations.map((durationMs, i) =>
+      createShot(db, { rundownId, cameraId, durationMs, label: `s${i}` }),
+    )
+  }
+
+  const totalMs = (): number =>
+    listShots(db, rundownId).reduce((sum, s) => sum + s.durationMs, 0)
+
+  describe("default mode ('extend')", () => {
+    it('gives the deleted time to the shot on the left', () => {
+      const [, b] = seed([1000, 2000, 3000])
+      deleteShot(db, b.id)
+
+      const shots = listShots(db, rundownId)
+      expect(shots.map((s) => s.durationMs)).toEqual([3000, 3000])
+      expect(shots.map((s) => s.label)).toEqual(['s0', 's2'])
+    })
+
+    it('keeps the total rundown length unchanged', () => {
+      const [, b] = seed([1000, 2000, 3000])
+      const before = totalMs()
+      deleteShot(db, b.id)
+      expect(totalMs()).toBe(before)
+    })
+
+    it('keeps later shots at the same absolute start time', () => {
+      const [, b] = seed([1000, 2000, 3000])
+      deleteShot(db, b.id)
+
+      // s2 started at 3000ms before the delete; the extended s0 still ends there.
+      const shots = listShots(db, rundownId)
+      expect(shots[0].durationMs).toBe(3000)
+    })
+
+    it('extends the shot on the right when deleting the first shot', () => {
+      const [a] = seed([1000, 2000, 3000])
+      deleteShot(db, a.id)
+
+      const shots = listShots(db, rundownId)
+      expect(shots.map((s) => s.durationMs)).toEqual([3000, 3000])
+      expect(shots.map((s) => s.label)).toEqual(['s1', 's2'])
+      expect(totalMs()).toBe(6000)
+    })
+
+    it('just removes the row when it is the only shot', () => {
+      const [only] = seed([1000])
+      deleteShot(db, only.id)
+      expect(listShots(db, rundownId)).toEqual([])
+    })
+
+    it('extends the previous shot when deleting the last shot', () => {
+      const [, , c] = seed([1000, 2000, 3000])
+      deleteShot(db, c.id)
+
+      const shots = listShots(db, rundownId)
+      expect(shots.map((s) => s.durationMs)).toEqual([1000, 5000])
+    })
+
+    it('does not touch shots in another rundown', () => {
+      db.prepare('INSERT INTO rundowns (id, project_id, name, created_at) VALUES (?, ?, ?, ?)').run(
+        'r2',
+        'p1',
+        'R2',
+        0,
+      )
+      const other = createShot(db, { rundownId: 'r2', cameraId, durationMs: 9000 })
+      const [, b] = seed([1000, 2000])
+      deleteShot(db, b.id)
+
+      expect(listShots(db, 'r2')).toEqual([expect.objectContaining({ id: other.id, durationMs: 9000 })])
+    })
+  })
+
+  describe("'ripple' mode", () => {
+    it('removes the shot without changing its neighbours', () => {
+      const [, b] = seed([1000, 2000, 3000])
+      deleteShot(db, b.id, 'ripple')
+
+      const shots = listShots(db, rundownId)
+      expect(shots.map((s) => s.durationMs)).toEqual([1000, 3000])
+      expect(shots.map((s) => s.label)).toEqual(['s0', 's2'])
+    })
+
+    it('shortens the rundown by the deleted duration', () => {
+      const [, b] = seed([1000, 2000, 3000])
+      deleteShot(db, b.id, 'ripple')
+      expect(totalMs()).toBe(4000)
+    })
+  })
+
+  it.each(['extend', 'ripple'] as const)('throws for an unknown id in %s mode', (mode) => {
+    expect(() => deleteShot(db, 'nope', mode)).toThrow(/Shot not found/)
+  })
+})

@@ -130,12 +130,57 @@ export function updateShot(db: Database.Database, input: UpdateShotInput): Shot 
   return rowToShot(updated)
 }
 
-export function deleteShot(db: Database.Database, id: string): void {
-  const result = db.prepare('DELETE FROM shots WHERE id = ?').run(id)
+/**
+ * How the timeline closes the gap left by a deleted shot.
+ *
+ * - `extend`: the neighbouring shot absorbs the deleted duration, so every later
+ *   shot keeps its absolute position and the rundown's total length is unchanged.
+ * - `ripple`: the shot is simply removed and everything after it moves earlier,
+ *   shortening the rundown.
+ */
+export type DeleteShotMode = 'extend' | 'ripple'
 
-  if (result.changes === 0) {
+export function deleteShot(
+  db: Database.Database,
+  id: string,
+  mode: DeleteShotMode = 'extend',
+): void {
+  const existing = db
+    .prepare('SELECT id, rundown_id, duration_ms, order_index FROM shots WHERE id = ?')
+    .get(id) as Pick<ShotRow, 'id' | 'rundown_id' | 'duration_ms' | 'order_index'> | undefined
+
+  if (!existing) {
     throw new Error(`Shot not found: ${id}`)
   }
+
+  if (mode === 'ripple') {
+    db.prepare('DELETE FROM shots WHERE id = ?').run(id)
+    return
+  }
+
+  // Prefer the shot to the left; deleting the first shot has none, so the shot
+  // to the right absorbs the time instead and the timeline still starts at 0.
+  const neighbour = (db
+    .prepare(
+      'SELECT id FROM shots WHERE rundown_id = ? AND order_index < ? ORDER BY order_index DESC LIMIT 1',
+    )
+    .get(existing.rundown_id, existing.order_index) ??
+    db
+      .prepare(
+        'SELECT id FROM shots WHERE rundown_id = ? AND order_index > ? ORDER BY order_index ASC LIMIT 1',
+      )
+      .get(existing.rundown_id, existing.order_index)) as { id: string } | undefined
+
+  const run = db.transaction(() => {
+    if (neighbour) {
+      db.prepare('UPDATE shots SET duration_ms = duration_ms + ? WHERE id = ?').run(
+        existing.duration_ms,
+        neighbour.id,
+      )
+    }
+    db.prepare('DELETE FROM shots WHERE id = ?').run(id)
+  })
+  run()
 }
 
 export function reorderShots(db: Database.Database, ids: string[]): void {
