@@ -90,6 +90,16 @@ function buildWaveformPath(peaks: number[] | null, width: number, halfHeight: nu
   return `M${top.join('L')}L${bottom.join('L')}Z`
 }
 
+/** Id of the shot the given timeline position falls inside, or null past the end. */
+function shotIdAtMs(shots: Shot[], ms: number): string | null {
+  let acc = 0
+  for (const shot of shots) {
+    if (ms < acc + shot.durationMs) return shot.id
+    acc += shot.durationMs
+  }
+  return null
+}
+
 interface DragState {
   shotA: Shot
   shotB: Shot
@@ -290,24 +300,17 @@ export function TimelineEditor({
     return () => clearTimeout(t)
   }, [selectedShotId])
 
-  // Auto-select shot under playhead during edit-mode playback
+  // Auto-select shot under playhead during edit-mode playback.
+  // Keyed on the shot the playhead is inside rather than on playheadMs, so this
+  // re-runs when the playhead crosses a boundary instead of on every commit.
+  const shotIdUnderPlayhead = shotIdAtMs(shots, playheadMs)
   useEffect(() => {
     if (!isPlaying || running) return
-    // Find which shot the playhead is on
-    let acc = 0
-    let shotUnderPlayhead: string | null = null
-    for (const shot of shots) {
-      if (playheadMs < acc + shot.durationMs) {
-        shotUnderPlayhead = shot.id
-        break
-      }
-      acc += shot.durationMs
+    if (shotIdUnderPlayhead !== null && shotIdUnderPlayhead !== prevAutoShotIdRef.current) {
+      prevAutoShotIdRef.current = shotIdUnderPlayhead
+      onShotClick(shotIdUnderPlayhead)
     }
-    if (shotUnderPlayhead !== null && shotUnderPlayhead !== prevAutoShotIdRef.current) {
-      prevAutoShotIdRef.current = shotUnderPlayhead
-      onShotClick(shotUnderPlayhead)
-    }
-  }, [playheadMs, isPlaying, running, shots, onShotClick])
+  }, [shotIdUnderPlayhead, isPlaying, running, onShotClick])
 
   // Decode waveform when media file changes
   useEffect(() => {
@@ -709,17 +712,7 @@ export function TimelineEditor({
       if ((e.key === 'l' || e.key === 'L') && !running) {
         e.preventDefault()
         // Use selected shot, or fall back to shot under playhead
-        let shotId = selectedShotIdRef.current
-        if (!shotId) {
-          let acc = 0
-          for (const shot of shotsRef.current) {
-            if (playheadMsRef.current < acc + shot.durationMs) {
-              shotId = shot.id
-              break
-            }
-            acc += shot.durationMs
-          }
-        }
+        const shotId = selectedShotIdRef.current ?? shotIdAtMs(shotsRef.current, playheadMsRef.current)
         if (shotId) {
           // Stop playback so the label input can retain focus
           setIsPlaying((prev) => {
