@@ -5,8 +5,8 @@
   "author": "obs-queuer",
   "main": "./out/main/index.js",
   "scripts": {
-    "rebuild:electron": "electron-rebuild -f -w better-sqlite3",
-    "rebuild:node": "npm rebuild better-sqlite3",
+    "rebuild:electron": "node scripts/prepare-native.mjs electron",
+    "rebuild:node": "node scripts/prepare-native.mjs node",
     "dev": "yarn rebuild:electron && electron-vite dev",
     "build": "yarn rebuild:electron && electron-vite build && vite build --config vite.config.web.ts",
     "build:web": "vite build --config vite.config.web.ts",
@@ -16,8 +16,8 @@
     "dist:linux": "yarn build && electron-builder --linux",
     "lint": "eslint src --ext .ts,.tsx",
     "format": "prettier --write src",
-    "test": "yarn rebuild:node && vitest run",
-    "test:watch": "yarn rebuild:node && vitest"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
