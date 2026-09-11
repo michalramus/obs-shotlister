@@ -488,8 +488,50 @@ function UngroupedDropZone(): React.JSX.Element {
   return <li ref={setNodeRef} style={{ height: '4px', listStyle: 'none' }} aria-hidden="true" />
 }
 
+/** A folder name scoped to the project it belongs to. */
+export interface LocalFolder {
+  projectId: string
+  name: string
+}
+
+export function foldersFromRundowns(rundowns: Rundown[]): LocalFolder[] {
+  return rundowns
+    .filter((r): r is Rundown & { folder: string } => r.folder !== null)
+    .map((r) => ({ projectId: r.projectId, name: r.folder }))
+}
+
+export function dedupeFolders(folders: LocalFolder[]): LocalFolder[] {
+  const seen = new Set<string>()
+  return folders.filter((f) => {
+    const key = `${f.projectId}\u0000${f.name}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+/**
+ * Folder names to show for one project: those carried by its rundowns, plus any
+ * empty folders created locally for it. Folders belonging to other projects are
+ * excluded — otherwise they persist in the sidebar after switching project.
+ */
+export function visibleFolderNames(
+  localFolders: LocalFolder[],
+  rundowns: Rundown[],
+  activeProjectId: string | null,
+): string[] {
+  return Array.from(
+    new Set(
+      dedupeFolders([...localFolders, ...foldersFromRundowns(rundowns)])
+        .filter((f) => f.projectId === activeProjectId)
+        .map((f) => f.name),
+    ),
+  )
+}
+
 export function RundownSidebar(): React.JSX.Element {
   const rundowns = useAppStore((s) => s.rundowns)
+  const activeProjectId = useAppStore((s) => s.activeProjectId)
   const activeRundownId = useAppStore((s) => s.activeRundownId)
   const running = useAppStore((s) => s.running)
   const setActiveRundown = useAppStore((s) => s.setActiveRundown)
@@ -509,8 +551,11 @@ export function RundownSidebar(): React.JSX.Element {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null)
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
-  const [localFolders, setLocalFolders] = useState<string[]>(() =>
-    Array.from(new Set(rundowns.map((r) => r.folder).filter((f): f is string => f !== null))),
+  // Folders with no rundowns yet exist only here, so they cannot be re-derived
+  // from `rundowns` — they must carry the project they belong to, or they leak
+  // into every project the user switches to afterwards.
+  const [localFolders, setLocalFolders] = useState<LocalFolder[]>(() =>
+    foldersFromRundowns(rundowns),
   )
   const [activeId, setActiveId] = useState<string | null>(null)
   const [overId, setOverId] = useState<string | null>(null)
@@ -523,9 +568,13 @@ export function RundownSidebar(): React.JSX.Element {
 
   // Sync localFolders when rundowns change (add new folders from rundowns)
   useEffect(() => {
-    const fromRundowns = rundowns.map((r) => r.folder).filter((f): f is string => f !== null)
-    setLocalFolders((prev) => Array.from(new Set([...prev, ...fromRundowns])))
+    setLocalFolders((prev) => dedupeFolders([...prev, ...foldersFromRundowns(rundowns)]))
   }, [rundowns])
+
+  // Collapse state is per-folder-name, so it must not carry across projects either.
+  useEffect(() => {
+    setCollapsedFolders(new Set())
+  }, [activeProjectId])
 
   useEffect(() => {
     if (showNewInput) newInputRef.current?.focus()
@@ -547,13 +596,8 @@ export function RundownSidebar(): React.JSX.Element {
     return () => window.removeEventListener('mousedown', handler)
   }, [contextMenu])
 
-  // Compute all displayed folders
-  const displayedFolders = Array.from(
-    new Set([
-      ...localFolders,
-      ...rundowns.map((r) => r.folder).filter((f): f is string => f !== null),
-    ]),
-  )
+  // Compute all displayed folders — only those belonging to the active project.
+  const displayedFolders = visibleFolderNames(localFolders, rundowns, activeProjectId)
 
   const activeRundown = activeId ? rundowns.find((r) => r.id === activeId) : null
 
@@ -591,8 +635,8 @@ export function RundownSidebar(): React.JSX.Element {
 
   function handleCreateFolder(): void {
     const trimmed = newFolderName.trim()
-    if (trimmed && !localFolders.includes(trimmed)) {
-      setLocalFolders((prev) => [...prev, trimmed])
+    if (trimmed && activeProjectId !== null && !displayedFolders.includes(trimmed)) {
+      setLocalFolders((prev) => [...prev, { projectId: activeProjectId, name: trimmed }])
     }
     setShowFolderInput(false)
     setNewFolderName('')
@@ -668,7 +712,11 @@ export function RundownSidebar(): React.JSX.Element {
     for (const rd of inFolder) {
       await handleSetFolder(rd.id, newName)
     }
-    setLocalFolders((prev) => prev.map((f) => (f === oldName ? newName : f)))
+    setLocalFolders((prev) =>
+      prev.map((f) =>
+        f.projectId === activeProjectId && f.name === oldName ? { ...f, name: newName } : f,
+      ),
+    )
     setCollapsedFolders((prev) => {
       const next = new Set(prev)
       if (next.has(oldName)) {
@@ -684,7 +732,9 @@ export function RundownSidebar(): React.JSX.Element {
     for (const rd of inFolder) {
       await handleSetFolder(rd.id, null)
     }
-    setLocalFolders((prev) => prev.filter((f) => f !== folderName))
+    setLocalFolders((prev) =>
+      prev.filter((f) => !(f.projectId === activeProjectId && f.name === folderName)),
+    )
   }
 
   function toggleCollapse(folderName: string): void {
