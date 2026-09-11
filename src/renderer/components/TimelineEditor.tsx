@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Shot, Camera, Marker } from '../../shared/types'
 import { toMediaUrl } from '../../shared/media-url'
 
@@ -41,6 +41,13 @@ const CAM_BUTTONS_HEIGHT = 48
 const OVERVIEW_HEIGHT = 24
 const PLAYHEAD_FIXED_PX = 120
 
+// Waveform is a rough visual guide, so decode it at a low sample rate and cap the
+// number of peaks: at 40/s an hour-long file produced 144k buckets (and 144k SVG
+// nodes). The cap keeps a full feature film under ~20k points.
+const WAVEFORM_SAMPLE_RATE = 8000
+const PEAKS_PER_SECOND = 40
+const MAX_WAVEFORM_BUCKETS = 20000
+
 function formatTime(ms: number): string {
   const totalSec = Math.floor(ms / 1000)
   const min = Math.floor(totalSec / 60)
@@ -50,6 +57,31 @@ function formatTime(ms: number): string {
 
 function formatPlayhead(ms: number): string {
   return `${Math.floor(ms / 60000)}:${((ms % 60000) / 1000).toFixed(1).padStart(4, '0')}`
+}
+
+/**
+ * Renders the peak envelope as one filled path. Emitting a <rect> per peak meant
+ * tens of thousands of SVG nodes rebuilt on every render; this is a single node,
+ * downsampled to at most one point per horizontal pixel.
+ */
+function buildWaveformPath(peaks: number[] | null, width: number, halfHeight: number): string {
+  if (peaks === null || peaks.length === 0 || width <= 0) return ''
+  const points = Math.max(1, Math.min(peaks.length, Math.ceil(width)))
+  const step = peaks.length / points
+  const top: string[] = []
+  const bottom: string[] = []
+  for (let i = 0; i < points; i++) {
+    const from = Math.floor(i * step)
+    const to = Math.min(peaks.length, Math.max(from + 1, Math.floor((i + 1) * step)))
+    let max = 0
+    for (let j = from; j < to; j++) max = Math.max(max, peaks[j])
+    const x = ((i / points) * width).toFixed(2)
+    const y = max * halfHeight
+    top.push(`${x},${(halfHeight - y).toFixed(2)}`)
+    bottom.push(`${x},${(halfHeight + y).toFixed(2)}`)
+  }
+  bottom.reverse()
+  return `M${top.join('L')}L${bottom.join('L')}Z`
 }
 
 interface DragState {
@@ -301,36 +333,39 @@ export function TimelineEditor({
       }
 
       try {
-        const buf = await window.api.mediaReadFile(rundownMedia!.filePath)
-        // Save a copy of raw bytes BEFORE decodeAudioData detaches the ArrayBuffer
-        const srcBuffer: ArrayBuffer =
-          buf instanceof ArrayBuffer
-            ? buf
-            : (buf as Buffer).buffer.slice(
-                (buf as Buffer).byteOffset,
-                (buf as Buffer).byteOffset + (buf as Buffer).byteLength,
-              )
-        // Give decodeAudioData its own copy (it will consume/detach it)
-        const arrayBufferForDecode = srcBuffer.slice(0)
-        const audioCtx = new AudioContext()
+        // Stream the bytes through the media:// protocol rather than pulling the
+        // whole file across IPC — a multi-GB video would otherwise be structured-
+        // cloned into the renderer and copied again before decoding.
+        const response = await fetch(toMediaUrl(rundownMedia!.filePath))
+        if (!response.ok) {
+          if (!cancelled) setWaveformError(true)
+          return
+        }
+        const arrayBufferForDecode = await response.arrayBuffer()
+        if (cancelled) return
+
+        // Decoding through an OfflineAudioContext resamples to its sample rate,
+        // so we decode at WAVEFORM_SAMPLE_RATE instead of the file's full rate.
+        const audioCtx = new OfflineAudioContext(1, 1, WAVEFORM_SAMPLE_RATE)
         let audioBuffer: AudioBuffer
         try {
           audioBuffer = await audioCtx.decodeAudioData(arrayBufferForDecode)
         } catch (decodeErr) {
           console.error('[TimelineEditor] decodeAudioData error:', decodeErr)
-          await audioCtx.close()
           if (!cancelled) setWaveformError(true)
           return
         }
-        await audioCtx.close()
         if (cancelled) return
 
         setMediaDurationMs(audioBuffer.duration * 1000)
 
         const channelData = audioBuffer.getChannelData(0)
         const totalSamples = channelData.length
-        const numBuckets = Math.ceil(audioBuffer.duration * 40)
-        const bucketSize = Math.floor(totalSamples / numBuckets)
+        const numBuckets = Math.max(
+          1,
+          Math.min(Math.ceil(audioBuffer.duration * PEAKS_PER_SECOND), MAX_WAVEFORM_BUCKETS),
+        )
+        const bucketSize = Math.max(1, Math.floor(totalSamples / numBuckets))
         const peaks: number[] = []
         for (let i = 0; i < numBuckets; i++) {
           let max = 0
@@ -342,6 +377,7 @@ export function TimelineEditor({
         if (!cancelled) setWaveformData(peaks)
       } catch (err) {
         console.error('[TimelineEditor] waveform decode error:', err)
+        if (!cancelled) setWaveformError(true)
       }
     }
     void decode()
@@ -353,6 +389,12 @@ export function TimelineEditor({
       }
     }
   }, [rundownMedia?.filePath]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const waveformSvgWidth = (mediaDurationMs / 1000) * zoomPxPerSec
+  const waveformPath = useMemo(
+    () => buildWaveformPath(waveformData, waveformSvgWidth, MEDIA_ROW_HEIGHT / 2),
+    [waveformData, waveformSvgWidth],
+  )
 
   const totalMs = shots.reduce((sum, s) => sum + s.durationMs, 0)
   const totalPx = Math.max((totalMs / 1000) * zoomPxPerSec, 300)
@@ -1408,9 +1450,8 @@ export function TimelineEditor({
           {(() => {
             const effectiveOffset = mediaOffsetOverride ?? rundownMedia?.offsetMs ?? 0
             const offsetPx = (effectiveOffset / 1000) * zoomPxPerSec
-            const svgWidth = (mediaDurationMs / 1000) * zoomPxPerSec
+            const svgWidth = waveformSvgWidth
             const trackHeightPx = MEDIA_ROW_HEIGHT
-            const halfHeight = trackHeightPx / 2
 
             return (
               <div
@@ -1504,21 +1545,7 @@ export function TimelineEditor({
                       </span>
                     ) : (
                       <svg width={svgWidth} height={trackHeightPx} style={{ display: 'block' }}>
-                        {waveformData.map((peak, i) => {
-                          const x = (i / waveformData.length) * svgWidth
-                          const barWidth = Math.max(1, svgWidth / waveformData.length)
-                          const barHeight = peak * halfHeight * 2
-                          return (
-                            <rect
-                              key={i}
-                              x={x}
-                              y={halfHeight - barHeight / 2}
-                              width={barWidth}
-                              height={barHeight}
-                              fill="rgba(39,174,96,0.7)"
-                            />
-                          )
-                        })}
+                        <path d={waveformPath} fill="rgba(39,174,96,0.7)" />
                       </svg>
                     )}
 

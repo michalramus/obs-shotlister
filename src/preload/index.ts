@@ -105,7 +105,6 @@ export interface ElectronApi {
     setMode: (mode: 'edit' | 'live') => Promise<void>
   }
   mediaFileExists: (filePath: string) => Promise<boolean>
-  mediaReadFile: (filePath: string) => Promise<Buffer>
   exportImport: {
     exportProject: (args: { projectId: string }) => Promise<void>
     exportRundown: (args: { rundownId: string }) => Promise<void>
@@ -216,7 +215,6 @@ const api: ElectronApi = {
     openDialog: () => ipcRenderer.invoke('rundown:media:open-dialog'),
   },
   mediaFileExists: (filePath) => ipcRenderer.invoke('media:file-exists', filePath),
-  mediaReadFile: (filePath) => ipcRenderer.invoke('media:read-file', filePath),
   exportImport: {
     exportProject: (args) => ipcRenderer.invoke('export:project', args),
     exportRundown: (args) => ipcRenderer.invoke('export:rundown', args),

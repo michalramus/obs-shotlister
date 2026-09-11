@@ -160,7 +160,7 @@ export interface ElectronApi {
   ui: {
     setMode: (mode: 'edit' | 'live') => Promise<void>
   }
-  mediaReadFile: (filePath: string) => Promise<ArrayBuffer>
+  mediaFileExists: (filePath: string) => Promise<boolean>
   exportImport: {
     exportProject: (args: { projectId: string }) => Promise<void>
     exportRundown: (args: { rundownId: string }) => Promise<void>

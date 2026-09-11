@@ -608,10 +608,6 @@ function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('media:read-file', (_e, filePath: string) => {
-    return readFileSync(filePath)
-  })
-
   ipcMain.handle('rundown:media:open-dialog', async () => {
     const result = await dialog.showOpenDialog({
       properties: ['openFile'],
