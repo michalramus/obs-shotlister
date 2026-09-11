@@ -37,20 +37,10 @@ import {
   setRundownFolder,
 } from './ipc/rundowns'
 import { listShots, createShot, updateShot, deleteShot, reorderShots, splitShot } from './ipc/shots'
-import {
-  getLiveState,
-  getLiveQueue,
-  getLiveProgress,
-  startLive,
-  stopLive,
-  nextShot,
-  skipNext,
-  restartLive,
-  setActiveRundown,
-  setActiveProject,
-  clearLiveState,
-} from './ipc/live'
-import { getCameraById } from './ipc/projects'
+import { createLiveSession } from './live/session'
+import type { LiveSession } from './live/session'
+import { createOBSSwitcher } from './obs/switcher'
+import type { OBSSwitcher } from './obs/switcher'
 import { parseResolveCSV, confirmResolveImport } from './ipc/resolve-import'
 import { createOBSClient } from './obs/client'
 import { runOBSValidation } from './obs/validation'
@@ -69,7 +59,6 @@ import {
   listTransitionMappings,
   upsertTransitionMapping,
   deleteTransitionMapping,
-  resolveTransitionFull,
 } from './ipc/transitions'
 import { listMarkers, upsertMarker, deleteMarker } from './ipc/markers'
 import type { UpsertMarkerInput } from './ipc/markers'
@@ -91,6 +80,10 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 const obsClient = createOBSClient()
+
+// Created once the database is open, in app.whenReady().
+let live: LiveSession
+let obs: OBSSwitcher
 let obsAutoReconnect = false
 let obsReconnectTimer: ReturnType<typeof setTimeout> | null = null
 let currentUiMode: 'edit' | 'live' = 'edit'
@@ -116,7 +109,7 @@ function sendValidationResult(result: OBSValidateResult | null): void {
 }
 
 function runValidation(database: ReturnType<typeof getDatabase>): void {
-  runOBSValidation(database, obsClient)
+  runOBSValidation(database, obsClient, live)
     .then(sendValidationResult)
     .catch((err: unknown) => {
       console.error('[OBS] validation error:', err)
@@ -125,53 +118,33 @@ function runValidation(database: ReturnType<typeof getDatabase>): void {
 
 // --- OSC helpers -------------------------------------------------------------
 
-interface ShotTransitionRow {
-  transition_ms: number
-}
-
-function isOscInTransition(db: ReturnType<typeof getDatabase>): boolean {
-  try {
-    // Live progress lives in memory only — live_state has no progress columns.
-    const { liveShotId, startedAt, running } = getLiveProgress()
-    if (!running || !liveShotId || startedAt === null) return false
-    const shot = db.prepare('SELECT transition_ms FROM shots WHERE id = ?').get(liveShotId) as
-      | ShotTransitionRow
-      | undefined
-    if (!shot || shot.transition_ms <= 0) return false
-    return Date.now() - startedAt < shot.transition_ms
-  } catch (err) {
-    console.error('[osc] isOscInTransition error:', err)
-    return false
-  }
-}
-
 function handleOscNext(): void {
   if (currentUiMode !== 'live') return
   try {
     const db = getDatabase()
-    const liveState = getLiveState(db)
+    const liveState = live.getState()
 
     if (!liveState.running) {
       // Mirror space bar: start the rundown if one is active and not yet running
       if (!liveState.rundownId) return
       const previewFirst = getPreviewFirst(db)
-      const state = startLive(db, liveState.rundownId)
+      const state = live.start(liveState.rundownId)
       broadcastLiveState(state)
       broadcastRundown()
       if (previewFirst) {
-        startWithPreviewFirst(state, db).catch(console.error)
+        obs.startFromPreview().catch(console.error)
       } else {
-        switchOBSScenes(state, db).catch(console.error)
+        obs.takeLiveShot().catch(console.error)
       }
       return
     }
 
-    if (isOscInTransition(db)) return
-    const { state, hiddenShotId } = nextShot(db)
+    if (live.isInTransition()) return
+    const { state, hiddenShotId } = live.next()
     broadcastLiveState(state)
     if (!state.running) broadcastRundown()
     if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
-    switchOBSScenes(state, db).catch(console.error)
+    obs.takeLiveShot().catch(console.error)
   } catch (err) {
     console.error('[osc] next error:', err)
   }
@@ -180,14 +153,13 @@ function handleOscNext(): void {
 function handleOscSkip(): void {
   if (currentUiMode !== 'live') return
   try {
-    const db = getDatabase()
-    const { state, hiddenShotId } = skipNext(db)
+    const { state, hiddenShotId } = live.skipNext()
     broadcastLiveState(state)
     if (hiddenShotId) {
       if (_io) broadcastShotHidden(_io, hiddenShotId)
       broadcastShotHiddenToRenderer(hiddenShotId)
     }
-    switchOBSPreview(state, db).catch(console.error)
+    obs.cueNextShot().catch(console.error)
   } catch (err) {
     console.error('[osc] skip error:', err)
   }
@@ -267,11 +239,11 @@ function registerIpcHandlers(): void {
   })
 
   registerIpcHandler('rundowns:setActive', (payload: { rundownId: string | null }) => {
-    setActiveRundown(db, payload.rundownId)
+    live.setActiveRundown(payload.rundownId)
     broadcastRundown()
     if (payload.rundownId) {
-      setOBSPreviewForRundownOpen(db, payload.rundownId).catch((e: unknown) =>
-        console.error('[OBS] previewOnOpen:', e),
+      obs.cueRundownStart(payload.rundownId).catch((e: unknown) =>
+        console.error('[OBS] cueRundownStart:', e),
       )
     }
   })
@@ -288,16 +260,15 @@ function registerIpcHandlers(): void {
   )
 
   registerIpcHandler('project:setActive', (payload: { projectId: string | null }) => {
-    setActiveProject(db, payload.projectId)
+    live.setActiveProject(payload.projectId)
     broadcastRundown()
   })
 
   // Shots
   registerIpcHandler('shots:list', (payload: { rundownId: string }) => {
-    const queue = getLiveQueue()
-    if (queue.length > 0) {
-      const hiddenIds = new Set(queue.filter((s) => s.hidden).map((s) => s.id))
-      return listShots(db, payload.rundownId).map((s) => ({ ...s, hidden: hiddenIds.has(s.id) }))
+    // The Live queue's hidden flags only apply to the Rundown being run.
+    if (payload.rundownId === live.getState().rundownId) {
+      return live.getShotsWithHiddenFlags()
     }
     return listShots(db, payload.rundownId)
   })
@@ -331,47 +302,47 @@ function registerIpcHandlers(): void {
   })
 
   // Live controls
-  registerIpcHandler('live:get', () => getLiveState(db))
+  registerIpcHandler('live:get', () => live.getState())
 
   registerIpcHandler('live:start', (payload: { rundownId: string; previewFirst?: boolean }) => {
-    const state = startLive(db, payload.rundownId)
+    const state = live.start(payload.rundownId)
     broadcastLiveState(state)
     broadcastRundown()
     if (payload.previewFirst) {
-      startWithPreviewFirst(state, db).catch(console.error)
+      obs.startFromPreview().catch(console.error)
     } else {
-      switchOBSScenes(state, db).catch(console.error)
+      obs.takeLiveShot().catch(console.error)
     }
     return state
   })
 
   registerIpcHandler('live:stop', () => {
-    const state = stopLive(db)
+    const state = live.stop()
     broadcastLiveState(state)
     broadcastRundown()
     return state
   })
 
   registerIpcHandler('live:next', () => {
-    const { state, hiddenShotId } = nextShot(db)
+    const { state, hiddenShotId } = live.next()
     broadcastLiveState(state)
     if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
-    switchOBSScenes(state, db).catch(console.error)
+    obs.takeLiveShot().catch(console.error)
     return state
   })
 
   registerIpcHandler('live:skip-next', () => {
-    const { state, hiddenShotId } = skipNext(db)
+    const { state, hiddenShotId } = live.skipNext()
     broadcastLiveState(state)
     if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
-    switchOBSPreview(state, db).catch(console.error)
+    obs.cueNextShot().catch(console.error)
     return state
   })
 
   registerIpcHandler('live:restart', () => {
-    const state = restartLive(db)
+    const state = live.restart()
     broadcastLiveState(state)
-    switchOBSScenes(state, db).catch(console.error)
+    obs.takeLiveShot().catch(console.error)
     return state
   })
 
@@ -458,7 +429,7 @@ function registerIpcHandlers(): void {
   })
 
   registerIpcHandler('obs:checkScenes', async () => {
-    const liveState = getLiveState(db)
+    const liveState = live.getState()
     if (!liveState.projectId) return { allMapped: false, missing: [] }
     const cameras = listCameras(db, liveState.projectId)
     const camerasWithScene = cameras.filter((c) => c.obsScene)
@@ -477,7 +448,7 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler('obs:validate', async () => {
     try {
-      return await runOBSValidation(db, obsClient)
+      return await runOBSValidation(db, obsClient, live)
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
@@ -694,181 +665,6 @@ function registerIpcHandlers(): void {
   })
 }
 
-// ---------------------------------------------------------------------------
-// OBS scene switching helpers
-// ---------------------------------------------------------------------------
-
-
-async function startWithPreviewFirst(
-  state: LiveState,
-  database: ReturnType<typeof getDatabase>,
-): Promise<void> {
-  if (obsClient.status !== 'connected') {
-    console.warn('[OBS] startWithPreviewFirst: not connected, falling back to switchOBSScenes')
-    return switchOBSScenes(state, database)
-  }
-  if (!state.running || state.liveIndex === null || !state.rundownId) return
-
-  const allShots = listShots(database, state.rundownId)
-  const firstShot = allShots[0]
-  if (!firstShot) return
-
-  const firstCamera = getCameraById(database, firstShot.cameraId)
-  if (!firstCamera?.obsScene) {
-    console.warn('[OBS] startWithPreviewFirst: first shot camera has no obsScene, falling back')
-    return switchOBSScenes(state, database)
-  }
-
-  // 1. SetPreview to first shot's camera
-  console.log('[OBS] startWithPreviewFirst: setPreview ->', firstCamera.obsScene)
-  await obsClient.setCurrentPreviewScene(firstCamera.obsScene)
-
-  // 2. Wait 50ms
-  await new Promise<void>((resolve) => setTimeout(resolve, 50))
-
-  // 3. setTransition: null = cut (duration 0), explicit name uses its own duration
-  const effectiveTransitionMs = firstShot.transitionMs ?? 0
-  const transitionLogical = firstShot.transitionName ?? 'cut'
-  const { obsName, constLengthMs } = resolveTransitionFull(database, transitionLogical)
-  const duration = transitionLogical === 'cut' || constLengthMs !== null ? 0 : effectiveTransitionMs
-  console.log('[OBS] startWithPreviewFirst: setTransition ->', obsName, duration)
-  try {
-    await obsClient.setCurrentSceneTransition(obsName, duration)
-  } catch (e: unknown) {
-    console.error('[OBS] setTransition:', obsName, e)
-  }
-
-  // 4. Execute transition
-  console.log('[OBS] startWithPreviewFirst: triggerTransition')
-  try {
-    await obsClient.triggerStudioModeTransition()
-  } catch (e: unknown) {
-    console.error('[OBS] triggerTransition:', e)
-  }
-
-  // 5. Wait for transition + buffer, then set preview to next shot
-  await new Promise<void>((resolve) => setTimeout(resolve, effectiveTransitionMs + 50))
-
-  const queue = getLiveQueue()
-  const hiddenIds = new Set(queue.filter((s) => s.hidden).map((s) => s.id))
-  const nextVisibleShot = allShots.slice(1).find((s) => !hiddenIds.has(s.id))
-  if (nextVisibleShot) {
-    const nextCamera = getCameraById(database, nextVisibleShot.cameraId)
-    if (nextCamera?.obsScene) {
-      obsClient
-        .setCurrentPreviewScene(nextCamera.obsScene)
-        .catch((e: unknown) => console.error('[OBS] preview next:', e))
-    }
-  }
-}
-
-async function switchOBSScenes(
-  state: LiveState,
-  database: ReturnType<typeof getDatabase>,
-): Promise<void> {
-  if (
-    obsClient.status !== 'connected' ||
-    !state.running ||
-    state.liveIndex === null ||
-    !state.rundownId
-  )
-    return
-
-  // Resolve live shot by ID (safe against index/order_index misalignment)
-  const queue = getLiveQueue()
-  const liveShotId = queue[state.liveIndex]?.id
-  if (!liveShotId) return
-
-  const allShots = listShots(database, state.rundownId)
-  const liveShotIdx = allShots.findIndex((s) => s.id === liveShotId)
-  if (liveShotIdx === -1) return
-
-  const liveShot = allShots[liveShotIdx]
-  const liveCamera = getCameraById(database, liveShot.cameraId)
-
-  const effectiveTransitionMs = liveShot.transitionMs ?? 0
-
-  // 1+2. Configure transition then trigger studio mode transition
-  // null transitionName = cut (duration 0); explicit name overrides with its own duration
-  if (liveCamera?.obsScene) {
-    const transitionLogical = liveShot.transitionName ?? 'cut'
-    const { obsName, constLengthMs } = resolveTransitionFull(database, transitionLogical)
-    const duration =
-      transitionLogical === 'cut' || constLengthMs !== null ? 0 : effectiveTransitionMs
-    try {
-      await obsClient.setCurrentSceneTransition(obsName, duration)
-    } catch (e: unknown) {
-      console.error('[OBS] setTransition: attempted name:', obsName, e)
-    }
-    try {
-      await obsClient.triggerStudioModeTransition()
-    } catch (e: unknown) {
-      console.error('[OBS] program:', e)
-    }
-  }
-
-  // 3. Wait for transition to finish + 50ms buffer before touching preview
-  await new Promise<void>((resolve) => setTimeout(resolve, effectiveTransitionMs + 50))
-
-  // 4. Set next camera to preview
-  const hiddenIds = new Set(queue.filter((s) => s.hidden).map((s) => s.id))
-  const nextVisibleShot = allShots.slice(liveShotIdx + 1).find((s) => !hiddenIds.has(s.id))
-  if (nextVisibleShot) {
-    const nextCamera = getCameraById(database, nextVisibleShot.cameraId)
-    if (nextCamera?.obsScene) {
-      obsClient
-        .setCurrentPreviewScene(nextCamera.obsScene)
-        .catch((e: unknown) => console.error('[OBS] preview:', e))
-    }
-  }
-}
-
-async function setOBSPreviewForRundownOpen(
-  database: ReturnType<typeof getDatabase>,
-  rundownId: string,
-): Promise<void> {
-  if (obsClient.status !== 'connected') return
-  const allShots = listShots(database, rundownId)
-  const firstShot = allShots[0]
-  if (!firstShot) return
-  const camera = getCameraById(database, firstShot.cameraId)
-  if (camera?.obsScene) {
-    await obsClient.setCurrentPreviewScene(camera.obsScene)
-  }
-}
-
-async function switchOBSPreview(
-  state: LiveState,
-  database: ReturnType<typeof getDatabase>,
-): Promise<void> {
-  if (
-    obsClient.status !== 'connected' ||
-    !state.running ||
-    state.liveIndex === null ||
-    !state.rundownId
-  )
-    return
-
-  // Resolve live shot by ID (safe against index/order_index misalignment)
-  const queue = getLiveQueue()
-  const liveShotId = queue[state.liveIndex]?.id
-  if (!liveShotId) return
-
-  const allShots = listShots(database, state.rundownId)
-  const liveShotIdx = allShots.findIndex((s) => s.id === liveShotId)
-  if (liveShotIdx === -1) return
-
-  const hiddenIds = new Set(queue.filter((s) => s.hidden).map((s) => s.id))
-  const nextVisibleShot = allShots.slice(liveShotIdx + 1).find((s) => !hiddenIds.has(s.id))
-  if (nextVisibleShot) {
-    const nextCamera = getCameraById(database, nextVisibleShot.cameraId)
-    if (nextCamera?.obsScene) {
-      obsClient
-        .setCurrentPreviewScene(nextCamera.obsScene)
-        .catch((e: unknown) => console.error('[OBS] preview:', e))
-    }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Socket.io broadcast helpers
@@ -900,20 +696,8 @@ function broadcastShotHiddenToRenderer(shotId: string): void {
 
 function broadcastRundown(): void {
   if (!_io || !_db) return
-  const queue = getLiveQueue()
-  if (queue.length > 0) {
-    const state = getLiveState(_db)
-    if (state.rundownId) {
-      const hiddenIds = new Set(queue.filter((s) => s.hidden).map((s) => s.id))
-      const shotsWithHidden = listShots(_db, state.rundownId).map((s) => ({
-        ...s,
-        hidden: hiddenIds.has(s.id),
-      }))
-      broadcastRundownState(_io, _db, shotsWithHidden)
-      return
-    }
-  }
-  broadcastRundownState(_io, _db)
+  const shots = live.getQueue().length > 0 ? live.getShotsWithHiddenFlags() : undefined
+  broadcastRundownState(_io, _db, live, shots)
 }
 
 app.whenReady().then(() => {
@@ -977,12 +761,14 @@ app.whenReady().then(() => {
   })
 
   _db = getDatabase()
-  clearLiveState(_db)
+  live = createLiveSession(_db)
+  obs = createOBSSwitcher(_db, obsClient, live)
+  live.clear()
   registerIpcHandlers()
   const audioDir = app.isPackaged
     ? join(process.resourcesPath, 'audio')
     : join(app.getAppPath(), 'resources', 'audio')
-  const io = startServer(_db, audioDir, (message) => {
+  const io = startServer(_db, live, audioDir, (message) => {
     pushToWindow('server:error', message)
   })
   if (io) setSocketServer(io)

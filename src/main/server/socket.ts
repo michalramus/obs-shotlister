@@ -1,7 +1,7 @@
 import { Server } from 'socket.io'
 import type { Server as HttpServer } from 'http'
 import type { Database } from 'better-sqlite3'
-import { getLiveState, getLiveQueue } from '../ipc/live'
+import type { LiveSession } from '../live/session'
 import { listShots } from '../ipc/shots'
 import { getRundown } from '../ipc/rundowns'
 import { listCameras } from '../ipc/projects'
@@ -13,8 +13,12 @@ export interface RundownStatePayload {
   cameras: Camera[]
 }
 
-function buildRundownState(db: Database, shotsOverride?: Shot[]): RundownStatePayload {
-  const liveState = getLiveState(db)
+function buildRundownState(
+  db: Database,
+  session: LiveSession,
+  shotsOverride?: Shot[],
+): RundownStatePayload {
+  const liveState = session.getState()
   const rundownId = liveState.rundownId
   if (!rundownId) {
     if (liveState.projectId) {
@@ -32,7 +36,11 @@ function buildRundownState(db: Database, shotsOverride?: Shot[]): RundownStatePa
   return { rundown, shots, cameras }
 }
 
-export function attachSocketServer(httpServer: HttpServer, db?: Database): Server {
+export function attachSocketServer(
+  httpServer: HttpServer,
+  db?: Database,
+  session?: LiveSession,
+): Server {
   const io = new Server(httpServer, {
     cors: { origin: '*' },
   })
@@ -41,21 +49,18 @@ export function attachSocketServer(httpServer: HttpServer, db?: Database): Serve
     // eslint-disable-next-line no-console
     console.info(`[socket.io] client connected: ${socket.id}`)
 
-    if (db) {
+    if (db && session) {
       try {
-        const liveState = getLiveState(db)
+        const liveState = session.getState()
         socket.emit('state:live', {
           liveIndex: liveState.liveIndex,
           elapsedMs: liveState.startedAt !== null ? Date.now() - liveState.startedAt : null,
         })
         socket.emit('state:playback', { running: liveState.running })
 
-        let shotsOverride: Shot[] | undefined
-        if (getLiveQueue().length > 0 && liveState.rundownId) {
-          const hiddenIds = new Set(getLiveQueue().filter((s) => s.hidden).map((s) => s.id))
-          shotsOverride = listShots(db, liveState.rundownId).map((s) => ({ ...s, hidden: hiddenIds.has(s.id) }))
-        }
-        socket.emit('state:rundown', buildRundownState(db, shotsOverride))
+        const shotsOverride =
+          session.getQueue().length > 0 ? session.getShotsWithHiddenFlags() : undefined
+        socket.emit('state:rundown', buildRundownState(db, session, shotsOverride))
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('[socket.io] error sending initial state:', err)
@@ -80,9 +85,14 @@ export function broadcastShotHidden(io: Server, shotId: string): void {
   }
 }
 
-export function broadcastRundownState(io: Server, db: Database, shotsOverride?: Shot[]): void {
+export function broadcastRundownState(
+  io: Server,
+  db: Database,
+  session: LiveSession,
+  shotsOverride?: Shot[],
+): void {
   try {
-    io.emit('state:rundown', buildRundownState(db, shotsOverride))
+    io.emit('state:rundown', buildRundownState(db, session, shotsOverride))
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[socket.io] broadcastRundownState error:', err)

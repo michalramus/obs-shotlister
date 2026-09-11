@@ -6,11 +6,13 @@ import routes from './routes'
 import { attachSocketServer } from './socket'
 import type { Server as SocketServer } from 'socket.io'
 import type { Database } from 'better-sqlite3'
+import type { LiveSession } from '../live/session'
 
 const PORT = process.env['PORT'] ? parseInt(process.env['PORT'], 10) : 3000
 
 export function startServer(
   db?: Database,
+  session?: LiveSession,
   audioDir?: string,
   onError?: (message: string) => void,
 ): SocketServer {
@@ -36,7 +38,7 @@ export function startServer(
 
   const httpServer = createServer(app)
 
-  const io = attachSocketServer(httpServer, db)
+  const io = attachSocketServer(httpServer, db, session)
 
   // listen() reports failures via 'error', not a throw — without this an
   // EADDRINUSE reaches uncaughtException and the app runs with no phone server.

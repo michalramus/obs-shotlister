@@ -8,20 +8,21 @@
 
 import type Database from 'better-sqlite3'
 import type { OBSClient } from './client'
+import type { LiveSession } from '../live/session'
 import type { OBSValidateResult } from '../../shared/ipc-contract'
 import { listCameras } from '../ipc/projects'
 import { listShots } from '../ipc/shots'
-import { getLiveState } from '../ipc/live'
 import { resolveTransition } from '../ipc/transitions'
 
 /** Returns null when OBS is not connected — there is nothing to validate against. */
 export async function runOBSValidation(
   db: Database.Database,
   client: OBSClient,
+  session: LiveSession,
 ): Promise<OBSValidateResult | null> {
   if (client.status !== 'connected') return null
 
-  const liveState = getLiveState(db)
+  const liveState = session.getState()
   const [studioModeEnabled, scenes, transitions] = await Promise.all([
     client.getStudioModeEnabled(),
     client.getSceneList(),
