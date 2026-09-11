@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatMs, computeTiming } from './timing'
+import { formatMs, computeTiming, computeRemainingMs } from './timing'
 import type { Shot, Camera } from './types'
 
 // ---------------------------------------------------------------------------
@@ -252,5 +252,48 @@ describe('computeTiming — effectiveDurationMs', () => {
     const cameras = [makeCamera('cam-1', 1), makeCamera('cam-2', 2)]
     const result = computeTiming(shots, cameras, 0, 0, 2000)
     expect(result.nextVisibleIndex).toBe(2)
+  })
+})
+
+describe('computeRemainingMs', () => {
+  const shot = (id: string, durationMs: number, hidden = false): Shot => ({
+    id,
+    rundownId: 'r1',
+    cameraId: 'c1',
+    durationMs,
+    label: null,
+    orderIndex: 0,
+    hidden,
+    transitionName: null,
+    transitionMs: 0,
+  })
+
+  it('returns null when nothing is live', () => {
+    expect(computeRemainingMs([shot('a', 1000)], null, 1000, 1000)).toBeNull()
+    expect(computeRemainingMs([shot('a', 1000)], 0, null, 1000)).toBeNull()
+  })
+
+  it('counts down from the shot duration', () => {
+    expect(computeRemainingMs([shot('a', 5000)], 0, 1000, 3000)).toBe(3000)
+  })
+
+  it('clamps to zero past expiry', () => {
+    expect(computeRemainingMs([shot('a', 5000)], 0, 1000, 99999)).toBe(0)
+  })
+
+  it('absorbs consecutive hidden shots after the live one', () => {
+    const shots = [shot('a', 5000), shot('b', 2000, true), shot('c', 3000)]
+    expect(computeRemainingMs(shots, 0, 0, 0)).toBe(7000)
+  })
+
+  it('stops absorbing at the first visible shot', () => {
+    const shots = [shot('a', 5000), shot('b', 2000), shot('c', 3000, true)]
+    expect(computeRemainingMs(shots, 0, 0, 0)).toBe(5000)
+  })
+
+  it('agrees with computeTiming', () => {
+    const shots = [shot('a', 5000), shot('b', 2000, true), shot('c', 3000)]
+    const full = computeTiming(shots, [], 0, 1000, 2500)
+    expect(computeRemainingMs(shots, 0, 1000, 2500)).toBe(full.remainingMs)
   })
 })

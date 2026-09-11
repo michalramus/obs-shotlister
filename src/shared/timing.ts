@@ -34,6 +34,37 @@ export interface TimingResult {
 }
 
 /**
+ * Effective duration of the live shot: its own duration plus any immediately
+ * following hidden shots, which the operator never switches to.
+ */
+export function effectiveDurationMs(shots: Shot[], liveIndex: number): number | null {
+  const liveShot = shots[liveIndex]
+  if (!liveShot) return null
+  let total = liveShot.durationMs
+  for (let i = liveIndex + 1; i < shots.length; i++) {
+    if (shots[i].hidden) total += shots[i].durationMs
+    else break
+  }
+  return total
+}
+
+/**
+ * Milliseconds left on the live shot. Cheaper than {@link computeTiming} when
+ * only the countdown is needed — no camera lookup, no next-visible search.
+ */
+export function computeRemainingMs(
+  shots: Shot[],
+  liveIndex: number | null,
+  startedAt: number | null,
+  now: number,
+): number | null {
+  if (liveIndex === null || startedAt === null) return null
+  const total = effectiveDurationMs(shots, liveIndex)
+  if (total === null) return null
+  return Math.max(0, total - (now - startedAt))
+}
+
+/**
  * Computes timing values for the shotlist.
  *
  * @param shots - all shots in order
@@ -75,14 +106,10 @@ export function computeTiming(
   }
 
   // Effective duration = live shot + consecutive hidden shots immediately after
-  let effectiveDurationMs = liveShot.durationMs
-  for (let i = liveIndex + 1; i < shots.length; i++) {
-    if (shots[i].hidden) effectiveDurationMs += shots[i].durationMs
-    else break
-  }
+  const effectiveDuration = effectiveDurationMs(shots, liveIndex) ?? liveShot.durationMs
 
   const elapsed = now - startedAt
-  const remainingMs = Math.max(0, effectiveDurationMs - elapsed)
+  const remainingMs = Math.max(0, effectiveDuration - elapsed)
 
   // Find next visible index (first shot after liveIndex that passes filter)
   const hasFilter = cameraFilter !== undefined && cameraFilter.length > 0
@@ -113,7 +140,7 @@ export function computeTiming(
       remainingMs,
       timeUntilNextVisibleMs: null,
       totalTimeUntilNextVisibleMs: null,
-      effectiveDurationMs,
+      effectiveDurationMs: effectiveDuration,
     }
   }
 
@@ -125,7 +152,7 @@ export function computeTiming(
   }
 
   const timeUntilNextVisibleMs = remainingMs + intermediateMs
-  const totalTimeUntilNextVisibleMs = effectiveDurationMs + intermediateMs
+  const totalTimeUntilNextVisibleMs = effectiveDuration + intermediateMs
 
   return {
     liveIndex,
@@ -133,7 +160,7 @@ export function computeTiming(
     remainingMs,
     timeUntilNextVisibleMs,
     totalTimeUntilNextVisibleMs,
-    effectiveDurationMs,
+    effectiveDurationMs: effectiveDuration,
   }
 }
 

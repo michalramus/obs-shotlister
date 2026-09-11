@@ -1,6 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { Shot, Camera } from '../types'
-import { formatMs, computeTiming } from '../timing'
+import { formatMs, computeTiming, computeRemainingMs } from '../timing'
+
+// The countdown renders tenths of a second, so ticking faster than this only
+// costs phone battery — the old loop re-rendered the whole list at 60fps.
+const TICK_INTERVAL_MS = 50
 
 export interface ShotlistWidgetProps {
   rundownName: string
@@ -201,6 +205,8 @@ export function ShotlistWidget({
   audioVolume = 1,
 }: ShotlistWidgetProps): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now())
+  const audioPoolRef = useRef<Map<string, HTMLAudioElement>>(new Map())
+  const lastTickRef = useRef(0)
   const [headerFlash, setHeaderFlash] = useState(false)
   const rafRef = useRef<number | null>(null)
   const liveRef = useRef<HTMLLIElement | null>(null)
@@ -217,7 +223,38 @@ export function ShotlistWidget({
   const prevLiveIndexForFilterBeepRef = useRef<number | null>(null)
   const filteredCamWasLiveRef = useRef<boolean>(false)
 
-  // 60fps ticker while running
+  // Preload the cue sounds once: constructing an Audio per beep put a network
+  // fetch on the countdown's critical path.
+  useEffect(() => {
+    if (!audioBaseUrl) return
+    const pool = audioPoolRef.current
+    for (const name of ['one.opus', 'two.opus', 'three.opus', 'beep.opus', 'beep-low.opus']) {
+      if (pool.has(name)) continue
+      const audio = new Audio(`${audioBaseUrl}/${name}`)
+      audio.preload = 'auto'
+      pool.set(name, audio)
+    }
+    return () => {
+      pool.clear()
+    }
+  }, [audioBaseUrl])
+
+  const playCue = useCallback(
+    (filename: string): void => {
+      if (!audioBaseUrl) return
+      let audio = audioPoolRef.current.get(filename)
+      if (!audio) {
+        audio = new Audio(`${audioBaseUrl}/${filename}`)
+        audioPoolRef.current.set(filename, audio)
+      }
+      audio.volume = audioVolume
+      audio.currentTime = 0
+      audio.play().catch((err: unknown) => console.error('[ShotlistWidget] audio error:', err))
+    },
+    [audioBaseUrl, audioVolume],
+  )
+
+  // Ticker while running
   useEffect(() => {
     if (!running) {
       if (rafRef.current !== null) {
@@ -231,6 +268,11 @@ export function ShotlistWidget({
     function tick(): void {
       if (!active) return
       const tickNow = Date.now()
+      if (tickNow - lastTickRef.current < TICK_INTERVAL_MS) {
+        rafRef.current = requestAnimationFrame(tick)
+        return
+      }
+      lastTickRef.current = tickNow
       setNow(tickNow)
 
       // Countdown and natural beep (unfiltered mode only)
@@ -249,22 +291,14 @@ export function ShotlistWidget({
           prevStartedAtForAudioRef.current = startedAt
         }
 
-        const timingNow = computeTiming(shots, cameras, liveIndex, startedAt, tickNow, cameraFilter)
-        const remainingSec =
-          timingNow.remainingMs !== null ? Math.floor(timingNow.remainingMs / 1000) : null
-        const remainingMs = timingNow.remainingMs
+        // Only the countdown is needed here, so skip the full timing computation.
+        const remainingMs = computeRemainingMs(shots, liveIndex, startedAt, tickNow)
+        const remainingSec = remainingMs !== null ? Math.floor(remainingMs / 1000) : null
 
         const prevSec = prevRemainingSecRef.current
         if (remainingSec !== null) prevRemainingSecRef.current = remainingSec
         const prevMs = prevRemainingMsRef.current
         if (remainingMs !== null) prevRemainingMsRef.current = remainingMs
-
-        // Helper to play a sound file with volume control
-        const playAudio = (filename: string): void => {
-          const audio = new Audio(`${audioBaseUrl}/${filename}`)
-          audio.volume = audioVolume
-          audio.play().catch((err: unknown) => console.error('[ShotlistWidget] audio error:', err))
-        }
 
         // Countdown 3→1: play word at END of that second (when it ticks away)
         // e.g. play 'three' when remainingSec goes from 3 to 2
@@ -277,7 +311,7 @@ export function ShotlistWidget({
           prevSec <= 3
         ) {
           const words: Record<number, string> = { 1: 'one', 2: 'two', 3: 'three' }
-          playAudio(`${words[prevSec]}.opus`)
+          playCue(`${words[prevSec]}.opus`)
         }
 
         // Beep at expiry: fire once when remainingMs reaches 0 (progress bar at 100%)
@@ -286,7 +320,7 @@ export function ShotlistWidget({
           if (remainingMs === 0 && prevMs !== null && prevMs > 0) {
             reachedZeroAtRef.current = tickNow
             beepFiredRef.current = true
-            playAudio('beep.opus')
+            playCue('beep.opus')
           }
         }
       }
@@ -303,18 +337,7 @@ export function ShotlistWidget({
         rafRef.current = null
       }
     }
-  }, [
-    running,
-    liveIndex,
-    shots,
-    cameras,
-    startedAt,
-    cameraFilter,
-    audioBaseUrl,
-    muteCount,
-    muteBeep,
-    audioVolume,
-  ])
+  }, [running, liveIndex, shots, startedAt, cameraFilter, audioBaseUrl, muteCount, muteBeep, playCue])
 
   // Auto-scroll to live shot when live index changes
   useEffect(() => {
@@ -340,9 +363,7 @@ export function ShotlistWidget({
     if (!liveShot) return
     const liveCam = cameras.find((c) => c.id === liveShot.cameraId)
     if (liveCam && cameraFilter && cameraFilter.includes(liveCam.number)) {
-      const audio = new Audio(`${audioBaseUrl}/beep.opus`)
-      audio.volume = audioVolume
-      audio.play().catch((err: unknown) => console.error('[ShotlistWidget] beep error:', err))
+      playCue('beep.opus')
     }
   }, [
     liveIndex,
@@ -350,10 +371,10 @@ export function ShotlistWidget({
     audioBaseUrl,
     hasFilterForEffect,
     muteBeep,
-    audioVolume,
     shots,
     cameras,
     cameraFilter,
+    playCue,
   ])
 
   // Filtered low-beep: play beep-low when filtered camera goes OFF live (switching to waiting)
@@ -368,9 +389,7 @@ export function ShotlistWidget({
       cameraFilter.includes(liveCam.number)
 
     if (filteredCamWasLiveRef.current && !isFilteredCamLive) {
-      const audio = new Audio(`${audioBaseUrl}/beep-low.opus`)
-      audio.volume = audioVolume
-      audio.play().catch((err: unknown) => console.error('[ShotlistWidget] beep-low error:', err))
+      playCue('beep-low.opus')
     }
     filteredCamWasLiveRef.current = isFilteredCamLive
   }, [
@@ -379,15 +398,17 @@ export function ShotlistWidget({
     audioBaseUrl,
     hasFilterForEffect,
     muteBeep,
-    audioVolume,
     shots,
     cameras,
     cameraFilter,
+    playCue,
   ])
 
   const timing = computeTiming(shots, cameras, liveIndex, startedAt, now, cameraFilter)
 
   const cameraById = new Map(cameras.map((c) => [c.id, c]))
+  // indexOf per row made rendering O(shots²) on every tick.
+  const shotIndexById = new Map(shots.map((shot, i) => [shot.id, i]))
   const hasFilter = cameraFilter !== undefined && cameraFilter.length > 0
   const visibleShots = shots.filter((s) => {
     if (s.hidden) return false
@@ -417,7 +438,11 @@ export function ShotlistWidget({
       ? Math.min(1, Math.max(0, 1 - timing.timeUntilNextVisibleMs / waitStartRef.current.totalMs))
       : null
 
-  // Capture effectiveDurationMs of the previous live shot for transitioning-out animation
+  // Capture effectiveDurationMs of the previous live shot for transitioning-out
+  // animation. These ref writes happen during render, which is only safe because
+  // they are idempotent for a given (shots, liveIndex): re-rendering the same
+  // state writes the same values. Keep them that way — anything time-dependent
+  // here would drift under a double render.
   if (liveIndex !== prevLiveIndexRef.current) {
     capturedTransEffectiveDurRef.current = prevEffectiveDurRef.current
     prevLiveIndexRef.current = liveIndex
@@ -498,7 +523,7 @@ export function ShotlistWidget({
       ) : (
         <ul style={s.shotList}>
           {visibleShots.map((shot) => {
-            const shotIndexInAll = shots.indexOf(shot)
+            const shotIndexInAll = shotIndexById.get(shot.id) ?? -1
             const isLive = timing.liveIndex === shotIndexInAll
             const isNext = timing.nextVisibleIndex === shotIndexInAll
 
