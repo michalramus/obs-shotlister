@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useAppStore } from '../store'
 import type { Camera } from '../../shared/types'
+import { CAMERA_PALETTE, nextCameraColor } from '../../shared/camera-palette'
 
 // ---------------------------------------------------------------------------
 // Resolve marker color options
@@ -163,6 +164,23 @@ const s = {
     cursor: 'pointer',
     top: 0,
     left: 0,
+  } satisfies React.CSSProperties,
+
+  paletteStrip: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(12, 1fr)',
+    gap: '2px',
+    marginTop: '4px',
+    width: '132px',
+  } satisfies React.CSSProperties,
+
+  paletteSwatch: {
+    width: '9px',
+    height: '9px',
+    borderRadius: '2px',
+    border: '1px solid rgba(0,0,0,0.4)',
+    padding: 0,
+    cursor: 'pointer',
   } satisfies React.CSSProperties,
 
   colorCell: {
@@ -397,6 +415,13 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
             disabled={saving}
           />
         </div>
+        <PaletteStrip
+          selected={draft.color}
+          onPick={(c) => {
+            setDraft((d) => ({ ...d, color: c }))
+          }}
+          disabled={saving}
+        />
       </td>
       <td style={s.td}>
         <select
@@ -442,6 +467,40 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
 // New camera row — temporary form at the bottom of the table
 // ---------------------------------------------------------------------------
 
+interface PaletteStripProps {
+  selected: string
+  onPick: (color: string) => void
+  disabled?: boolean
+}
+
+/** The default palette as clickable swatches, so it is reachable without the OS picker. */
+function PaletteStrip({ selected, onPick, disabled }: PaletteStripProps): React.JSX.Element {
+  return (
+    <div style={s.paletteStrip} role="group" aria-label="Palette colors">
+      {CAMERA_PALETTE.map((c) => {
+        const isSelected = c.toLowerCase() === selected.trim().toLowerCase()
+        return (
+          <button
+            key={c}
+            type="button"
+            title={c}
+            aria-label={c}
+            aria-pressed={isSelected}
+            disabled={disabled}
+            onClick={() => onPick(c)}
+            style={{
+              ...s.paletteSwatch,
+              background: c,
+              outline: isSelected ? '2px solid #fff' : 'none',
+              outlineOffset: isSelected ? '1px' : undefined,
+            }}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
 interface NewCameraRowProps {
   projectId: string
   nextNumber: number
@@ -450,9 +509,11 @@ interface NewCameraRowProps {
 
 function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): React.JSX.Element {
   const upsertCamera = useAppStore((st) => st.upsertCamera)
+  const cameras = useAppStore((st) => st.cameras)
   const [number, setNumber] = useState(nextNumber)
   const [name, setName] = useState('')
-  const [color, setColor] = useState('#4a90d9')
+  // Pre-filled from the palette; the picker below still lets it be overridden.
+  const [color, setColor] = useState(() => nextCameraColor(cameras))
   const [resolveColor, setResolveColor] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -514,6 +575,7 @@ function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): Rea
             disabled={saving}
           />
         </div>
+        <PaletteStrip selected={color} onPick={setColor} disabled={saving} />
       </td>
       <td style={s.td}>
         <select
