@@ -1,6 +1,22 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Shot, Camera, Marker } from '../../shared/types'
 import { toMediaUrl } from '../../shared/media-url'
+import {
+  timelinePosMs,
+  msAtPx,
+  shotIdAtMs,
+  totalDurationMs,
+  shotStartOffsetsMs,
+  shotStartMs,
+  pxAtMs,
+} from '../timeline/coordinates'
+import {
+  editPlayheadMs,
+  livePlayheadMs,
+  isOverrunning,
+  mediaTimeSecFor,
+  shouldCommit,
+} from '../timeline/playhead-clock'
 import type { DeleteShotMode } from '../../shared/ipc-contract'
 
 interface TimelineEditorProps {
@@ -90,36 +106,6 @@ function buildWaveformPath(peaks: number[] | null, width: number, halfHeight: nu
   }
   bottom.reverse()
   return `M${top.join('L')}L${bottom.join('L')}Z`
-}
-
-/**
- * Timeline position (ms) for a pointer event over a track row.
- *
- * `trackLeft` is the row's own getBoundingClientRect().left. The row lives inside
- * the scrolled, playhead-padded content wrapper, so that rect already accounts
- * for both scrollLeft and PLAYHEAD_FIXED_PX — adding them again (as this used to)
- * offsets every click by `scrollLeft - PLAYHEAD_FIXED_PX`, which is why markers
- * landed further from the pointer the further the timeline was scrolled.
- */
-export function timelinePosMs(
-  clientX: number,
-  trackLeft: number,
-  zoomPxPerSec: number,
-  maxMs: number,
-): number {
-  if (zoomPxPerSec <= 0) return 0
-  const ms = ((clientX - trackLeft) / zoomPxPerSec) * 1000
-  return Math.max(0, Math.min(ms, maxMs))
-}
-
-/** Id of the shot the given timeline position falls inside, or null past the end. */
-export function shotIdAtMs(shots: Shot[], ms: number): string | null {
-  let acc = 0
-  for (const shot of shots) {
-    if (ms < acc + shot.durationMs) return shot.id
-    acc += shot.durationMs
-  }
-  return null
 }
 
 interface DragState {
@@ -426,14 +412,14 @@ export function TimelineEditor({
     }
   }, [rundownMedia?.filePath]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const waveformSvgWidth = (mediaDurationMs / 1000) * zoomPxPerSec
+  const waveformSvgWidth = pxAtMs(mediaDurationMs, zoomPxPerSec)
   const waveformPath = useMemo(
     () => buildWaveformPath(waveformData, waveformSvgWidth, MEDIA_ROW_HEIGHT / 2),
     [waveformData, waveformSvgWidth],
   )
 
-  const totalMs = shots.reduce((sum, s) => sum + s.durationMs, 0)
-  const totalPx = Math.max((totalMs / 1000) * zoomPxPerSec, 300)
+  const totalMs = totalDurationMs(shots)
+  const totalPx = Math.max(pxAtMs(totalMs, zoomPxPerSec), 300)
   totalMsRef.current = totalMs
   totalPxRef.current = totalPx
 
@@ -459,7 +445,7 @@ export function TimelineEditor({
     paintPlayhead(ms)
     autoScroll(ms)
     const nowMs = performance.now()
-    if (nowMs - lastPlayheadCommitRef.current >= PLAYHEAD_COMMIT_INTERVAL_MS) {
+    if (shouldCommit(nowMs, lastPlayheadCommitRef.current, PLAYHEAD_COMMIT_INTERVAL_MS)) {
       lastPlayheadCommitRef.current = nowMs
       setPlayheadMs(ms)
     }
@@ -511,30 +497,18 @@ export function TimelineEditor({
       })
     }
     function tick(): void {
-      let newMs: number
+      const origin = playStartRef.current
+      if (!origin) return
       const vid = getMediaEl()
-      if (vid && rundownMedia) {
-        const mediaTimeMs = vid.currentTime * 1000 + rundownMedia.offsetMs
-        if (mediaTimeMs >= 0) {
-          // Media is past its start offset — its clock is the source of truth (zero drift)
-          newMs = Math.min(mediaTimeMs, totalMs)
-        } else {
-          // Playhead is before media start — fall back to wall clock
-          if (!playStartRef.current) return
-          newMs = Math.min(
-            playStartRef.current.headMs + (performance.now() - playStartRef.current.wallMs),
-            totalMs,
-          )
-        }
-      } else if (playStartRef.current) {
-        // No media — wall clock
-        newMs = Math.min(
-          playStartRef.current.headMs + (performance.now() - playStartRef.current.wallMs),
-          totalMs,
-        )
-      } else {
-        return
-      }
+      const newMs = editPlayheadMs({
+        origin,
+        nowMs: performance.now(),
+        media:
+          vid && rundownMedia
+            ? { currentTimeSec: vid.currentTime, offsetMs: rundownMedia.offsetMs }
+            : null,
+        totalMs,
+      })
       advancePlayhead(newMs)
       if (newMs >= totalMs) {
         commitPlayhead()
@@ -565,19 +539,18 @@ export function TimelineEditor({
     }
     // Constant for the whole shot — computing it per frame allocated a slice
     // and re-summed every preceding shot 60 times a second.
-    let shotStartMs = 0
-    for (let i = 0; i < liveIndex; i++) shotStartMs += shots[i].durationMs
-    const currentShotDurationMs = shots[liveIndex]?.durationMs ?? 0
-    const shotEndMs = shotStartMs + currentShotDurationMs
+    const startMs = shotStartMs(shots, liveIndex)
+    const shotDurationMs = shots[liveIndex]?.durationMs ?? 0
 
     function tick(): void {
-      const elapsed = Date.now() - startedAt!
-      const newMs = Math.min(shotStartMs + elapsed, shotEndMs)
-      // Only auto-scroll while the current shot is still running
-      if (elapsed < currentShotDurationMs) {
-        advancePlayhead(newMs)
-      } else {
+      const elapsedMs = Date.now() - startedAt!
+      const position = { shotStartMs: startMs, shotDurationMs, elapsedMs }
+      const newMs = livePlayheadMs(position)
+      // An overrunning shot holds the playhead; stop dragging the view with it.
+      if (isOverrunning(position)) {
         paintPlayhead(newMs)
+      } else {
+        advancePlayhead(newMs)
       }
       liveRafRef.current = requestAnimationFrame(tick)
     }
@@ -594,8 +567,7 @@ export function TimelineEditor({
   // When liveIndex changes, scroll to the new shot's start position
   useEffect(() => {
     if (!running || liveIndex === null) return
-    const shotStartMs = shots.slice(0, liveIndex).reduce((s, sh) => s + sh.durationMs, 0)
-    autoScroll(shotStartMs)
+    autoScroll(shotStartMs(shots, liveIndex))
   }, [liveIndex]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Scroll sync for overview
@@ -615,13 +587,13 @@ export function TimelineEditor({
         !markerDragStateRef.current &&
         !mediaDragStateRef.current
       ) {
-        const ms = Math.max(0, (sl / zoomRef.current) * 1000)
+        const ms = Math.max(0, msAtPx(sl, zoomRef.current))
         setPlayhead(ms)
         // Seek media directly — bypasses React render cycle for immediate response
         const media = rundownMediaRef.current
         const vid = (mediaVideoRef?.current as HTMLVideoElement | null) ?? audioPlayRef.current
         if (media && vid) {
-          vid.currentTime = Math.max(0, (ms - media.offsetMs) / 1000)
+          vid.currentTime = mediaTimeSecFor(ms, media.offsetMs)
         }
       }
     }
@@ -655,7 +627,7 @@ export function TimelineEditor({
     const el = scrollContainerRef.current
     if (!el) return
     isAutoScrollingRef.current = true
-    el.scrollLeft = (ms / 1000) * zoomRef.current
+    el.scrollLeft = pxAtMs(ms, zoomRef.current)
     paintViewportRect(el.scrollLeft)
     setTimeout(() => {
       isAutoScrollingRef.current = false
@@ -670,8 +642,7 @@ export function TimelineEditor({
     if (!rundownMedia) return
     const vid = getMediaEl()
     if (!vid) return
-    const mediaTime = (ms - rundownMedia.offsetMs) / 1000
-    vid.currentTime = Math.max(0, mediaTime)
+    vid.currentTime = mediaTimeSecFor(ms, rundownMedia.offsetMs)
   }
 
   function zoomIn(): void {
@@ -791,7 +762,7 @@ export function TimelineEditor({
     function onMouseMove(ev: MouseEvent): void {
       const ds = dragStateRef.current
       if (!ds) return
-      const rawDeltaMs = ((ev.clientX - ds.startX) / zoomRef.current) * 1000
+      const rawDeltaMs = msAtPx(ev.clientX - ds.startX, zoomRef.current)
       const newDurA = Math.max(1000, ds.origDurA + rawDeltaMs)
       const maxDurA = ds.origDurA + ds.origDurB - 1000
       const clampedDurA = Math.min(maxDurA, newDurA)
@@ -802,7 +773,7 @@ export function TimelineEditor({
     function onMouseUp(ev: MouseEvent): void {
       const ds = dragStateRef.current
       if (ds) {
-        const rawDeltaMs = ((ev.clientX - ds.startX) / zoomRef.current) * 1000
+        const rawDeltaMs = msAtPx(ev.clientX - ds.startX, zoomRef.current)
         const newDurA = Math.max(
           1000,
           Math.min(ds.origDurA + ds.origDurB - 1000, ds.origDurA + rawDeltaMs),
@@ -843,7 +814,7 @@ export function TimelineEditor({
     function onMouseMove(ev: MouseEvent): void {
       const ds = markerDragStateRef.current
       if (!ds) return
-      const deltaMs = ((ev.clientX - ds.startX) / zoomRef.current) * 1000
+      const deltaMs = msAtPx(ev.clientX - ds.startX, zoomRef.current)
       const newPositionMs = Math.max(0, Math.round(ds.origPositionMs + deltaMs))
       setMarkerDragOverride({ [ds.markerId]: newPositionMs })
     }
@@ -851,7 +822,7 @@ export function TimelineEditor({
     function onMouseUp(ev: MouseEvent): void {
       const ds = markerDragStateRef.current
       if (ds) {
-        const deltaMs = ((ev.clientX - ds.startX) / zoomRef.current) * 1000
+        const deltaMs = msAtPx(ev.clientX - ds.startX, zoomRef.current)
         const newPositionMs = Math.max(0, Math.round(ds.origPositionMs + deltaMs))
         onUpdateMarker(ds.markerId, newPositionMs)
         markerDragStateRef.current = null
@@ -899,14 +870,14 @@ export function TimelineEditor({
     function onMouseMove(ev: MouseEvent): void {
       const ds = mediaDragStateRef.current
       if (!ds) return
-      const newOffset = ds.origOffset + ((ev.clientX - ds.startX) / zoomRef.current) * 1000
+      const newOffset = ds.origOffset + msAtPx(ev.clientX - ds.startX, zoomRef.current)
       setMediaOffsetOverride(newOffset)
     }
 
     function onMouseUp(ev: MouseEvent): void {
       const ds = mediaDragStateRef.current
       if (ds) {
-        const newOffset = ds.origOffset + ((ev.clientX - ds.startX) / zoomRef.current) * 1000
+        const newOffset = ds.origOffset + msAtPx(ev.clientX - ds.startX, zoomRef.current)
         onUpdateMediaOffset(Math.round(newOffset))
         mediaDragStateRef.current = null
       }
@@ -925,7 +896,7 @@ export function TimelineEditor({
     const origMs = playheadMs
     const startX = e.clientX
     function onMM(ev: MouseEvent): void {
-      const deltaMs = ((ev.clientX - startX) / zoomRef.current) * 1000
+      const deltaMs = msAtPx(ev.clientX - startX, zoomRef.current)
       const newMs = Math.max(0, Math.min(origMs + deltaMs, totalMs))
       setPlayhead(newMs)
       autoScroll(newMs)
@@ -945,7 +916,7 @@ export function TimelineEditor({
   const majorIntervalMs = 30000
   const endMs = totalMs + majorIntervalMs
   for (let ms = 0; ms <= endMs; ms += minorIntervalMs) {
-    const px = (ms / 1000) * zoomPxPerSec
+    const px = pxAtMs(ms, zoomPxPerSec)
     const major = ms % majorIntervalMs === 0
     ticks.push({ px, major, label: major ? formatTime(ms) : undefined })
   }
@@ -953,13 +924,8 @@ export function TimelineEditor({
   // Camera lookup map
   const cameraMap = new Map(cameras.map((c) => [c.id, c]))
 
-  // Compute shot left offsets using dragOverride durations
-  const shotOffsets: number[] = []
-  let acc = 0
-  for (const shot of shots) {
-    shotOffsets.push((acc / 1000) * zoomPxPerSec)
-    acc += dragOverride[shot.id] ?? shot.durationMs
-  }
+  // Shot left offsets, honouring any resize drag in progress
+  const shotOffsets = shotStartOffsetsMs(shots, dragOverride).map((ms) => pxAtMs(ms, zoomPxPerSec))
 
   const sortedCameras = [...cameras].sort((a, b) => a.number - b.number)
 
@@ -1213,12 +1179,12 @@ export function TimelineEditor({
                 const bgColor = cam?.color ?? '#555'
                 const leftPx = shotOffsets[i]
                 const effectiveDuration = dragOverride[shot.id] ?? shot.durationMs
-                const widthPx = (effectiveDuration / 1000) * zoomPxPerSec
+                const widthPx = pxAtMs(effectiveDuration, zoomPxPerSec)
                 const isLive = liveIndex !== null && shots[liveIndex]?.id === shot.id
 
                 // Transition triangle
                 const hasTransition = shot.transitionName !== null && shot.transitionMs > 0
-                const triWidthPx = hasTransition ? (shot.transitionMs / 1000) * zoomPxPerSec : 0
+                const triWidthPx = hasTransition ? pxAtMs(shot.transitionMs, zoomPxPerSec) : 0
 
                 // Boundary handle (rendered after each shot except the last)
                 const nextShot = shots[i + 1]
@@ -1339,7 +1305,7 @@ export function TimelineEditor({
                 const lastShot = shots[shots.length - 1]
                 const lastOffset = shotOffsets[shots.length - 1]
                 const lastDur = dragOverride[lastShot.id] ?? lastShot.durationMs
-                const lastEndPx = lastOffset + (lastDur / 1000) * zoomPxPerSec
+                const lastEndPx = lastOffset + pxAtMs(lastDur, zoomPxPerSec)
                 return (
                   <div
                     style={{
@@ -1367,14 +1333,14 @@ export function TimelineEditor({
                       function onMM(ev: MouseEvent): void {
                         if (!extendDragRef.current) return
                         const deltaMs =
-                          ((ev.clientX - extendDragRef.current.startX) / zoomRef.current) * 1000
+                          msAtPx(ev.clientX - extendDragRef.current.startX, zoomRef.current)
                         const newDur = Math.max(1000, extendDragRef.current.origDur + deltaMs)
                         setDragOverride({ [lastShot.id]: newDur })
                       }
                       function onMU(ev: MouseEvent): void {
                         if (extendDragRef.current) {
                           const deltaMs =
-                            ((ev.clientX - extendDragRef.current.startX) / zoomRef.current) * 1000
+                            msAtPx(ev.clientX - extendDragRef.current.startX, zoomRef.current)
                           const newDur = Math.max(1000, extendDragRef.current.origDur + deltaMs)
                           onExtendLastShot(lastShot.id, newDur)
                           extendDragRef.current = null
@@ -1405,7 +1371,7 @@ export function TimelineEditor({
           >
             {markers.map((marker) => {
               const effectivePositionMs = markerDragOverride[marker.id] ?? marker.positionMs
-              const leftPx = (effectivePositionMs / 1000) * zoomPxPerSec
+              const leftPx = pxAtMs(effectivePositionMs, zoomPxPerSec)
               const isEditing = editingMarkerId === marker.id
               const isHovered = hoveredMarkerId === marker.id
 
@@ -1529,7 +1495,7 @@ export function TimelineEditor({
           {/* Row 5: Media track */}
           {(() => {
             const effectiveOffset = mediaOffsetOverride ?? rundownMedia?.offsetMs ?? 0
-            const offsetPx = (effectiveOffset / 1000) * zoomPxPerSec
+            const offsetPx = pxAtMs(effectiveOffset, zoomPxPerSec)
             const svgWidth = waveformSvgWidth
             const trackHeightPx = MEDIA_ROW_HEIGHT
 
@@ -1723,7 +1689,7 @@ export function TimelineEditor({
           const ow = overviewRef.current?.clientWidth ?? 300
           const left = (shotOffsets[i] / totalPx) * ow
           const width =
-            ((dragOverride[shot.id] ?? shot.durationMs) / 1000) * zoomPxPerSec * (ow / totalPx)
+            pxAtMs(dragOverride[shot.id] ?? shot.durationMs, zoomPxPerSec) * (ow / totalPx)
           return (
             <div
               key={shot.id}
