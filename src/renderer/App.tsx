@@ -361,6 +361,137 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  // Shared across every mode — see the single TimelineEditor slot below.
+  const timelineProps = {
+    shots,
+    cameras,
+    liveIndex,
+    running,
+    startedAt,
+    markers,
+    selectedShotId,
+    mediaVideoRef: videoRef,
+    // The media track only applies to edit mode; live mode hides it.
+    rundownMedia: uiMode === 'edit' ? rundownMedia : null,
+    onShotClick: (id: string) => setSelectedShotId(id),
+    onSplitShot: (shotId: string, atMs: number, newCameraId: string) => {
+      if (atMs <= 0) {
+        editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) =>
+          console.error('[App] editShot:', err),
+        )
+      } else {
+        splitShot(shotId, atMs, newCameraId).catch((err: unknown) =>
+          console.error('[App] splitShot:', err),
+        )
+      }
+    },
+    onResizeShots: (idA: string, durA: number, idB: string, durB: number) => {
+      Promise.all([
+        editShot({ id: idA, durationMs: Math.round(durA) }),
+        editShot({ id: idB, durationMs: Math.round(durB) }),
+      ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
+    },
+    onExtendLastShot: (id: string, dur: number) => {
+      editShot({ id, durationMs: Math.round(dur) }).catch((err: unknown) =>
+        console.error('[App] extendLastShot:', err),
+      )
+    },
+    onDeleteShot: (id: string) => {
+      removeShot(id).catch((err: unknown) => console.error('[App] deleteShot:', err))
+    },
+    onChangeShotCamera: (id: string, camId: string) => {
+      editShot({ id, cameraId: camId }).catch((err: unknown) =>
+        console.error('[App] changeShotCamera:', err),
+      )
+    },
+    onAddMarker: (posMs: number) => {
+      if (activeRundownId)
+        addMarker(activeRundownId, posMs).catch((err: unknown) =>
+          console.error('[App] addMarker:', err),
+        )
+    },
+    onUpdateMarker: (id: string, posMs: number) =>
+      updateMarker(id, posMs).catch((err: unknown) => console.error('[App] updateMarker:', err)),
+    onDeleteMarker: (id: string) =>
+      removeMarker(id).catch((err: unknown) => console.error('[App] deleteMarker:', err)),
+    onImportMedia: () => {
+      handleImportMedia().catch((err: unknown) => console.error('[App] importMedia:', err))
+    },
+    onUpdateMediaOffset: (offsetMs: number) => {
+      if (rundownMedia && activeRundownId) {
+        saveRundownMedia(activeRundownId, rundownMedia.filePath, offsetMs).catch((err: unknown) =>
+          console.error('[App] updateMediaOffset:', err),
+        )
+      }
+    },
+    onClearMedia: () => {
+      if (activeRundownId)
+        clearRundownMedia(activeRundownId).catch((err: unknown) =>
+          console.error('[App] clearMedia:', err),
+        )
+    },
+    onLabelEdit: (id: string) => setLabelEditingId(id),
+  }
+
+  const shotListPanel = (
+    <ShotListPanel
+      selectedShotId={selectedShotId}
+      labelEditingId={labelEditingId}
+      onLabelEditDone={() => setLabelEditingId(null)}
+    />
+  )
+
+  const shotlistWidget =
+    activeRundown !== null ? (
+      <ShotlistWidget
+        rundownName={activeRundown.name}
+        shots={shots}
+        cameras={cameras}
+        liveIndex={liveIndex}
+        startedAt={startedAt}
+        running={running}
+        showNextBackground
+        autoScroll
+        audioBaseUrl={audioBaseUrl}
+        muteCount={muteCount}
+        muteBeep={muteBeep}
+        audioVolume={audioVolume}
+      />
+    ) : null
+
+  // What sits between the live controls and the timeline, per mode.
+  let centerContent: React.ReactNode
+  let centerContentStyle: React.CSSProperties
+  let rightPanel: React.ReactNode = null
+
+  if (uiMode === 'live') {
+    centerContent = shotlistWidget
+    centerContentStyle = { flex: 1, overflow: 'hidden' }
+  } else if (hasVideo) {
+    centerContent = (
+      <video
+        ref={videoRef}
+        src={toMediaUrl(rundownMedia!.filePath)}
+        style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
+      />
+    )
+    centerContentStyle = {
+      flex: 1,
+      overflow: 'hidden',
+      background: '#000',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    }
+    rightPanel =
+      activeRundown !== null ? <div style={styles.right}>{shotListPanel}</div> : null
+  } else {
+    centerContent = shotListPanel
+    centerContentStyle = { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }
+    rightPanel =
+      activeRundown !== null ? <div style={styles.right}>{shotlistWidget}</div> : null
+  }
+
   return (
     <div style={styles.root}>
       <header
@@ -589,324 +720,25 @@ export default function App(): React.JSX.Element {
             <p>No project selected.</p>
             <p>Create a project to get started.</p>
           </div>
-        ) : uiMode === 'edit' ? (
-          <>
-            <RundownSidebar />
-
-            {hasVideo ? (
-              <>
-                <div style={styles.center}>
-                  {activeRundownId !== null && <LiveControls />}
-                  <div
-                    style={{
-                      flex: 1,
-                      overflow: 'hidden',
-                      background: '#000',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <video
-                      ref={videoRef}
-                      src={toMediaUrl(rundownMedia!.filePath)}
-                      style={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'contain',
-                        background: '#000',
-                      }}
-                    />
-                  </div>
-                  <TimelineEditor
-                    shots={shots}
-                    cameras={cameras}
-                    liveIndex={liveIndex}
-                    running={running}
-                    startedAt={startedAt}
-                    markers={markers}
-                    onShotClick={(id) => setSelectedShotId(id)}
-                    onSplitShot={(shotId, atMs, newCameraId) => {
-                      if (atMs <= 0) {
-                        editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) =>
-                          console.error('[App] editShot:', err),
-                        )
-                      } else {
-                        splitShot(shotId, atMs, newCameraId).catch((err: unknown) =>
-                          console.error('[App] splitShot:', err),
-                        )
-                      }
-                    }}
-                    onResizeShots={(idA, durA, idB, durB) => {
-                      Promise.all([
-                        editShot({ id: idA, durationMs: Math.round(durA) }),
-                        editShot({ id: idB, durationMs: Math.round(durB) }),
-                      ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
-                    }}
-                    onExtendLastShot={(id, dur) => {
-                      editShot({ id, durationMs: Math.round(dur) }).catch((err: unknown) =>
-                        console.error('[App] extendLastShot:', err),
-                      )
-                    }}
-                    onDeleteShot={(id) => {
-                      removeShot(id).catch((err: unknown) =>
-                        console.error('[App] deleteShot:', err),
-                      )
-                    }}
-                    onChangeShotCamera={(id, camId) => {
-                      editShot({ id, cameraId: camId }).catch((err: unknown) =>
-                        console.error('[App] changeShotCamera:', err),
-                      )
-                    }}
-                    mediaVideoRef={videoRef}
-                    rundownMedia={rundownMedia}
-                    onAddMarker={(posMs) => {
-                      if (activeRundownId)
-                        addMarker(activeRundownId, posMs).catch((err: unknown) =>
-                          console.error('[App] addMarker:', err),
-                        )
-                    }}
-                    onUpdateMarker={(id, posMs) =>
-                      updateMarker(id, posMs).catch((err: unknown) =>
-                        console.error('[App] updateMarker:', err),
-                      )
-                    }
-                    onDeleteMarker={(id) =>
-                      removeMarker(id).catch((err: unknown) =>
-                        console.error('[App] deleteMarker:', err),
-                      )
-                    }
-                    onImportMedia={() => {
-                      handleImportMedia().catch((err: unknown) =>
-                        console.error('[App] importMedia:', err),
-                      )
-                    }}
-                    onUpdateMediaOffset={(offsetMs) => {
-                      if (rundownMedia && activeRundownId) {
-                        saveRundownMedia(activeRundownId, rundownMedia.filePath, offsetMs).catch(
-                          (err: unknown) => console.error('[App] updateMediaOffset:', err),
-                        )
-                      }
-                    }}
-                    onClearMedia={() => {
-                      if (activeRundownId)
-                        clearRundownMedia(activeRundownId).catch((err: unknown) =>
-                          console.error('[App] clearMedia:', err),
-                        )
-                    }}
-                    onLabelEdit={(id) => setLabelEditingId(id)}
-                    selectedShotId={selectedShotId}
-                  />
-                </div>
-
-                {activeRundown !== null && (
-                  <div style={styles.right}>
-                    <ShotListPanel
-                      selectedShotId={selectedShotId}
-                      labelEditingId={labelEditingId}
-                      onLabelEditDone={() => setLabelEditingId(null)}
-                    />
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                <div style={styles.center}>
-                  {activeRundownId !== null && <LiveControls />}
-                  <ShotListPanel
-                    selectedShotId={selectedShotId}
-                    labelEditingId={labelEditingId}
-                    onLabelEditDone={() => setLabelEditingId(null)}
-                  />
-                  <TimelineEditor
-                    shots={shots}
-                    cameras={cameras}
-                    liveIndex={liveIndex}
-                    running={running}
-                    startedAt={startedAt}
-                    markers={markers}
-                    onShotClick={(id) => setSelectedShotId(id)}
-                    onSplitShot={(shotId, atMs, newCameraId) => {
-                      if (atMs <= 0) {
-                        editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) =>
-                          console.error('[App] editShot:', err),
-                        )
-                      } else {
-                        splitShot(shotId, atMs, newCameraId).catch((err: unknown) =>
-                          console.error('[App] splitShot:', err),
-                        )
-                      }
-                    }}
-                    onResizeShots={(idA, durA, idB, durB) => {
-                      Promise.all([
-                        editShot({ id: idA, durationMs: Math.round(durA) }),
-                        editShot({ id: idB, durationMs: Math.round(durB) }),
-                      ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
-                    }}
-                    onExtendLastShot={(id, dur) => {
-                      editShot({ id, durationMs: Math.round(dur) }).catch((err: unknown) =>
-                        console.error('[App] extendLastShot:', err),
-                      )
-                    }}
-                    onDeleteShot={(id) => {
-                      removeShot(id).catch((err: unknown) =>
-                        console.error('[App] deleteShot:', err),
-                      )
-                    }}
-                    onChangeShotCamera={(id, camId) => {
-                      editShot({ id, cameraId: camId }).catch((err: unknown) =>
-                        console.error('[App] changeShotCamera:', err),
-                      )
-                    }}
-                    mediaVideoRef={videoRef}
-                    rundownMedia={rundownMedia}
-                    onAddMarker={(posMs) => {
-                      if (activeRundownId)
-                        addMarker(activeRundownId, posMs).catch((err: unknown) =>
-                          console.error('[App] addMarker:', err),
-                        )
-                    }}
-                    onUpdateMarker={(id, posMs) =>
-                      updateMarker(id, posMs).catch((err: unknown) =>
-                        console.error('[App] updateMarker:', err),
-                      )
-                    }
-                    onDeleteMarker={(id) =>
-                      removeMarker(id).catch((err: unknown) =>
-                        console.error('[App] deleteMarker:', err),
-                      )
-                    }
-                    onImportMedia={() => {
-                      handleImportMedia().catch((err: unknown) =>
-                        console.error('[App] importMedia:', err),
-                      )
-                    }}
-                    onUpdateMediaOffset={(offsetMs) => {
-                      if (rundownMedia && activeRundownId) {
-                        saveRundownMedia(activeRundownId, rundownMedia.filePath, offsetMs).catch(
-                          (err: unknown) => console.error('[App] updateMediaOffset:', err),
-                        )
-                      }
-                    }}
-                    onClearMedia={() => {
-                      if (activeRundownId)
-                        clearRundownMedia(activeRundownId).catch((err: unknown) =>
-                          console.error('[App] clearMedia:', err),
-                        )
-                    }}
-                    onLabelEdit={(id) => setLabelEditingId(id)}
-                    selectedShotId={selectedShotId}
-                  />
-                </div>
-
-                {activeRundown !== null && (
-                  <div style={styles.right}>
-                    <ShotlistWidget
-                      rundownName={activeRundown.name}
-                      shots={shots}
-                      cameras={cameras}
-                      liveIndex={liveIndex}
-                      startedAt={startedAt}
-                      running={running}
-                      showNextBackground
-                      autoScroll
-                      audioBaseUrl={audioBaseUrl}
-                      muteCount={muteCount}
-                      muteBeep={muteBeep}
-                      audioVolume={audioVolume}
-                    />
-                  </div>
-                )}
-              </>
-            )}
-          </>
         ) : (
           <>
             <RundownSidebar />
 
+            {/*
+              One TimelineEditor for every mode, in a fixed slot. Rendering it
+              separately per branch made React unmount and remount it on each
+              edit/live or video toggle, throwing away zoom, playhead and the
+              decoded waveform — which then had to be decoded from scratch.
+            */}
             <div style={styles.center}>
-              {activeRundownId !== null && <LiveControls />}
-              <div style={{ flex: 1, overflow: 'hidden' }}>
-                {activeRundown !== null && (
-                  <ShotlistWidget
-                    rundownName={activeRundown.name}
-                    shots={shots}
-                    cameras={cameras}
-                    liveIndex={liveIndex}
-                    startedAt={startedAt}
-                    running={running}
-                    showNextBackground
-                    autoScroll
-                    audioBaseUrl={audioBaseUrl}
-                    muteCount={muteCount}
-                    muteBeep={muteBeep}
-                    audioVolume={audioVolume}
-                  />
-                )}
+              {activeRundownId !== null && <LiveControls key="live-controls" />}
+              <div key="center-content" style={centerContentStyle}>
+                {centerContent}
               </div>
-              <TimelineEditor
-                shots={shots}
-                cameras={cameras}
-                liveIndex={liveIndex}
-                running={running}
-                startedAt={startedAt}
-                markers={markers}
-                onShotClick={(id) => setSelectedShotId(id)}
-                onSplitShot={(shotId, atMs, newCameraId) => {
-                  if (atMs <= 0) {
-                    editShot({ id: shotId, cameraId: newCameraId }).catch((err: unknown) =>
-                      console.error('[App] editShot:', err),
-                    )
-                  } else {
-                    splitShot(shotId, atMs, newCameraId).catch((err: unknown) =>
-                      console.error('[App] splitShot:', err),
-                    )
-                  }
-                }}
-                onResizeShots={(idA, durA, idB, durB) => {
-                  Promise.all([
-                    editShot({ id: idA, durationMs: Math.round(durA) }),
-                    editShot({ id: idB, durationMs: Math.round(durB) }),
-                  ]).catch((err: unknown) => console.error('[App] resizeShots:', err))
-                }}
-                onExtendLastShot={(id, dur) => {
-                  editShot({ id, durationMs: Math.round(dur) }).catch((err: unknown) =>
-                    console.error('[App] extendLastShot:', err),
-                  )
-                }}
-                onDeleteShot={(id) => {
-                  removeShot(id).catch((err: unknown) => console.error('[App] deleteShot:', err))
-                }}
-                onChangeShotCamera={(id, camId) => {
-                  editShot({ id, cameraId: camId }).catch((err: unknown) =>
-                    console.error('[App] changeShotCamera:', err),
-                  )
-                }}
-                mediaVideoRef={videoRef}
-                rundownMedia={null}
-                onAddMarker={(posMs) => {
-                  if (activeRundownId)
-                    addMarker(activeRundownId, posMs).catch((err: unknown) =>
-                      console.error('[App] addMarker:', err),
-                    )
-                }}
-                onUpdateMarker={(id, posMs) =>
-                  updateMarker(id, posMs).catch((err: unknown) =>
-                    console.error('[App] updateMarker:', err),
-                  )
-                }
-                onDeleteMarker={(id) =>
-                  removeMarker(id).catch((err: unknown) =>
-                    console.error('[App] deleteMarker:', err),
-                  )
-                }
-                onImportMedia={() => {}}
-                onUpdateMediaOffset={() => {}}
-                onClearMedia={() => {}}
-                onLabelEdit={() => {}}
-                selectedShotId={selectedShotId}
-              />
+              <TimelineEditor key="timeline" {...timelineProps} />
             </div>
+
+            {rightPanel}
           </>
         )}
       </div>
