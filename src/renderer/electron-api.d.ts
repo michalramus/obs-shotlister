@@ -17,8 +17,10 @@ export interface TransitionMapping {
   obsTransitionName: string
 }
 
-export interface CameraUpsertInput extends Omit<Camera, 'id'> {
+export interface CameraUpsertInput extends Omit<Camera, 'id' | 'obsScene' | 'resolveColor'> {
   id?: string
+  obsScene?: string | null
+  resolveColor?: string | null
 }
 
 export interface CreateShotInput {

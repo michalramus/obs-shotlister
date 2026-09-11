@@ -122,7 +122,13 @@ export function getCameraById(db: Database.Database, id: string): Camera | null 
   return row ? rowToCamera(row) : null
 }
 
-export type CameraUpsertInput = Omit<Camera, 'id'> & { id?: string }
+// obsScene and resolveColor are optional on input — upsertCamera defaults them
+// to null — so they must not be required by the type.
+export type CameraUpsertInput = Omit<Camera, 'id' | 'obsScene' | 'resolveColor'> & {
+  id?: string
+  obsScene?: string | null
+  resolveColor?: string | null
+}
 
 export function upsertCamera(db: Database.Database, input: CameraUpsertInput): Camera {
   if (input.id) {
