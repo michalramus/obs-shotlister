@@ -1059,10 +1059,18 @@ app.whenReady().then(() => {
   obsClient.onStatusChange((status: OBSConnectionStatus) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send('obs:status', { status })
     if (status === 'connected' && _db) {
+      // A retry may still be pending from before this connection succeeded.
+      if (obsReconnectTimer) {
+        clearTimeout(obsReconnectTimer)
+        obsReconnectTimer = null
+      }
       runValidation(_db)
     }
     if (status === 'disconnected' && obsAutoReconnect) {
+      // A flapping connection fires this repeatedly — keep exactly one retry pending.
+      if (obsReconnectTimer) clearTimeout(obsReconnectTimer)
       obsReconnectTimer = setTimeout(async () => {
+        obsReconnectTimer = null
         if (!obsAutoReconnect || obsClient.status !== 'disconnected') return
         const { url, password } = getObsSettings(_db!)
         try {
