@@ -25,7 +25,12 @@ import {
   setRundownFolder,
 } from './ipc/rundowns'
 import { listShots, createShot, updateShot, deleteShot, reorderShots, splitShot } from './ipc/shots'
-import type { CreateShotInput, UpdateShotInput, SplitShotInput } from './ipc/shots'
+import type {
+  CreateShotInput,
+  UpdateShotInput,
+  SplitShotInput,
+  DeleteShotMode,
+} from './ipc/shots'
 import {
   getLiveState,
   getLiveQueue,
@@ -353,8 +358,8 @@ function registerIpcHandlers(): void {
     return shot
   })
 
-  ipcMain.handle('shots:delete', (_event, payload: { id: string }) => {
-    deleteShot(db, payload.id)
+  ipcMain.handle('shots:delete', (_event, payload: { id: string; mode?: DeleteShotMode }) => {
+    deleteShot(db, payload.id, payload.mode)
     broadcastRundown()
   })
 

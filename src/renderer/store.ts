@@ -6,6 +6,7 @@ import type {
   UpdateShotInput,
   OBSConnectionStatus,
   OBSValidateResult,
+  DeleteShotMode,
 } from './electron-api.d'
 
 interface AppStore {
@@ -69,7 +70,7 @@ interface AppStore {
   loadShots: (rundownId: string) => Promise<void>
   addShot: (input: CreateShotInput) => Promise<Shot>
   editShot: (input: UpdateShotInput) => Promise<void>
-  removeShot: (id: string) => Promise<void>
+  removeShot: (id: string, mode?: DeleteShotMode) => Promise<void>
   reorderShots: (ids: string[]) => Promise<void>
   splitShot: (shotId: string, atMs: number, newCameraId: string) => Promise<void>
 
@@ -365,9 +366,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }))
   },
 
-  removeShot: async (id) => {
-    await window.api.shots.delete({ id })
-    set((state) => ({ shots: state.shots.filter((s) => s.id !== id) }))
+  removeShot: async (id, mode) => {
+    await window.api.shots.delete({ id, mode })
+    // 'extend' resizes a neighbour, so the local list cannot be patched by
+    // filtering — refetch to pick up the new duration.
+    const { activeRundownId } = get()
+    if (activeRundownId) {
+      await get().loadShots(activeRundownId)
+    } else {
+      set((state) => ({ shots: state.shots.filter((s) => s.id !== id) }))
+    }
   },
 
   reorderShots: async (ids) => {

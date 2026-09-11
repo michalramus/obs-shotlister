@@ -4,7 +4,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Project, Camera, Rundown, Shot, Marker } from '../shared/types'
 import type { CameraUpsertInput } from '../main/ipc/projects'
-import type { CreateShotInput, UpdateShotInput } from '../main/ipc/shots'
+import type { CreateShotInput, UpdateShotInput, DeleteShotMode } from '../main/ipc/shots'
 import type { LiveState } from '../main/ipc/live'
 import type { OBSConnectionStatus } from '../main/obs/client'
 import type { ParseResult, ConfirmImportInput } from '../main/ipc/resolve-import'
@@ -36,7 +36,7 @@ export interface ElectronApi {
     list: (payload: { rundownId: string }) => Promise<Shot[]>
     create: (payload: CreateShotInput) => Promise<Shot>
     update: (payload: UpdateShotInput) => Promise<Shot>
-    delete: (payload: { id: string }) => Promise<void>
+    delete: (payload: { id: string; mode?: DeleteShotMode }) => Promise<void>
     reorder: (payload: { ids: string[] }) => Promise<void>
     split: (payload: {
       shotId: string

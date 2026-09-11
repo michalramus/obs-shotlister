@@ -32,6 +32,8 @@ export interface CreateShotInput {
   transitionMs?: number
 }
 
+export type DeleteShotMode = 'extend' | 'ripple'
+
 export interface UpdateShotInput {
   id: string
   cameraId?: string
@@ -92,7 +94,7 @@ export interface ElectronApi {
     list: (payload: { rundownId: string }) => Promise<Shot[]>
     create: (payload: CreateShotInput) => Promise<Shot>
     update: (payload: UpdateShotInput) => Promise<Shot>
-    delete: (payload: { id: string }) => Promise<void>
+    delete: (payload: { id: string; mode?: DeleteShotMode }) => Promise<void>
     reorder: (payload: { ids: string[] }) => Promise<void>
     split: (payload: {
       shotId: string
