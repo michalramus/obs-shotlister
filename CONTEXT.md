@@ -53,7 +53,9 @@ _Avoid_: playlist, stack, buffer
 
 **Hidden**:
 A Shot that has left the Live queue's future, because it has already been on air or was
-skipped. A property of the Live queue only — never of the stored Shot.
+skipped. A property of the Live queue only — never of the stored Shot. A Shot going off air
+stays visible until its successor's Transition finishes, so briefly it is on screen without
+being live.
 _Avoid_: done, past, consumed, removed
 
 **Next**:
