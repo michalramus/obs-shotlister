@@ -48,6 +48,12 @@ const WAVEFORM_SAMPLE_RATE = 8000
 const PEAKS_PER_SECOND = 40
 const MAX_WAVEFORM_BUCKETS = 20000
 
+// During playback the playhead moves every frame, but only its own readout and the
+// overview marker change. Those are painted directly; React state is committed at
+// this interval so playhead-dependent effects still run without a 60fps re-render
+// of the whole timeline.
+const PLAYHEAD_COMMIT_INTERVAL_MS = 100
+
 function formatTime(ms: number): string {
   const totalSec = Math.floor(ms / 1000)
   const min = Math.floor(totalSec / 60)
@@ -174,6 +180,12 @@ export function TimelineEditor({
   const audioPlayRef = useRef<HTMLAudioElement | null>(null)
   const pendingDragClearRef = useRef(false)
   const rundownMediaRef = useRef(rundownMedia)
+  const totalMsRef = useRef(0)
+  const totalPxRef = useRef(0)
+  const playheadTimeElRef = useRef<HTMLSpanElement>(null)
+  const overviewPlayheadElRef = useRef<HTMLDivElement>(null)
+  const viewportRectElRef = useRef<HTMLDivElement>(null)
+  const lastPlayheadCommitRef = useRef(0)
   const shotsRef = useRef(shots)
   const camerasRef = useRef(cameras)
 
@@ -187,10 +199,6 @@ export function TimelineEditor({
     localStorage.setItem('obs-queuer-timeline-zoom', String(zoomPxPerSec))
   }, [zoomPxPerSec])
 
-  // Keep playheadMsRef in sync
-  useEffect(() => {
-    playheadMsRef.current = playheadMs
-  }, [playheadMs])
 
   // Keep onAddMarkerRef in sync
   useEffect(() => {
@@ -253,6 +261,9 @@ export function TimelineEditor({
       .timeline-scroll { scrollbar-width: none; }
     `
     document.head.appendChild(style)
+    return () => {
+      style.remove()
+    }
   }, [])
 
   // Flash on liveIndex change
@@ -398,6 +409,54 @@ export function TimelineEditor({
 
   const totalMs = shots.reduce((sum, s) => sum + s.durationMs, 0)
   const totalPx = Math.max((totalMs / 1000) * zoomPxPerSec, 300)
+  totalMsRef.current = totalMs
+  totalPxRef.current = totalPx
+
+  /** Moves the playhead in response to a discrete interaction (click, drag, key). */
+  function setPlayhead(ms: number): void {
+    playheadMsRef.current = ms
+    setPlayheadMs(ms)
+  }
+
+  /** Paints playhead-dependent DOM directly, bypassing React. */
+  function paintPlayhead(ms: number): void {
+    playheadMsRef.current = ms
+    if (playheadTimeElRef.current) playheadTimeElRef.current.textContent = formatPlayhead(ms)
+    const marker = overviewPlayheadElRef.current
+    if (marker && totalMsRef.current > 0) {
+      const ow = overviewRef.current?.clientWidth ?? 300
+      marker.style.left = `${(ms / totalMsRef.current) * ow}px`
+    }
+  }
+
+  /** Advances the playhead from a RAF tick: paint every frame, commit state rarely. */
+  function advancePlayhead(ms: number): void {
+    paintPlayhead(ms)
+    autoScroll(ms)
+    const nowMs = performance.now()
+    if (nowMs - lastPlayheadCommitRef.current >= PLAYHEAD_COMMIT_INTERVAL_MS) {
+      lastPlayheadCommitRef.current = nowMs
+      setPlayheadMs(ms)
+    }
+  }
+
+  /** Keeps the overview viewport rect in sync without a React render. */
+  function paintViewportRect(scrollLeft: number): void {
+    const rect = viewportRectElRef.current
+    const scroller = scrollContainerRef.current
+    if (!rect || !scroller || totalPxRef.current <= 0) return
+    const ow = overviewRef.current?.clientWidth ?? 300
+    const vpLeft = (scrollLeft / totalPxRef.current) * ow
+    const vpRight = Math.min(ow, vpLeft + (scroller.clientWidth / totalPxRef.current) * ow)
+    rect.style.left = `${vpLeft}px`
+    rect.style.width = `${Math.max(4, vpRight - vpLeft)}px`
+  }
+
+  /** Pushes the last painted position into React state when playback stops. */
+  function commitPlayhead(): void {
+    lastPlayheadCommitRef.current = 0
+    setPlayheadMs(playheadMsRef.current)
+  }
 
   // Edit-mode RAF loop
   useEffect(() => {
@@ -451,9 +510,9 @@ export function TimelineEditor({
       } else {
         return
       }
-      setPlayheadMs(newMs)
-      autoScroll(newMs)
+      advancePlayhead(newMs)
       if (newMs >= totalMs) {
+        commitPlayhead()
         setIsPlaying(false)
         vid?.pause()
         return
@@ -466,6 +525,7 @@ export function TimelineEditor({
         cancelAnimationFrame(editRafRef.current)
         editRafRef.current = null
       }
+      commitPlayhead()
     }
   }, [isPlaying, running, totalMs, zoomPxPerSec, rundownMedia]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -478,16 +538,21 @@ export function TimelineEditor({
       }
       return
     }
+    // Constant for the whole shot — computing it per frame allocated a slice
+    // and re-summed every preceding shot 60 times a second.
+    let shotStartMs = 0
+    for (let i = 0; i < liveIndex; i++) shotStartMs += shots[i].durationMs
+    const currentShotDurationMs = shots[liveIndex]?.durationMs ?? 0
+    const shotEndMs = shotStartMs + currentShotDurationMs
+
     function tick(): void {
-      const shotStartMs = shots.slice(0, liveIndex!).reduce((s, sh) => s + sh.durationMs, 0)
       const elapsed = Date.now() - startedAt!
-      const currentShotDurationMs = shots[liveIndex!]?.durationMs ?? 0
-      const shotEndMs = shotStartMs + currentShotDurationMs
       const newMs = Math.min(shotStartMs + elapsed, shotEndMs)
-      setPlayheadMs(newMs)
       // Only auto-scroll while the current shot is still running
       if (elapsed < currentShotDurationMs) {
-        autoScroll(newMs)
+        advancePlayhead(newMs)
+      } else {
+        paintPlayhead(newMs)
       }
       liveRafRef.current = requestAnimationFrame(tick)
     }
@@ -497,6 +562,7 @@ export function TimelineEditor({
         cancelAnimationFrame(liveRafRef.current)
         liveRafRef.current = null
       }
+      commitPlayhead()
     }
   }, [running, liveIndex, startedAt, zoomPxPerSec]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -512,10 +578,12 @@ export function TimelineEditor({
     const el = scrollContainerRef.current
     if (!el) return
     function onScroll(): void {
+      if (!el) return
       const sl = el.scrollLeft
+      // Auto-scroll fires this every frame; autoScroll() already painted the rect.
+      if (isAutoScrollingRef.current) return
       setCurrentScrollLeft(sl)
       if (
-        !isAutoScrollingRef.current &&
         !isPlayingRef.current &&
         !runningRef.current &&
         !dragStateRef.current &&
@@ -523,7 +591,7 @@ export function TimelineEditor({
         !mediaDragStateRef.current
       ) {
         const ms = Math.max(0, (sl / zoomRef.current) * 1000)
-        setPlayheadMs(ms)
+        setPlayhead(ms)
         // Seek media directly — bypasses React render cycle for immediate response
         const media = rundownMediaRef.current
         const vid = (mediaVideoRef?.current as HTMLVideoElement | null) ?? audioPlayRef.current
@@ -563,6 +631,7 @@ export function TimelineEditor({
     if (!el) return
     isAutoScrollingRef.current = true
     el.scrollLeft = (ms / 1000) * zoomRef.current
+    paintViewportRect(el.scrollLeft)
     setTimeout(() => {
       isAutoScrollingRef.current = false
     }, 0)
@@ -589,7 +658,7 @@ export function TimelineEditor({
 
   function movePlayhead(deltaMs: number): void {
     const n = Math.max(0, Math.min(playheadMsRef.current + deltaMs, totalMs))
-    setPlayheadMs(n)
+    setPlayhead(n)
     autoScroll(n)
     if (!isPlayingRef.current) seekMediaToMs(n)
   }
@@ -673,7 +742,7 @@ export function TimelineEditor({
     const contentPx = clickX + scrollLeft - PLAYHEAD_FIXED_PX
     const ms = (contentPx / zoomPxPerSec) * 1000
     const clamped = Math.max(0, Math.min(ms, totalMs))
-    setPlayheadMs(clamped)
+    setPlayhead(clamped)
     autoScroll(clamped)
     if (!isPlayingRef.current) seekMediaToMs(clamped)
   }
@@ -848,7 +917,7 @@ export function TimelineEditor({
     function onMM(ev: MouseEvent): void {
       const deltaMs = ((ev.clientX - startX) / zoomRef.current) * 1000
       const newMs = Math.max(0, Math.min(origMs + deltaMs, totalMs))
-      setPlayheadMs(newMs)
+      setPlayhead(newMs)
       autoScroll(newMs)
       if (!isPlayingRef.current) seekMediaToMs(newMs)
     }
@@ -956,6 +1025,7 @@ export function TimelineEditor({
 
         {/* Playhead time */}
         <span
+          ref={playheadTimeElRef}
           style={{
             color: '#ccc',
             fontSize: '11px',
@@ -1662,6 +1732,7 @@ export function TimelineEditor({
         {/* Playhead line in overview */}
         {totalMs > 0 && (
           <div
+            ref={overviewPlayheadElRef}
             style={{
               position: 'absolute',
               left: (playheadMs / totalMs) * (overviewRef.current?.clientWidth ?? 300),
@@ -1685,6 +1756,7 @@ export function TimelineEditor({
             const vpWidth = Math.max(4, vpRight - vpLeft)
             return (
               <div
+                ref={viewportRectElRef}
                 style={{
                   position: 'absolute',
                   left: vpLeft,
