@@ -84,8 +84,13 @@ export function LiveControls(): React.JSX.Element {
       .catch((err: unknown) => console.error('[LiveControls] getPreviewFirst:', err))
   }, [])
 
-  // 60fps RAF loop to track transition state
+  // 60fps RAF loop to track transition state. Only worth running while a shot is
+  // actually live — otherwise it re-rendered this component 60x/s forever.
   useEffect(() => {
+    if (!running || liveIndex === null || startedAt === null) {
+      setInTransition(false)
+      return
+    }
     function tick(): void {
       setInTransition(isInTransition(running, liveIndex, startedAt, shots, Date.now()))
       transitionRafRef.current = requestAnimationFrame(tick)
@@ -103,6 +108,9 @@ export function LiveControls(): React.JSX.Element {
     const style = document.createElement('style')
     style.textContent = `@keyframes pulse-live { 0%,100% { opacity:1 } 50% { opacity:0.4 } }`
     document.head.appendChild(style)
+    return () => {
+      style.remove()
+    }
   }, [])
 
   function handleError(label: string, err: unknown): void {
