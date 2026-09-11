@@ -349,3 +349,39 @@ export interface ElectronApi {
     onError: Subscribe<'server:error'>
   }
 }
+
+// ---------------------------------------------------------------------------
+// Runtime channel list
+//
+// `IpcContract` is a type and vanishes at build time, so this array carries the
+// channel names into runtime for tests that check registration. The assertion
+// below fails to compile if the two ever disagree, so the list cannot silently
+// fall behind the contract.
+// ---------------------------------------------------------------------------
+
+export const IPC_CHANNELS = [
+  'projects:list', 'projects:create', 'projects:rename', 'projects:delete', 'project:setActive',
+  'cameras:list', 'cameras:upsert', 'cameras:delete',
+  'rundowns:list', 'rundowns:create', 'rundowns:rename', 'rundowns:delete',
+  'rundowns:setActive', 'rundowns:reorder', 'rundowns:setFolder',
+  'shots:list', 'shots:create', 'shots:update', 'shots:delete', 'shots:reorder', 'shots:split',
+  'live:get', 'live:start', 'live:stop', 'live:next', 'live:skip-next', 'live:restart',
+  'live:getPreviewFirst', 'live:savePreviewFirst',
+  'shots:import-csv:open-dialog', 'shots:import-csv:parse', 'shots:import-csv:confirm',
+  'obs:settings:get', 'obs:settings:save', 'obs:connect', 'obs:disconnect', 'obs:status',
+  'obs:getEnabled', 'obs:setEnabled', 'obs:getScenes', 'obs:getTransitions', 'obs:checkScenes',
+  'obs:validate', 'obs:transitions:list', 'obs:transitions:upsert', 'obs:transitions:delete',
+  'markers:list', 'markers:upsert', 'markers:delete',
+  'rundown:media:get', 'rundown:media:save', 'rundown:media:clear', 'rundown:media:open-dialog',
+  'media:file-exists',
+  'osc:settings:get', 'osc:settings:save',
+  'ui:setMode', 'assets:audioDir',
+  'export:project', 'export:rundown', 'export:database',
+  'import:project', 'import:rundown', 'import:database',
+] as const
+
+type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never
+
+/** Compile-time proof that IPC_CHANNELS lists exactly the contract's channels. */
+const _channelsMatchContract: MutuallyAssignable<(typeof IPC_CHANNELS)[number], IpcChannel> = true
+void _channelsMatchContract
