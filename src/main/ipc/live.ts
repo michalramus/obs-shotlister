@@ -57,6 +57,17 @@ export function getVisibleQueue(): LiveQueueEntry[] {
   return liveQueue.filter((s) => !s.hidden)
 }
 
+export interface LiveProgress {
+  liveShotId: string | null
+  startedAt: number | null
+  running: boolean
+}
+
+/** In-memory live progress. Never read these from the DB — they are not persisted. */
+export function getLiveProgress(): LiveProgress {
+  return { liveShotId, startedAt, running }
+}
+
 /** Resets all in-memory live progress state. Use in tests or on app shutdown. */
 export function resetInMemoryLiveState(): void {
   liveQueue = []

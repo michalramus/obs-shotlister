@@ -28,6 +28,7 @@ import type { CreateShotInput, UpdateShotInput, SplitShotInput } from './ipc/sho
 import {
   getLiveState,
   getLiveQueue,
+  getLiveProgress,
   startLive,
   stopLive,
   nextShot,
@@ -162,27 +163,20 @@ function runValidation(database: ReturnType<typeof getDatabase>): void {
 
 // --- OSC helpers -------------------------------------------------------------
 
-interface LiveStateRow {
-  live_shot_id: string | null
-  started_at: number | null
-  running: number
-}
-
 interface ShotTransitionRow {
   transition_ms: number
 }
 
 function isOscInTransition(db: ReturnType<typeof getDatabase>): boolean {
   try {
-    const row = db
-      .prepare('SELECT live_shot_id, started_at, running FROM live_state WHERE id = 1')
-      .get() as LiveStateRow | undefined
-    if (!row || !row.running || !row.live_shot_id || row.started_at === null) return false
-    const shot = db
-      .prepare('SELECT transition_ms FROM shots WHERE id = ?')
-      .get(row.live_shot_id) as ShotTransitionRow | undefined
+    // Live progress lives in memory only — live_state has no progress columns.
+    const { liveShotId, startedAt, running } = getLiveProgress()
+    if (!running || !liveShotId || startedAt === null) return false
+    const shot = db.prepare('SELECT transition_ms FROM shots WHERE id = ?').get(liveShotId) as
+      | ShotTransitionRow
+      | undefined
     if (!shot || shot.transition_ms <= 0) return false
-    return Date.now() - row.started_at < shot.transition_ms
+    return Date.now() - startedAt < shot.transition_ms
   } catch (err) {
     console.error('[osc] isOscInTransition error:', err)
     return false
