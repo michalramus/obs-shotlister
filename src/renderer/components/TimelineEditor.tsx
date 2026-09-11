@@ -90,8 +90,28 @@ function buildWaveformPath(peaks: number[] | null, width: number, halfHeight: nu
   return `M${top.join('L')}L${bottom.join('L')}Z`
 }
 
+/**
+ * Timeline position (ms) for a pointer event over a track row.
+ *
+ * `trackLeft` is the row's own getBoundingClientRect().left. The row lives inside
+ * the scrolled, playhead-padded content wrapper, so that rect already accounts
+ * for both scrollLeft and PLAYHEAD_FIXED_PX — adding them again (as this used to)
+ * offsets every click by `scrollLeft - PLAYHEAD_FIXED_PX`, which is why markers
+ * landed further from the pointer the further the timeline was scrolled.
+ */
+export function timelinePosMs(
+  clientX: number,
+  trackLeft: number,
+  zoomPxPerSec: number,
+  maxMs: number,
+): number {
+  if (zoomPxPerSec <= 0) return 0
+  const ms = ((clientX - trackLeft) / zoomPxPerSec) * 1000
+  return Math.max(0, Math.min(ms, maxMs))
+}
+
 /** Id of the shot the given timeline position falls inside, or null past the end. */
-function shotIdAtMs(shots: Shot[], ms: number): string | null {
+export function shotIdAtMs(shots: Shot[], ms: number): string | null {
   let acc = 0
   for (const shot of shots) {
     if (ms < acc + shot.durationMs) return shot.id
@@ -730,11 +750,7 @@ export function TimelineEditor({
 
   function handleTrackClick(e: React.MouseEvent<HTMLDivElement>): void {
     const rect = e.currentTarget.getBoundingClientRect()
-    const clickX = e.clientX - rect.left
-    const scrollLeft = scrollContainerRef.current?.scrollLeft ?? 0
-    const contentPx = clickX + scrollLeft - PLAYHEAD_FIXED_PX
-    const ms = (contentPx / zoomPxPerSec) * 1000
-    const clamped = Math.max(0, Math.min(ms, totalMs))
+    const clamped = timelinePosMs(e.clientX, rect.left, zoomPxPerSec, totalMs)
     setPlayhead(clamped)
     autoScroll(clamped)
     if (!isPlayingRef.current) seekMediaToMs(clamped)
@@ -808,9 +824,8 @@ export function TimelineEditor({
 
   function handleMarkerTrackDblClick(e: React.MouseEvent<HTMLDivElement>): void {
     const rect = e.currentTarget.getBoundingClientRect()
-    const scrollLeft = scrollContainerRef.current?.scrollLeft ?? 0
-    const contentPx = e.clientX - rect.left + scrollLeft - PLAYHEAD_FIXED_PX
-    const posMs = Math.round((contentPx / zoomPxPerSec) * 1000)
+    // Markers may sit past the last shot, so they are not clamped to totalMs.
+    const posMs = Math.round(timelinePosMs(e.clientX, rect.left, zoomPxPerSec, Number.MAX_SAFE_INTEGER))
     onAddMarker(posMs)
   }
 
