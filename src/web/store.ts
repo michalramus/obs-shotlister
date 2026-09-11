@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Rundown, Shot, Camera } from '../shared/types'
+import { applyLivePosition, startedAtFromElapsed } from '../shared/live-view'
 
 export interface WebStore {
   rundown: Rundown | null
@@ -41,30 +42,12 @@ export const useWebStore = create<WebStore>((set) => ({
   },
 
   setLiveState: (data) => {
-    const clientStartedAt = data.elapsedMs !== null ? Date.now() - data.elapsedMs : null
-    set((s) => {
-      if (data.liveIndex === null) {
-        return { liveIndex: null, startedAt: clientStartedAt }
-      }
-      const newLiveShot = s.shots[data.liveIndex]
-      const transitionMs = newLiveShot?.transitionMs ?? 0
-
-      // Find last non-hidden shot before liveIndex — preserve it during transition
-      let preserveIndex = -1
-      if (transitionMs > 0) {
-        for (let i = data.liveIndex - 1; i >= 0; i--) {
-          if (!s.shots[i].hidden) { preserveIndex = i; break }
-        }
-      }
-
-      const shots = s.shots.map((shot, i) => {
-        if (i >= data.liveIndex!) return shot
-        if (shot.hidden) return shot
-        if (i === preserveIndex) return shot // delayed hide via state:shot:hidden
-        return { ...shot, hidden: true }
-      })
-      return { liveIndex: data.liveIndex, startedAt: clientStartedAt, shots }
-    })
+    const startedAt = startedAtFromElapsed(data.elapsedMs, Date.now())
+    set((s) => ({
+      liveIndex: data.liveIndex,
+      startedAt,
+      shots: applyLivePosition(s.shots, data.liveIndex),
+    }))
   },
 
   setPlayback: (data) => set({ running: data.running }),

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { io } from 'socket.io-client'
 import { useWebStore } from './store'
 import { ShotlistWidget } from '../shared/components/ShotlistWidget'
+import { shotHeldThroughTransition } from '../shared/live-view'
 import type { Rundown, Shot, Camera } from '../shared/types'
 
 // Connect to the same origin (Electron's embedded Express server)
@@ -170,25 +171,13 @@ export default function App(): React.JSX.Element {
 
     socket.on('state:shot:hidden', ({ shotId }: { shotId: string }) => {
       const { shots, liveIndex } = useWebStore.getState()
-      const liveShot = liveIndex !== null ? shots[liveIndex] : null
-      const transitionMs = liveShot?.transitionMs ?? 0
 
-      if (transitionMs > 0) {
-        // Only delay for the transitioning-out shot (previous live shot).
-        // Skip events for future shots must fire immediately.
-        let prevNonHiddenId: string | null = null
-        if (liveIndex !== null) {
-          for (let i = liveIndex - 1; i >= 0; i--) {
-            if (!shots[i].hidden) {
-              prevNonHiddenId = shots[i].id
-              break
-            }
-          }
-        }
-        if (prevNonHiddenId === shotId) {
-          setTimeout(() => setShotHidden(shotId), transitionMs)
-          return
-        }
+      // The Shot being held through the incoming Transition keeps its row until
+      // the Transition finishes; a Skip of some future Shot hides immediately.
+      if (shotHeldThroughTransition(shots, liveIndex) === shotId) {
+        const transitionMs = liveIndex !== null ? (shots[liveIndex]?.transitionMs ?? 0) : 0
+        setTimeout(() => setShotHidden(shotId), transitionMs)
+        return
       }
       setShotHidden(shotId)
     })

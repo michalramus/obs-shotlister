@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Project, Camera, Rundown, Shot, Marker } from '../shared/types'
+import { applyLivePosition } from '../shared/live-view'
 import type {
   LiveState,
   CreateShotInput,
@@ -164,12 +165,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       liveIndex: state.liveIndex,
       startedAt: state.startedAt,
       running: state.running,
-      shots:
-        state.liveIndex !== null
-          ? s.shots.map((shot, i) =>
-              i < state.liveIndex! && !shot.hidden ? { ...shot, hidden: true } : shot,
-            )
-          : s.shots,
+      // Same derivation the Phone view uses — see src/shared/live-view.ts.
+      shots: applyLivePosition(s.shots, state.liveIndex),
     })),
 
   markShotHidden: (shotId) =>
