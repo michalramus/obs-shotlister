@@ -7,6 +7,7 @@ import { ShotListPanel } from './components/ShotListPanel'
 import { LiveControls } from './components/LiveControls'
 import { ShotlistWidget } from '../shared/components/ShotlistWidget'
 import { isInTransition } from '../shared/timing'
+import { toMediaUrl } from '../shared/media-url'
 import { ResolveImportDialog } from './components/ResolveImportDialog'
 import { OBSSettingsPanel } from './components/OBSSettingsPanel'
 import { OSCSettingsPanel } from './components/OSCSettingsPanel'
@@ -239,7 +240,7 @@ export default function App(): React.JSX.Element {
     window.api.assets
       .getAudioDir()
       .then((dir) => {
-        setAudioBaseUrl(`media://localhost${dir}`)
+        setAudioBaseUrl(toMediaUrl(dir))
       })
       .catch((err: unknown) => console.error('[App] getAudioDir:', err))
     return offServerError
@@ -608,7 +609,7 @@ export default function App(): React.JSX.Element {
                   >
                     <video
                       ref={videoRef}
-                      src={`media://localhost${rundownMedia!.filePath}`}
+                      src={toMediaUrl(rundownMedia!.filePath)}
                       style={{
                         width: '100%',
                         height: '100%',

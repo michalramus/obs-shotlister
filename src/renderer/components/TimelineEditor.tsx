@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Shot, Camera, Marker } from '../../shared/types'
+import { toMediaUrl } from '../../shared/media-url'
 
 interface TimelineEditorProps {
   shots: Shot[]
@@ -293,7 +294,7 @@ export function TimelineEditor({
       )
       if (!isVideoFile) {
         audioPlayRef.current?.pause()
-        const audioSrc = 'media://localhost' + rundownMedia!.filePath
+        const audioSrc = toMediaUrl(rundownMedia!.filePath)
         const audio = new Audio(audioSrc)
         audio.preload = 'auto'
         audioPlayRef.current = audio

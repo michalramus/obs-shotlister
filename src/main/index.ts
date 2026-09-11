@@ -3,6 +3,7 @@ import { join } from 'path'
 import { readFileSync, existsSync, createReadStream, promises as fsPromises } from 'fs'
 import { extname } from 'path'
 import { Readable } from 'stream'
+import { fromMediaUrl } from '../shared/media-url'
 import { startServer } from './server'
 import { getDatabase } from './db/index'
 import {
@@ -963,7 +964,7 @@ function broadcastRundown(): void {
 app.whenReady().then(() => {
   // Serve local media files via media:// protocol (avoids cross-origin issues in dev mode)
   protocol.handle('media', async (request) => {
-    const filePath = decodeURIComponent(new URL(request.url).pathname)
+    const filePath = fromMediaUrl(request.url)
     let stat: Awaited<ReturnType<typeof fsPromises.stat>>
     try {
       stat = await fsPromises.stat(filePath)
