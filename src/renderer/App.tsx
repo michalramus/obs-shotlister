@@ -8,6 +8,7 @@ import { LiveControls } from './components/LiveControls'
 import { ShotlistWidget } from '../shared/components/ShotlistWidget'
 import { isInTransition } from '../shared/timing'
 import { toMediaUrl } from '../shared/media-url'
+import type { DeleteShotMode } from './electron-api.d'
 import { ResolveImportDialog } from './components/ResolveImportDialog'
 import { OBSSettingsPanel } from './components/OBSSettingsPanel'
 import { OSCSettingsPanel } from './components/OSCSettingsPanel'
@@ -396,8 +397,8 @@ export default function App(): React.JSX.Element {
         console.error('[App] extendLastShot:', err),
       )
     },
-    onDeleteShot: (id: string) => {
-      removeShot(id).catch((err: unknown) => console.error('[App] deleteShot:', err))
+    onDeleteShot: (id: string, mode?: DeleteShotMode) => {
+      removeShot(id, mode).catch((err: unknown) => console.error('[App] deleteShot:', err))
     },
     onChangeShotCamera: (id: string, camId: string) => {
       editShot({ id, cameraId: camId }).catch((err: unknown) =>

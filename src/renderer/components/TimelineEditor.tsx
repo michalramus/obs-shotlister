@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Shot, Camera, Marker } from '../../shared/types'
 import { toMediaUrl } from '../../shared/media-url'
+import type { DeleteShotMode } from '../electron-api.d'
 
 interface TimelineEditorProps {
   shots: Shot[]
@@ -25,7 +26,8 @@ interface TimelineEditorProps {
   onImportMedia: () => void
   onUpdateMediaOffset: (offsetMs: number) => void
   onClearMedia: () => void
-  onDeleteShot: (shotId: string) => void
+  /** `mode` defaults to 'extend': the neighbouring shot absorbs the deleted time. */
+  onDeleteShot: (shotId: string, mode?: DeleteShotMode) => void
   onChangeShotCamera: (shotId: string, cameraId: string) => void
   mediaVideoRef: React.RefObject<HTMLVideoElement | null>
   selectedShotId: string | null
@@ -1870,23 +1872,40 @@ export function TimelineEditor({
           }}
           onMouseLeave={() => setContextMenu(null)}
         >
-          <div
-            style={{ padding: '8px 12px', cursor: 'pointer', fontSize: '13px', color: '#e74c3c' }}
-            onMouseEnter={(e) => {
-              const el = e.currentTarget as HTMLDivElement
-              el.style.background = '#3a2a2a'
-            }}
-            onMouseLeave={(e) => {
-              const el = e.currentTarget as HTMLDivElement
-              el.style.background = 'transparent'
-            }}
-            onClick={() => {
-              onDeleteShot(contextMenu.shotId)
-              setContextMenu(null)
-            }}
-          >
-            Delete shot
-          </div>
+          {(
+            [
+              {
+                mode: 'extend' as const,
+                label: 'Delete shot',
+                hint: 'previous shot absorbs the time',
+              },
+              {
+                mode: 'ripple' as const,
+                label: 'Delete and close gap',
+                hint: 'later shots move earlier',
+              },
+            ]
+          ).map(({ mode, label, hint }) => (
+            <div
+              key={mode}
+              style={{ padding: '8px 12px', cursor: 'pointer', fontSize: '13px', color: '#e74c3c' }}
+              onMouseEnter={(e) => {
+                const el = e.currentTarget as HTMLDivElement
+                el.style.background = '#3a2a2a'
+              }}
+              onMouseLeave={(e) => {
+                const el = e.currentTarget as HTMLDivElement
+                el.style.background = 'transparent'
+              }}
+              onClick={() => {
+                onDeleteShot(contextMenu.shotId, mode)
+                setContextMenu(null)
+              }}
+            >
+              {label}
+              <div style={{ fontSize: '10px', color: '#888', marginTop: 1 }}>{hint}</div>
+            </div>
+          ))}
           <div style={{ borderTop: '1px solid #333', padding: '4px 0' }}>
             <div style={{ padding: '2px 12px', fontSize: '11px', color: '#888' }}>
               Change camera:
