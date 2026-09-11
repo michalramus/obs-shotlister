@@ -117,6 +117,9 @@ export interface ElectronApi {
   assets: {
     getAudioDir: () => Promise<string>
   }
+  server: {
+    onError: (cb: (message: string) => void) => () => void
+  }
 }
 
 const api: ElectronApi = {
@@ -224,6 +227,13 @@ const api: ElectronApi = {
   },
   assets: {
     getAudioDir: () => ipcRenderer.invoke('assets:audioDir'),
+  },
+  server: {
+    onError: (cb: (message: string) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, message: string): void => cb(message)
+      ipcRenderer.on('server:error', listener)
+      return () => ipcRenderer.off('server:error', listener)
+    },
   },
 }
 

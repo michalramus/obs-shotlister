@@ -207,6 +207,7 @@ export default function App(): React.JSX.Element {
   const [showExportMenu, setShowExportMenu] = useState(false)
   const [showImportMenu, setShowImportMenu] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [serverError, setServerError] = useState<string | null>(null)
   const [headerFlash, setHeaderFlash] = useState(false)
   const isFirstLiveIndexRef = useRef(true)
 
@@ -234,12 +235,14 @@ export default function App(): React.JSX.Element {
     window.api.obs.onValidationResult(setObsValidationResult)
     window.api.live.onStatePush(handleLiveStatePush)
     window.api.live.onShotHiddenPush(markShotHidden)
+    const offServerError = window.api.server.onError(setServerError)
     window.api.assets
       .getAudioDir()
       .then((dir) => {
         setAudioBaseUrl(`media://localhost${dir}`)
       })
       .catch((err: unknown) => console.error('[App] getAudioDir:', err))
+    return offServerError
   }, [
     loadProjects,
     loadLiveState,
@@ -545,6 +548,13 @@ export default function App(): React.JSX.Element {
           </button>
         </div>
       </header>
+
+      {serverError !== null && (
+        <div style={{ ...styles.warningBanner, background: '#c0392b', cursor: 'default' }}>
+          <span>Phone server:</span>
+          <span>{serverError}</span>
+        </div>
+      )}
 
       {obsStatus === 'connected' &&
         obsValidationResult !== null &&

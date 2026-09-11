@@ -1026,7 +1026,9 @@ app.whenReady().then(() => {
   const audioDir = app.isPackaged
     ? join(process.resourcesPath, 'audio')
     : join(app.getAppPath(), 'resources', 'audio')
-  const io = startServer(_db, audioDir)
+  const io = startServer(_db, audioDir, (message) => {
+    BrowserWindow.getAllWindows()[0]?.webContents.send('server:error', message)
+  })
   if (io) setSocketServer(io)
   createWindow()
 

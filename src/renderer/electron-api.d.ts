@@ -172,6 +172,9 @@ export interface ElectronApi {
   assets: {
     getAudioDir: () => Promise<string>
   }
+  server: {
+    onError: (cb: (message: string) => void) => () => void
+  }
 }
 
 declare global {

@@ -9,7 +9,11 @@ import type { Database } from 'better-sqlite3'
 
 const PORT = process.env['PORT'] ? parseInt(process.env['PORT'], 10) : 3000
 
-export function startServer(db?: Database, audioDir?: string): SocketServer {
+export function startServer(
+  db?: Database,
+  audioDir?: string,
+  onError?: (message: string) => void,
+): SocketServer {
   const app = express()
 
   app.use(express.json())
@@ -33,6 +37,18 @@ export function startServer(db?: Database, audioDir?: string): SocketServer {
   const httpServer = createServer(app)
 
   const io = attachSocketServer(httpServer, db)
+
+  // listen() reports failures via 'error', not a throw — without this an
+  // EADDRINUSE reaches uncaughtException and the app runs with no phone server.
+  httpServer.on('error', (err: NodeJS.ErrnoException) => {
+    const detail =
+      err.code === 'EADDRINUSE'
+        ? `port ${PORT} is already in use — phone UI unavailable. Set PORT to use another port.`
+        : err.message
+    // eslint-disable-next-line no-console
+    console.error(`[server] ${detail}`, err)
+    onError?.(detail)
+  })
 
   httpServer.listen(PORT, () => {
     // eslint-disable-next-line no-console
