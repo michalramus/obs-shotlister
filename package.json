@@ -29,7 +29,6 @@
     "obs-websocket-js": "^5.0.5",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
-    "ws": "^8.16.0",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
@@ -41,7 +40,6 @@
     "@types/react": "^18.2.61",
     "@types/react-dom": "^18.2.19",
     "@types/supertest": "^7.2.0",
-    "@types/ws": "^8.5.10",
     "@typescript-eslint/eslint-plugin": "^7.1.0",
     "@typescript-eslint/parser": "^7.1.0",
     "@vitejs/plugin-react": "^4.2.1",
