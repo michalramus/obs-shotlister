@@ -1,10 +1,23 @@
-import { app, BrowserWindow, ipcMain, dialog, protocol } from 'electron'
+import { app, BrowserWindow, dialog, protocol } from 'electron'
 import { join } from 'path'
 import { readFileSync, existsSync, createReadStream, promises as fsPromises } from 'fs'
 import { extname } from 'path'
 import { Readable } from 'stream'
 import { fromMediaUrl } from '../shared/media-url'
 import { startServer } from './server'
+import { registerIpcHandler, pushToWindow } from './ipc/register'
+import type {
+  CameraUpsertInput,
+  CreateShotInput,
+  UpdateShotInput,
+  SplitShotInput,
+  DeleteShotMode,
+  ConfirmImportInput,
+  OBSConnectionStatus,
+  OBSValidateResult,
+  TransitionMapping,
+  LiveState,
+} from '../shared/ipc-contract'
 import { getDatabase } from './db/index'
 import {
   listProjects,
@@ -15,7 +28,6 @@ import {
   upsertCamera,
   deleteCamera,
 } from './ipc/projects'
-import type { CameraUpsertInput } from './ipc/projects'
 import {
   listRundowns,
   createRundown,
@@ -25,12 +37,6 @@ import {
   setRundownFolder,
 } from './ipc/rundowns'
 import { listShots, createShot, updateShot, deleteShot, reorderShots, splitShot } from './ipc/shots'
-import type {
-  CreateShotInput,
-  UpdateShotInput,
-  SplitShotInput,
-  DeleteShotMode,
-} from './ipc/shots'
 import {
   getLiveState,
   getLiveQueue,
@@ -46,9 +52,8 @@ import {
 } from './ipc/live'
 import { getCameraById } from './ipc/projects'
 import { parseResolveCSV, confirmResolveImport } from './ipc/resolve-import'
-import type { ConfirmImportInput } from './ipc/resolve-import'
 import { createOBSClient } from './obs/client'
-import type { OBSConnectionStatus } from './obs/client'
+import { runOBSValidation } from './obs/validation'
 import {
   getObsSettings,
   saveObsSettings,
@@ -64,10 +69,8 @@ import {
   listTransitionMappings,
   upsertTransitionMapping,
   deleteTransitionMapping,
-  resolveTransition,
   resolveTransitionFull,
 } from './ipc/transitions'
-import type { TransitionMapping } from './ipc/transitions'
 import { listMarkers, upsertMarker, deleteMarker } from './ipc/markers'
 import type { UpsertMarkerInput } from './ipc/markers'
 import {
@@ -108,59 +111,12 @@ process.on('unhandledRejection', (reason: unknown) => {
 
 // --- OBS validation ----------------------------------------------------------
 
-export interface OBSValidateResult {
-  studioModeEnabled: boolean
-  missingScenes: string[]
-  missingTransitions: string[]
-}
-
-async function runOBSValidation(
-  database: ReturnType<typeof getDatabase>,
-): Promise<OBSValidateResult | null> {
-  if (obsClient.status !== 'connected') return null
-  const liveState = getLiveState(database)
-  const [studioModeEnabled, scenes, transitions] = await Promise.all([
-    obsClient.getStudioModeEnabled(),
-    obsClient.getSceneList(),
-    obsClient.getTransitionList(),
-  ])
-
-  // Check camera scene mappings for active project
-  const missingScenes: string[] = []
-  if (liveState.projectId) {
-    const cameras = listCameras(database, liveState.projectId)
-    for (const cam of cameras) {
-      if (cam.obsScene && !scenes.includes(cam.obsScene)) {
-        missingScenes.push(cam.obsScene)
-      }
-    }
-  }
-
-  // Check transition names used in active rundown shots
-  const missingTransitions: string[] = []
-  if (liveState.rundownId) {
-    const shots = listShots(database, liveState.rundownId)
-    const uniqueTransitions = new Set(
-      shots
-        .filter((s) => s.transitionName != null)
-        .map((s) => resolveTransition(database, s.transitionName!)),
-    )
-    for (const t of uniqueTransitions) {
-      if (!transitions.includes(t)) {
-        missingTransitions.push(t)
-      }
-    }
-  }
-
-  return { studioModeEnabled, missingScenes, missingTransitions }
-}
-
 function sendValidationResult(result: OBSValidateResult | null): void {
-  BrowserWindow.getAllWindows()[0]?.webContents.send('obs:validationResult', result)
+  pushToWindow('obs:validationResult', result)
 }
 
 function runValidation(database: ReturnType<typeof getDatabase>): void {
-  runOBSValidation(database)
+  runOBSValidation(database, obsClient)
     .then(sendValidationResult)
     .catch((err: unknown) => {
       console.error('[OBS] validation error:', err)
@@ -262,55 +218,55 @@ function registerIpcHandlers(): void {
   const db = getDatabase()
 
   // Projects
-  ipcMain.handle('projects:list', () => listProjects(db))
+  registerIpcHandler('projects:list', () => listProjects(db))
 
-  ipcMain.handle('projects:create', (_event, payload: { name: string }) =>
+  registerIpcHandler('projects:create', (payload: { name: string }) =>
     createProject(db, payload.name),
   )
 
-  ipcMain.handle('projects:rename', (_event, payload: { id: string; name: string }) =>
+  registerIpcHandler('projects:rename', (payload: { id: string; name: string }) =>
     renameProject(db, payload.id, payload.name),
   )
 
-  ipcMain.handle('projects:delete', (_event, payload: { id: string }) =>
+  registerIpcHandler('projects:delete', (payload: { id: string }) =>
     deleteProject(db, payload.id),
   )
 
-  ipcMain.handle('cameras:list', (_event, payload: { projectId: string }) =>
+  registerIpcHandler('cameras:list', (payload: { projectId: string }) =>
     listCameras(db, payload.projectId),
   )
 
-  ipcMain.handle('cameras:upsert', (_event, payload: CameraUpsertInput) =>
+  registerIpcHandler('cameras:upsert', (payload: CameraUpsertInput) =>
     upsertCamera(db, payload),
   )
 
-  ipcMain.handle('cameras:delete', (_event, payload: { id: string }) =>
+  registerIpcHandler('cameras:delete', (payload: { id: string }) =>
     deleteCamera(db, payload.id),
   )
 
   // Rundowns
-  ipcMain.handle('rundowns:list', (_event, payload: { projectId: string }) =>
+  registerIpcHandler('rundowns:list', (payload: { projectId: string }) =>
     listRundowns(db, payload.projectId),
   )
 
-  ipcMain.handle('rundowns:create', (_event, payload: { projectId: string; name: string }) => {
+  registerIpcHandler('rundowns:create', (payload: { projectId: string; name: string }) => {
     const rundown = createRundown(db, payload.projectId, payload.name)
     broadcastRundown()
     return rundown
   })
 
-  ipcMain.handle('rundowns:rename', (_event, payload: { id: string; name: string }) => {
+  registerIpcHandler('rundowns:rename', (payload: { id: string; name: string }) => {
     const rundown = renameRundown(db, payload.id, payload.name)
     broadcastRundown()
     return rundown
   })
 
-  ipcMain.handle('rundowns:delete', (_event, payload: { id: string }) => {
+  registerIpcHandler('rundowns:delete', (payload: { id: string }) => {
     deleteRundown(db, payload.id)
     broadcastRundown()
   })
 
-  ipcMain.handle('rundowns:setActive', (_event, payload: { rundownId: string | null }) => {
+  registerIpcHandler('rundowns:setActive', (payload: { rundownId: string | null }) => {
     setActiveRundown(db, payload.rundownId)
     broadcastRundown()
     if (payload.rundownId) {
@@ -320,24 +276,24 @@ function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('rundowns:reorder', (_e, { ids }: { ids: string[] }) => {
+  registerIpcHandler('rundowns:reorder', ({ ids }: { ids: string[] }) => {
     reorderRundowns(db, ids)
   })
 
-  ipcMain.handle(
+  registerIpcHandler(
     'rundowns:setFolder',
-    (_e, { id, folder }: { id: string; folder: string | null }) => {
+    ({ id, folder }: { id: string; folder: string | null }) => {
       return setRundownFolder(db, id, folder)
     },
   )
 
-  ipcMain.handle('project:setActive', (_event, payload: { projectId: string | null }) => {
+  registerIpcHandler('project:setActive', (payload: { projectId: string | null }) => {
     setActiveProject(db, payload.projectId)
     broadcastRundown()
   })
 
   // Shots
-  ipcMain.handle('shots:list', (_event, payload: { rundownId: string }) => {
+  registerIpcHandler('shots:list', (payload: { rundownId: string }) => {
     const queue = getLiveQueue()
     if (queue.length > 0) {
       const hiddenIds = new Set(queue.filter((s) => s.hidden).map((s) => s.id))
@@ -346,38 +302,38 @@ function registerIpcHandlers(): void {
     return listShots(db, payload.rundownId)
   })
 
-  ipcMain.handle('shots:create', (_event, payload: CreateShotInput) => {
+  registerIpcHandler('shots:create', (payload: CreateShotInput) => {
     const shot = createShot(db, payload)
     broadcastRundown()
     return shot
   })
 
-  ipcMain.handle('shots:update', (_event, payload: UpdateShotInput) => {
+  registerIpcHandler('shots:update', (payload: UpdateShotInput) => {
     const shot = updateShot(db, payload)
     broadcastRundown()
     return shot
   })
 
-  ipcMain.handle('shots:delete', (_event, payload: { id: string; mode?: DeleteShotMode }) => {
+  registerIpcHandler('shots:delete', (payload: { id: string; mode?: DeleteShotMode }) => {
     deleteShot(db, payload.id, payload.mode)
     broadcastRundown()
   })
 
-  ipcMain.handle('shots:reorder', (_event, payload: { ids: string[] }) => {
+  registerIpcHandler('shots:reorder', (payload: { ids: string[] }) => {
     reorderShots(db, payload.ids)
     broadcastRundown()
   })
 
-  ipcMain.handle('shots:split', (_e, payload: SplitShotInput) => {
+  registerIpcHandler('shots:split', (payload: SplitShotInput) => {
     const result = splitShot(db, payload)
     broadcastRundown()
     return result
   })
 
   // Live controls
-  ipcMain.handle('live:get', () => getLiveState(db))
+  registerIpcHandler('live:get', () => getLiveState(db))
 
-  ipcMain.handle('live:start', (_event, payload: { rundownId: string; previewFirst?: boolean }) => {
+  registerIpcHandler('live:start', (payload: { rundownId: string; previewFirst?: boolean }) => {
     const state = startLive(db, payload.rundownId)
     broadcastLiveState(state)
     broadcastRundown()
@@ -389,14 +345,14 @@ function registerIpcHandlers(): void {
     return state
   })
 
-  ipcMain.handle('live:stop', () => {
+  registerIpcHandler('live:stop', () => {
     const state = stopLive(db)
     broadcastLiveState(state)
     broadcastRundown()
     return state
   })
 
-  ipcMain.handle('live:next', () => {
+  registerIpcHandler('live:next', () => {
     const { state, hiddenShotId } = nextShot(db)
     broadcastLiveState(state)
     if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
@@ -404,7 +360,7 @@ function registerIpcHandlers(): void {
     return state
   })
 
-  ipcMain.handle('live:skip-next', () => {
+  registerIpcHandler('live:skip-next', () => {
     const { state, hiddenShotId } = skipNext(db)
     broadcastLiveState(state)
     if (hiddenShotId && _io) broadcastShotHidden(_io, hiddenShotId)
@@ -412,7 +368,7 @@ function registerIpcHandlers(): void {
     return state
   })
 
-  ipcMain.handle('live:restart', () => {
+  registerIpcHandler('live:restart', () => {
     const state = restartLive(db)
     broadcastLiveState(state)
     switchOBSScenes(state, db).catch(console.error)
@@ -420,12 +376,12 @@ function registerIpcHandlers(): void {
   })
 
   // DaVinci Resolve CSV import
-  ipcMain.handle('shots:import-csv:parse', async (_event, payload: { filePath: string }) => {
+  registerIpcHandler('shots:import-csv:parse', async (payload: { filePath: string }) => {
     const content = readFileSync(payload.filePath, 'utf-8')
     return parseResolveCSV(content)
   })
 
-  ipcMain.handle('shots:import-csv:open-dialog', async (_event) => {
+  registerIpcHandler('shots:import-csv:open-dialog', async () => {
     const result = await dialog.showOpenDialog({
       filters: [{ name: 'CSV', extensions: ['csv'] }],
       properties: ['openFile'],
@@ -433,18 +389,18 @@ function registerIpcHandlers(): void {
     return result
   })
 
-  ipcMain.handle('shots:import-csv:confirm', (_event, payload: ConfirmImportInput) =>
+  registerIpcHandler('shots:import-csv:confirm', (payload: ConfirmImportInput) =>
     confirmResolveImport(db, payload),
   )
 
   // OBS
-  ipcMain.handle('obs:settings:get', () => getObsSettings(db))
+  registerIpcHandler('obs:settings:get', () => getObsSettings(db))
 
-  ipcMain.handle('obs:settings:save', (_event, payload: { url: string; password: string }) => {
+  registerIpcHandler('obs:settings:save', (payload: { url: string; password: string }) => {
     saveObsSettings(db, payload.url, payload.password)
   })
 
-  ipcMain.handle('obs:connect', async () => {
+  registerIpcHandler('obs:connect', async () => {
     const settings = getObsSettings(db)
     try {
       await obsClient.connect(settings.url, settings.password)
@@ -454,7 +410,7 @@ function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('obs:disconnect', () => {
+  registerIpcHandler('obs:disconnect', () => {
     obsAutoReconnect = false
     if (obsReconnectTimer) {
       clearTimeout(obsReconnectTimer)
@@ -463,11 +419,11 @@ function registerIpcHandlers(): void {
     obsClient.disconnect()
   })
 
-  ipcMain.handle('obs:status', () => ({ status: obsClient.status }))
+  registerIpcHandler('obs:status', () => ({ status: obsClient.status }))
 
-  ipcMain.handle('obs:getEnabled', () => getObsEnabled(db))
+  registerIpcHandler('obs:getEnabled', () => getObsEnabled(db))
 
-  ipcMain.handle('obs:setEnabled', (_e, enabled: boolean) => {
+  registerIpcHandler('obs:setEnabled', (enabled: boolean) => {
     setObsEnabled(db, enabled)
     if (enabled) {
       obsAutoReconnect = true
@@ -483,7 +439,7 @@ function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('obs:getTransitions', async () => {
+  registerIpcHandler('obs:getTransitions', async () => {
     try {
       return await obsClient.getTransitionList()
     } catch (err) {
@@ -492,7 +448,7 @@ function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('obs:getScenes', async () => {
+  registerIpcHandler('obs:getScenes', async () => {
     try {
       return await obsClient.getSceneList()
     } catch (err) {
@@ -501,7 +457,7 @@ function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('obs:checkScenes', async () => {
+  registerIpcHandler('obs:checkScenes', async () => {
     const liveState = getLiveState(db)
     if (!liveState.projectId) return { allMapped: false, missing: [] }
     const cameras = listCameras(db, liveState.projectId)
@@ -519,15 +475,15 @@ function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('obs:validate', async () => {
+  registerIpcHandler('obs:validate', async () => {
     try {
-      return await runOBSValidation(db)
+      return await runOBSValidation(db, obsClient)
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : String(err))
     }
   })
 
-  ipcMain.handle('obs:transitions:list', (): TransitionMapping[] => {
+  registerIpcHandler('obs:transitions:list', (): TransitionMapping[] => {
     try {
       return listTransitionMappings(db)
     } catch (err) {
@@ -535,10 +491,9 @@ function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle(
+  registerIpcHandler(
     'obs:transitions:upsert',
     (
-      _event,
       payload: { logicalName: string; obsTransitionName: string; constLengthMs?: number | null },
     ) => {
       try {
@@ -554,7 +509,7 @@ function registerIpcHandlers(): void {
     },
   )
 
-  ipcMain.handle('obs:transitions:delete', (_event, payload: { logicalName: string }) => {
+  registerIpcHandler('obs:transitions:delete', (payload: { logicalName: string }) => {
     try {
       deleteTransitionMapping(db, payload.logicalName)
     } catch (err) {
@@ -563,14 +518,14 @@ function registerIpcHandlers(): void {
   })
 
   // Markers
-  ipcMain.handle('markers:list', (_e, payload: { rundownId: string }) =>
+  registerIpcHandler('markers:list', (payload: { rundownId: string }) =>
     listMarkers(db, payload.rundownId),
   )
-  ipcMain.handle('markers:upsert', (_e, payload: UpsertMarkerInput) => upsertMarker(db, payload))
-  ipcMain.handle('markers:delete', (_e, payload: { id: string }) => deleteMarker(db, payload.id))
+  registerIpcHandler('markers:upsert', (payload: UpsertMarkerInput) => upsertMarker(db, payload))
+  registerIpcHandler('markers:delete', (payload: { id: string }) => deleteMarker(db, payload.id))
 
   // Rundown media
-  ipcMain.handle('rundown:media:get', (_e, payload: { rundownId: string }) => {
+  registerIpcHandler('rundown:media:get', (payload: { rundownId: string }) => {
     const filePath =
       (
         db
@@ -586,9 +541,9 @@ function registerIpcHandlers(): void {
     return { filePath, offsetMs: parseInt(offsetStr, 10) }
   })
 
-  ipcMain.handle(
+  registerIpcHandler(
     'rundown:media:save',
-    (_e, payload: { rundownId: string; filePath: string; offsetMs: number }) => {
+    (payload: { rundownId: string; filePath: string; offsetMs: number }) => {
       db.prepare(
         'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
       ).run(`rundown_media_path_${payload.rundownId}`, payload.filePath)
@@ -598,14 +553,14 @@ function registerIpcHandlers(): void {
     },
   )
 
-  ipcMain.handle('rundown:media:clear', (_e, payload: { rundownId: string }) => {
+  registerIpcHandler('rundown:media:clear', (payload: { rundownId: string }) => {
     db.prepare('DELETE FROM settings WHERE key = ?').run(`rundown_media_path_${payload.rundownId}`)
     db.prepare('DELETE FROM settings WHERE key = ?').run(
       `rundown_media_offset_${payload.rundownId}`,
     )
   })
 
-  ipcMain.handle('media:file-exists', (_e, filePath: string) => {
+  registerIpcHandler('media:file-exists', (filePath: string) => {
     try {
       return existsSync(filePath)
     } catch {
@@ -613,7 +568,7 @@ function registerIpcHandlers(): void {
     }
   })
 
-  ipcMain.handle('rundown:media:open-dialog', async () => {
+  registerIpcHandler('rundown:media:open-dialog', async () => {
     const result = await dialog.showOpenDialog({
       properties: ['openFile'],
       filters: [
@@ -639,10 +594,10 @@ function registerIpcHandlers(): void {
   })
 
   // OSC
-  ipcMain.handle('osc:settings:get', () => getOscSettings(db))
-  ipcMain.handle(
+  registerIpcHandler('osc:settings:get', () => getOscSettings(db))
+  registerIpcHandler(
     'osc:settings:save',
-    (_e: Electron.IpcMainInvokeEvent, payload: { enabled: boolean; port: number }) => {
+    (payload: { enabled: boolean; port: number }) => {
       saveOscSettings(db, payload.enabled, payload.port)
       if (payload.enabled) {
         startOscServer(payload.port, { next: handleOscNext, skip: handleOscSkip })
@@ -653,23 +608,23 @@ function registerIpcHandlers(): void {
   )
 
   // Preview-first preference (persisted to DB so OSC can read it)
-  ipcMain.handle('live:getPreviewFirst', () => getPreviewFirst(db))
-  ipcMain.handle('live:savePreviewFirst', (_e, value: boolean) => savePreviewFirst(db, value))
+  registerIpcHandler('live:getPreviewFirst', () => getPreviewFirst(db))
+  registerIpcHandler('live:savePreviewFirst', (value: boolean) => savePreviewFirst(db, value))
 
   // UI mode
-  ipcMain.handle('ui:setMode', (_e: Electron.IpcMainInvokeEvent, mode: 'edit' | 'live') => {
+  registerIpcHandler('ui:setMode', (mode: 'edit' | 'live') => {
     currentUiMode = mode
   })
 
   // Assets
-  ipcMain.handle('assets:audioDir', () => {
+  registerIpcHandler('assets:audioDir', () => {
     return app.isPackaged
       ? join(process.resourcesPath, 'audio')
       : join(app.getAppPath(), 'resources', 'audio')
   })
 
   // Export / Import
-  ipcMain.handle('export:project', async (_e, { projectId }: { projectId: string }) => {
+  registerIpcHandler('export:project', async ({ projectId }: { projectId: string }) => {
     const data = exportProjectData(getDatabase(), projectId)
     const result = await dialog.showSaveDialog({
       defaultPath: 'project.json',
@@ -679,7 +634,7 @@ function registerIpcHandlers(): void {
     await fsPromises.writeFile(result.filePath, JSON.stringify(data, null, 2), 'utf-8')
   })
 
-  ipcMain.handle('export:rundown', async (_e, { rundownId }: { rundownId: string }) => {
+  registerIpcHandler('export:rundown', async ({ rundownId }: { rundownId: string }) => {
     const data = exportRundownData(getDatabase(), rundownId)
     const result = await dialog.showSaveDialog({
       defaultPath: 'rundown.json',
@@ -689,7 +644,7 @@ function registerIpcHandlers(): void {
     await fsPromises.writeFile(result.filePath, JSON.stringify(data, null, 2), 'utf-8')
   })
 
-  ipcMain.handle('export:database', async () => {
+  registerIpcHandler('export:database', async () => {
     const data = exportDatabaseData(getDatabase())
     const result = await dialog.showSaveDialog({
       defaultPath: 'obs-queuer-backup.json',
@@ -699,7 +654,7 @@ function registerIpcHandlers(): void {
     await fsPromises.writeFile(result.filePath, JSON.stringify(data, null, 2), 'utf-8')
   })
 
-  ipcMain.handle('import:project', async () => {
+  registerIpcHandler('import:project', async () => {
     const result = await dialog.showOpenDialog({
       filters: [{ name: 'JSON', extensions: ['json'] }],
       properties: ['openFile'],
@@ -712,7 +667,7 @@ function registerIpcHandlers(): void {
     return newProjectId
   })
 
-  ipcMain.handle('import:rundown', async (_e, { projectId }: { projectId: string }) => {
+  registerIpcHandler('import:rundown', async ({ projectId }: { projectId: string }) => {
     const result = await dialog.showOpenDialog({
       filters: [{ name: 'JSON', extensions: ['json'] }],
       properties: ['openFile'],
@@ -725,7 +680,7 @@ function registerIpcHandlers(): void {
     return newRundownId
   })
 
-  ipcMain.handle('import:database', async () => {
+  registerIpcHandler('import:database', async () => {
     const result = await dialog.showOpenDialog({
       filters: [{ name: 'JSON', extensions: ['json'] }],
       properties: ['openFile'],
@@ -743,7 +698,6 @@ function registerIpcHandlers(): void {
 // OBS scene switching helpers
 // ---------------------------------------------------------------------------
 
-import type { LiveState } from './ipc/live'
 
 async function startWithPreviewFirst(
   state: LiveState,
@@ -937,11 +891,11 @@ function broadcastLiveState(state: LiveState): void {
     elapsedMs: state.startedAt !== null ? Date.now() - state.startedAt : null,
   })
   _io.emit('state:playback', { running: state.running })
-  BrowserWindow.getAllWindows()[0]?.webContents.send('live:state-push', state)
+  pushToWindow('live:state-push', state)
 }
 
 function broadcastShotHiddenToRenderer(shotId: string): void {
-  BrowserWindow.getAllWindows()[0]?.webContents.send('live:shot-hidden-push', shotId)
+  pushToWindow('live:shot-hidden-push', shotId)
 }
 
 function broadcastRundown(): void {
@@ -1029,7 +983,7 @@ app.whenReady().then(() => {
     ? join(process.resourcesPath, 'audio')
     : join(app.getAppPath(), 'resources', 'audio')
   const io = startServer(_db, audioDir, (message) => {
-    BrowserWindow.getAllWindows()[0]?.webContents.send('server:error', message)
+    pushToWindow('server:error', message)
   })
   if (io) setSocketServer(io)
   createWindow()
@@ -1061,7 +1015,7 @@ app.whenReady().then(() => {
   }
 
   obsClient.onStatusChange((status: OBSConnectionStatus) => {
-    BrowserWindow.getAllWindows()[0]?.webContents.send('obs:status', { status })
+    pushToWindow('obs:status', { status })
     if (status === 'connected' && _db) {
       // A retry may still be pending from before this connection succeeded.
       if (obsReconnectTimer) {

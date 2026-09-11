@@ -20,7 +20,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { useAppStore } from '../store'
 import type { Shot, Camera } from '../../shared/types'
-import type { CreateShotInput, UpdateShotInput } from '../electron-api.d'
+import type { CreateShotInput, UpdateShotInput } from '../../shared/ipc-contract'
 
 const s = {
   panel: {

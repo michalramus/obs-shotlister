@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Shot, Camera, Marker } from '../../shared/types'
 import { toMediaUrl } from '../../shared/media-url'
-import type { DeleteShotMode } from '../electron-api.d'
+import type { DeleteShotMode } from '../../shared/ipc-contract'
 
 interface TimelineEditorProps {
   shots: Shot[]

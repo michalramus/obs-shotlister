@@ -10,6 +10,7 @@
 import Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
 import type { Project, Camera } from '../../shared/types'
+import type { CameraUpsertInput } from '../../shared/ipc-contract'
 
 // ---------------------------------------------------------------------------
 // Row shapes returned from better-sqlite3
@@ -122,13 +123,7 @@ export function getCameraById(db: Database.Database, id: string): Camera | null 
   return row ? rowToCamera(row) : null
 }
 
-// obsScene and resolveColor are optional on input — upsertCamera defaults them
-// to null — so they must not be required by the type.
-export type CameraUpsertInput = Omit<Camera, 'id' | 'obsScene' | 'resolveColor'> & {
-  id?: string
-  obsScene?: string | null
-  resolveColor?: string | null
-}
+
 
 export function upsertCamera(db: Database.Database, input: CameraUpsertInput): Camera {
   if (input.id) {

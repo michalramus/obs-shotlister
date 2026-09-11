@@ -7,7 +7,7 @@ import type {
   OBSConnectionStatus,
   OBSValidateResult,
   DeleteShotMode,
-} from './electron-api.d'
+} from '../shared/ipc-contract'
 
 interface AppStore {
   // Data

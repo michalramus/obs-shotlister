@@ -9,29 +9,17 @@
 
 import Database from 'better-sqlite3'
 import { createShot } from './shots'
+import type {
+  ParsedRow,
+  ParseResult,
+  ConfirmImportInput,
+} from '../../shared/ipc-contract'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export interface ParsedRow {
-  label: string
-  durationTimecode: string
-  resolveColor: string
-}
 
-export interface ParseResult {
-  colors: string[]
-  rows: ParsedRow[]
-}
-
-export interface ConfirmImportInput {
-  rundownId: string
-  mode: 'append' | 'replace'
-  mapping: Record<string, string | null>
-  rows: ParsedRow[]
-  fps: number
-}
 
 // ---------------------------------------------------------------------------
 // Timecode parsing

@@ -1,8 +1,9 @@
 import type Database from 'better-sqlite3'
+import type { TransitionMapping } from '../../shared/ipc-contract'
 
 export const BUILTIN_TRANSITIONS = ['cut', 'fade', 'stinger'] as const
 
-export type TransitionMapping = { logicalName: string; obsTransitionName: string }
+
 
 export function listTransitionMappings(db: Database.Database): TransitionMapping[] {
   const rows = db

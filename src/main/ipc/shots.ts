@@ -10,6 +10,12 @@
 import Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
 import type { Shot } from '../../shared/types'
+import type {
+  CreateShotInput,
+  UpdateShotInput,
+  SplitShotInput,
+  DeleteShotMode,
+} from '../../shared/ipc-contract'
 
 // ---------------------------------------------------------------------------
 // Row shapes returned from better-sqlite3
@@ -56,15 +62,6 @@ export function listShots(db: Database.Database, rundownId: string): Shot[] {
   return rows.map(rowToShot)
 }
 
-export interface CreateShotInput {
-  rundownId: string
-  cameraId: string
-  durationMs: number
-  label?: string | null
-  transitionName?: string | null
-  transitionMs?: number
-}
-
 export function createShot(db: Database.Database, input: CreateShotInput): Shot {
   const id = randomUUID()
 
@@ -91,15 +88,6 @@ export function createShot(db: Database.Database, input: CreateShotInput): Shot 
     transitionName,
     transitionMs,
   }
-}
-
-export interface UpdateShotInput {
-  id: string
-  cameraId?: string
-  durationMs?: number
-  label?: string | null
-  transitionName?: string | null
-  transitionMs?: number
 }
 
 export function updateShot(db: Database.Database, input: UpdateShotInput): Shot {
@@ -129,16 +117,6 @@ export function updateShot(db: Database.Database, input: UpdateShotInput): Shot 
     .get(input.id) as ShotRow
   return rowToShot(updated)
 }
-
-/**
- * How the timeline closes the gap left by a deleted shot.
- *
- * - `extend`: the neighbouring shot absorbs the deleted duration, so every later
- *   shot keeps its absolute position and the rundown's total length is unchanged.
- * - `ripple`: the shot is simply removed and everything after it moves earlier,
- *   shortening the rundown.
- */
-export type DeleteShotMode = 'extend' | 'ripple'
 
 export function deleteShot(
   db: Database.Database,
@@ -191,12 +169,6 @@ export function reorderShots(db: Database.Database, ids: string[]): void {
     })
   })
   updateAll()
-}
-
-export interface SplitShotInput {
-  shotId: string
-  atMs: number
-  newCameraId: string
 }
 
 export function splitShot(db: Database.Database, input: SplitShotInput): { first: Shot; second: Shot } {

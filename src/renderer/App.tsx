@@ -8,7 +8,7 @@ import { LiveControls } from './components/LiveControls'
 import { ShotlistWidget } from '../shared/components/ShotlistWidget'
 import { isInTransition } from '../shared/timing'
 import { toMediaUrl } from '../shared/media-url'
-import type { DeleteShotMode } from './electron-api.d'
+import type { DeleteShotMode } from '../shared/ipc-contract'
 import { ResolveImportDialog } from './components/ResolveImportDialog'
 import { OBSSettingsPanel } from './components/OBSSettingsPanel'
 import { OSCSettingsPanel } from './components/OSCSettingsPanel'
@@ -233,18 +233,24 @@ export default function App(): React.JSX.Element {
       .getStatus()
       .then((r) => setObsStatus(r.status))
       .catch(() => {})
-    window.api.obs.onStatusChange(setObsStatus)
-    window.api.obs.onValidationResult(setObsValidationResult)
-    window.api.live.onStatePush(handleLiveStatePush)
-    window.api.live.onShotHiddenPush(markShotHidden)
-    const offServerError = window.api.server.onError(setServerError)
+    // Each returns an unsubscribe function; without them a hot reload or remount
+    // would stack duplicate listeners on the same channel.
+    const unsubscribes = [
+      window.api.obs.onStatusChange(({ status }) => setObsStatus(status)),
+      window.api.obs.onValidationResult(setObsValidationResult),
+      window.api.live.onStatePush(handleLiveStatePush),
+      window.api.live.onShotHiddenPush(markShotHidden),
+      window.api.server.onError(setServerError),
+    ]
     window.api.assets
       .getAudioDir()
       .then((dir) => {
         setAudioBaseUrl(toMediaUrl(dir))
       })
       .catch((err: unknown) => console.error('[App] getAudioDir:', err))
-    return offServerError
+    return () => {
+      for (const off of unsubscribes) off()
+    }
   }, [
     loadProjects,
     loadLiveState,

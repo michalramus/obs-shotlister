@@ -12,18 +12,11 @@
  */
 
 import Database from 'better-sqlite3'
+import type { LiveState } from '../../shared/ipc-contract'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-export interface LiveState {
-  rundownId: string | null
-  projectId: string | null
-  liveIndex: number | null
-  startedAt: number | null
-  running: boolean
-}
 
 interface LiveStateRow {
   rundown_id: string | null

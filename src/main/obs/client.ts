@@ -1,9 +1,10 @@
 import OBSWebSocketLib from 'obs-websocket-js'
+import type { OBSConnectionStatus } from '../../shared/ipc-contract'
 // obs-websocket-js is ESM; when bundled as CJS by electron-vite the default
 // export is wrapped, so the actual constructor may be on .default.
 const OBSWebSocket = (OBSWebSocketLib as unknown as { default: typeof OBSWebSocketLib }).default ?? OBSWebSocketLib
 
-export type OBSConnectionStatus = 'disconnected' | 'connecting' | 'connected'
+
 
 export interface OBSClient {
   status: OBSConnectionStatus

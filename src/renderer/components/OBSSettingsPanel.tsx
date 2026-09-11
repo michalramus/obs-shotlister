@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useAppStore } from '../store'
-import type { OBSConnectionStatus, OBSValidateResult, TransitionMapping } from '../electron-api.d'
+import type { OBSConnectionStatus, OBSValidateResult, TransitionMapping } from '../../shared/ipc-contract'
 import type { Camera } from '../../shared/types'
 
 const s = {

@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useAppStore } from '../store'
 import type { Camera } from '../../shared/types'
-import type { ParsedRow } from '../electron-api.d'
+import type { ParsedRow } from '../../shared/ipc-contract'
 
 const FPS_OPTIONS = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60] as const
 
