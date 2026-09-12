@@ -43,6 +43,13 @@ tray-icon = "0.22"
 # no GUI toolkit involved, and SNI is what Cinnamon, KDE, Xfce and GNOME's AppIndicator
 # extension actually implement.
 [target.'cfg(target_os = "linux")'.dependencies]
+# winit refuses to compile on Linux without a windowing backend, and eframe only enables
+# them through its own `x11`/`wayland` features, which `default-features = false` turned
+# off. Cargo unions features across target tables, so these land on Linux only and the
+# other platforms stay free of X11 and Wayland plumbing.
+eframe = { version = "0.36", default-features = false, features = ["x11", "wayland"] }
+
+
 # `blocking` rather than the default tokio integration: the tray needs one D-Bus thread,
 # not an async runtime.
 ksni = { version = "0.3", default-features = false, features = ["blocking"] }
