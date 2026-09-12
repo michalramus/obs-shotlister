@@ -7,6 +7,7 @@
 //! Read-only: it never emits, and the main app needs no knowledge of it.
 
 mod audio;
+mod engine;
 mod model;
 
 use std::time::Duration;
