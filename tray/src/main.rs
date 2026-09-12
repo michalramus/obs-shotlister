@@ -9,6 +9,7 @@
 mod audio;
 mod engine;
 mod model;
+mod net;
 
 use std::time::Duration;
 

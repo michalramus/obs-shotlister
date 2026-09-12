@@ -1606,6 +1606,7 @@ dependencies = [
  "opus",
  "rodio",
  "rust_socketio",
+ "serde",
  "serde_json",
 ]
 
