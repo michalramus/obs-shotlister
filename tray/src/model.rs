@@ -41,12 +41,15 @@ pub struct LiveModel {
     pub shots: Vec<Shot>,
     pub live_index: Option<usize>,
     /// Monotonic millisecond at which the live Shot went on air, anchored locally.
-    pub anchor: Option<u64>,
+    ///
+    /// Signed because it can legitimately precede our own zero: a Shot that has been live
+    /// for a minute when we connect anchors a minute before the process started.
+    pub anchor: Option<i64>,
     pub running: bool,
 }
 
 impl LiveModel {
-    pub fn apply(&mut self, update: Update, now_ms: u64) {
+    pub fn apply(&mut self, update: Update, now_ms: i64) {
         match update {
             Update::Live {
                 live_index,
@@ -54,7 +57,7 @@ impl LiveModel {
             } => {
                 self.live_index = live_index;
                 // `startedAtFromElapsed` in src/shared/live-view.ts, against our clock.
-                self.anchor = elapsed_ms.map(|elapsed| now_ms.saturating_sub(elapsed));
+                self.anchor = elapsed_ms.map(|elapsed| now_ms - elapsed as i64);
             }
             Update::Playback { running } => self.running = running,
             Update::Rundown { shots } => self.shots = shots,
@@ -98,10 +101,10 @@ impl LiveModel {
     ///
     /// Zero is a normal, long-lived state: per ADR 0002 the countdown runs on into overrun
     /// and nothing auto-advances.
-    pub fn remaining_ms(&self, now_ms: u64) -> Option<u64> {
+    pub fn remaining_ms(&self, now_ms: i64) -> Option<u64> {
         let anchor = self.anchor?;
-        let total = self.effective_duration_ms()?;
-        Some(total.saturating_sub(now_ms.saturating_sub(anchor)))
+        let total = self.effective_duration_ms()? as i64;
+        Some((total - (now_ms - anchor)).max(0) as u64)
     }
 }
 
@@ -207,6 +210,29 @@ mod tests {
         );
         assert_eq!(m.anchor, Some(8000));
         assert_eq!(m.remaining_ms(10_000), Some(3000));
+    }
+
+    #[test]
+    fn an_anchor_may_precede_our_own_clock_zero() {
+        // Connecting to a Shot that has already been live for a minute anchors it before
+        // the process started. Unsigned arithmetic clamped that to zero and handed the
+        // Shot its full duration back.
+        let mut m = LiveModel::default();
+        m.apply(
+            Update::Rundown {
+                shots: vec![shot("a", 5000, false)],
+            },
+            0,
+        );
+        m.apply(
+            Update::Live {
+                live_index: Some(0),
+                elapsed_ms: Some(4500),
+            },
+            0,
+        );
+        assert_eq!(m.anchor, Some(-4500));
+        assert_eq!(m.remaining_ms(0), Some(500));
     }
 
     #[test]
