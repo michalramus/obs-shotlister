@@ -6,6 +6,8 @@
 //!
 //! Read-only: it never emits, and the main app needs no knowledge of it.
 
+mod audio;
+
 fn main() {
     println!("shotlister-tray");
 }
