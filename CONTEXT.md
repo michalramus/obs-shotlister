@@ -91,3 +91,13 @@ _Avoid_: web UI, client, remote
 The person running the Live session at the desktop window. Distinct from a camera operator,
 who follows the Phone view.
 _Avoid_: user, director
+
+**Cue Tray**:
+The standalone program on the video switching computer that plays a Live session's audio
+cues. Read-only, and the main app is unaware of it.
+_Avoid_: client, listener, agent, beeper
+
+**Cue**:
+One sound played at a moment in the Live session — a countdown number or a beep. Distinct
+from a Shot, which is never called a cue.
+_Avoid_: sound, alert, tone
