@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Shotlister Cue Tray
+Comment=Plays a shotlister Live session's audio cues on the video switching computer
+Exec=shotlister-tray
+Icon=shotlister-tray
+Terminal=false
+Categories=AudioVideo;Utility;
+# The window is hidden at startup and opened from the tray, so it does not want a taskbar
+# button of its own until it is shown.
+StartupNotify=false
