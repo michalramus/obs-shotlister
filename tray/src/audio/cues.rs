@@ -3,6 +3,8 @@
 //! The generated module holds raw little-endian `i16` at 48 kHz mono. Bytes rather than
 //! `&[i16]` so `include_bytes!`'s alignment is irrelevant; they are widened once at startup.
 
+use std::sync::OnceLock;
+
 include!(concat!(env!("OUT_DIR"), "/cues.rs"));
 
 /// Which sound to play. The Cue Tray reproduces the operator window's unfiltered cues, so
@@ -14,6 +16,9 @@ pub enum Cue {
     /// The Shot has reached its end.
     Beep,
 }
+
+/// Every cue the tray can play, in countdown order.
+pub const ALL: [Cue; 4] = [Cue::Word(3), Cue::Word(2), Cue::Word(1), Cue::Beep];
 
 impl Cue {
     fn raw(self) -> &'static [u8] {
@@ -28,12 +33,31 @@ impl Cue {
         }
     }
 
-    /// Decodes the embedded bytes into samples ready for the mixer.
-    pub fn samples(self) -> Vec<i16> {
-        self.raw()
-            .chunks_exact(2)
-            .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
-            .collect()
+    /// Samples ready for the mixer, normalised to the -1.0..=1.0 rodio works in.
+    ///
+    /// Widened from the embedded bytes once per cue and cached; playback then costs a
+    /// memcpy of about 90 KB, which keeps the conversion off the tick that has to be
+    /// on time.
+    pub fn samples(self) -> Vec<f32> {
+        static CACHE: OnceLock<Vec<(Cue, Vec<f32>)>> = OnceLock::new();
+        let cache = CACHE.get_or_init(|| {
+            ALL.iter()
+                .map(|&cue| {
+                    let samples = cue
+                        .raw()
+                        .chunks_exact(2)
+                        .map(|pair| i16::from_le_bytes([pair[0], pair[1]]) as f32 / 32768.0)
+                        .collect();
+                    (cue, samples)
+                })
+                .collect()
+        });
+
+        cache
+            .iter()
+            .find(|(cue, _)| *cue == self)
+            .map(|(_, samples)| samples.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -45,7 +69,7 @@ mod tests {
     /// re-recording an asset does not break the build, but a truncated or empty decode does.
     #[test]
     fn every_cue_decodes_to_a_plausible_length() {
-        for cue in [Cue::Word(1), Cue::Word(2), Cue::Word(3), Cue::Beep] {
+        for cue in ALL {
             let samples = cue.samples();
             let ms = samples.len() as u32 * 1000 / SAMPLE_RATE;
             assert!(
@@ -59,9 +83,9 @@ mod tests {
     /// looking healthy while playing nothing.
     #[test]
     fn every_cue_carries_audio() {
-        for cue in [Cue::Word(1), Cue::Word(2), Cue::Word(3), Cue::Beep] {
-            let peak = cue.samples().iter().map(|s| s.unsigned_abs()).max().unwrap();
-            assert!(peak > 1000, "{cue:?} peaks at {peak}, effectively silent");
+        for cue in ALL {
+            let peak = cue.samples().iter().fold(0.0f32, |m, s| m.max(s.abs()));
+            assert!(peak > 0.03, "{cue:?} peaks at {peak}, effectively silent");
         }
     }
 
@@ -69,10 +93,10 @@ mod tests {
     /// regresses, the cue opens on a click.
     #[test]
     fn cues_do_not_open_on_a_click() {
-        for cue in [Cue::Word(1), Cue::Word(2), Cue::Word(3), Cue::Beep] {
+        for cue in ALL {
             let samples = cue.samples();
-            let first = samples[0].unsigned_abs();
-            assert!(first < 8000, "{cue:?} starts at amplitude {first}");
+            let first = samples[0].abs();
+            assert!(first < 0.25, "{cue:?} starts at amplitude {first}");
         }
     }
 
