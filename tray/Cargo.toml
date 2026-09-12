@@ -51,5 +51,7 @@ eframe = { version = "0.36", default-features = false, features = ["x11", "wayla
 
 
 # `blocking` rather than the default tokio integration: the tray needs one D-Bus thread,
-# not an async runtime.
-ksni = { version = "0.3", default-features = false, features = ["blocking"] }
+# not an async runtime. `blocking` is only an API layer on top of a reactor, so one still has
+# to be picked explicitly — `async-io` keeps tokio out of the tree, and zbus fails to compile
+# if neither reactor feature reaches it.
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
