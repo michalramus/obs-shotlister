@@ -34,23 +34,104 @@ done
 ## Run
 
 ```bash
-shotlister-tray --host 192.168.1.20            # tray icon + settings window
-shotlister-tray --headless --host 192.168.1.20 # no GUI, for a service unit
-shotlister-tray --play-test                    # play every cue once and exit
+shotlister-tray --host 192.168.1.20              # tray icon + settings window
+shotlister-tray --headless --host 192.168.1.20   # no GUI, for a service unit
+shotlister-tray --play-test                      # play every cue once and exit
 shotlister-tray --help
 ```
 
-Every setting the window offers is also a flag. Flags are one-shot overrides and never
-rewrite the config file, so a service unit's arguments cannot silently undo what somebody
-chose in the window. `--mute-count` and `--mute-beep` only ever mute.
+Point it at the machine running the main app, on the port its server listens on — the same
+one the Phone view uses, `3000` unless `PORT` was set on the main app.
 
-Settings live in `config.json` under the platform's config directory:
+### Command line
+
+| Flag | Default | Description |
+|---|---|---|
+| `--host <HOST>` | — | Machine running the main app. Accepts `10.0.0.5`, `10.0.0.5:3000`, or a pasted `http://10.0.0.5:3000`; a port given here fills in `--port` |
+| `--port <PORT>` | `3000` | Port the main app's server listens on |
+| `--volume <LEVEL>` | `1.0` | Playback volume, `0.0` to `1.0`. Values outside the range are clamped |
+| `--mute-count` | off | Start with the spoken countdown muted |
+| `--mute-beep` | off | Start with the expiry beep muted |
+| `--headless` | off | No window, no tray. Logs link and cue state to stdout and exits cleanly on `SIGTERM`. Requires a host |
+| `--settings` | off | Open the settings window at startup, for desktops with no system tray |
+| `--play-test` | off | Play every cue in order, then "one" and the beep together, and exit. Needs no network |
+| `--config <PATH>` | platform path | Use this config file instead of the default location |
+| `-v`, `--verbose` | off | Log the remaining time on every state change, not just the shot |
+| `-h`, `--help` | — | Print help |
+
+### Precedence
+
+**Command line beats config file beats default.** Flags are one-shot overrides and never
+rewrite the file, so a service unit started with `--volume 0.5` cannot silently overwrite
+what somebody chose in the window.
+
+`--mute-count` and `--mute-beep` only ever turn muting *on*. There is no `--unmute`: a bare
+service invocation should not be able to un-silence a tray somebody muted deliberately.
+
+A `--host` carrying its own port supplies both, unless an explicit `--port` overrides it:
+
+```bash
+shotlister-tray --host 10.0.0.5:4000              # port 4000
+shotlister-tray --host 10.0.0.5:4000 --port 5000  # port 5000 wins
+```
+
+### Settings file
+
+Written atomically and debounced, so a crash mid-write cannot leave a half-written file. A
+corrupt or partial config falls back to defaults with a message rather than refusing to
+start — the window is how you would fix it, so it has to open.
 
 | OS | Path |
 |---|---|
 | Linux | `~/.config/shotlistertray/config.json` |
 | macOS | `~/Library/Application Support/dev.shotlister.ShotlisterTray/config.json` |
 | Windows | `%APPDATA%\shotlister\ShotlisterTray\config\config.json` |
+
+```json
+{
+  "host": "192.168.1.20",
+  "port": 3000,
+  "volume": 1.0,
+  "mute_count": false,
+  "mute_beep": false
+}
+```
+
+Every field is optional; anything missing takes its default.
+
+### Running headless as a service
+
+`--headless` skips the window and the tray entirely and is what a dedicated switching
+machine wants. It logs one line per state change, so `journalctl -u shotlister-tray -f`
+shows the link coming and going.
+
+```ini
+# ~/.config/systemd/user/shotlister-tray.service
+[Unit]
+Description=Shotlister Cue Tray
+After=sound.target
+
+[Service]
+ExecStart=/usr/local/bin/shotlister-tray --headless --host 192.168.1.20
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user enable --now shotlister-tray
+```
+
+### When there is no sound
+
+1. `shotlister-tray --play-test` — if this is silent the problem is the audio device, not
+   the link. The settings window names the device it opened, which is usually enough on a
+   machine full of capture hardware.
+2. Check the status line. "Not connected" carries the real error, so a typo in the address
+   reads differently from a firewall.
+3. A muted countdown still beeps, and a muted beep still counts. If exactly one of the two
+   is missing, check the mute toggles before anything else.
 
 ## Where the icon appears
 

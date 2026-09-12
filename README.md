@@ -19,6 +19,7 @@ Camera shot queue manager for live productions(something like cuepilot but witho
 - **Live mode** — advance through shots with progress tracking; skipped shots are hidden in-memory (no DB writes)
 - **OBS integration** — switches scenes via obs-websocket; validates studio mode and scene names
 - **Phone monitor** — embedded Express + Socket.io server pushes state to LAN browsers in real time
+- **Cue Tray** — small companion app for the video switching computer that plays the countdown and beep over the LAN
 - **OSC server** — accept `/obsque/next` and `/obsque/skip` commands from external controllers
 - **DaVinci Resolve import** — import shot list from Resolve CSV marker export
 - **Export / Import** — rundown, project, or full database in JSON
@@ -98,6 +99,73 @@ All settings are stored in SQLite and configured from the app UI.
 ### Phone monitor
 
 Open `http://<machine-ip>:3000` in any browser on the same LAN. The page auto-connects and shows the live shot list with timers.
+
+## Cue Tray
+
+The switcher operator sits at a different machine from the shot list and would otherwise
+hear nothing. The Cue Tray is a small standalone program for that machine: it connects to
+this app over the LAN and plays the same audio cues the operator window plays — the spoken
+"three / two / one" countdown and the beep at shot expiry.
+
+It is read-only. It never sends anything back, and this app needs no configuration to
+support it. Source lives in `tray/`; it is a Rust program built with cargo, not part of the
+Electron bundle. Release builds ship as `shotlister-tray-*` assets alongside the app.
+
+### Running it
+
+```bash
+shotlister-tray --host 192.168.1.20              # tray icon + settings window
+shotlister-tray --headless --host 192.168.1.20   # no GUI, for a service or startup script
+shotlister-tray --play-test                      # play every cue once and exit
+```
+
+Point it at the machine running OBS Queuer, on the same port the phone monitor uses
+(`3000` by default). Left-click the tray icon for the settings window; right-click for
+Settings and Quit.
+
+### Command line
+
+| Flag | Description |
+|---|---|
+| `--host <HOST>` | Address of the machine running OBS Queuer. Accepts `10.0.0.5`, `10.0.0.5:3000`, or a pasted `http://10.0.0.5:3000` |
+| `--port <PORT>` | Port the server listens on. Default `3000` |
+| `--volume <LEVEL>` | Playback volume, `0.0` to `1.0`. Default `1.0` |
+| `--mute-count` | Start with the spoken countdown muted |
+| `--mute-beep` | Start with the expiry beep muted |
+| `--headless` | No window and no tray icon. Logs link and cue state to stdout; exits cleanly on `SIGTERM`. Requires `--host` |
+| `--settings` | Open the settings window at startup, for desktops with no system tray |
+| `--play-test` | Play every cue once and exit. Verifies audio without needing a network |
+| `--config <PATH>` | Use this config file instead of the default location |
+| `-v`, `--verbose` | Log every state event as it arrives |
+| `-h`, `--help` | Print help |
+
+Every setting the window offers is also a flag. **Flags override the config file but never
+rewrite it**, so a startup script's arguments cannot silently undo what somebody chose in
+the window. `--mute-count` and `--mute-beep` only ever mute — they cannot unmute a saved
+setting.
+
+Settings persist per user:
+
+| OS | Path |
+|---|---|
+| Linux | `~/.config/shotlistertray/config.json` |
+| macOS | `~/Library/Application Support/dev.shotlister.ShotlisterTray/config.json` |
+| Windows | `%APPDATA%\shotlister\ShotlisterTray\config\config.json` |
+
+### Where the icon appears
+
+| OS | Placement |
+|---|---|
+| Linux Mint (Cinnamon / MATE / Xfce) | Panel system tray, bottom-right. Works out of the box |
+| GNOME | Needs the AppIndicator extension; without an SNI host the item never appears |
+| macOS | Menu bar, top-right. No Dock icon |
+| Windows | Notification area; may sit behind the `^` overflow until pinned |
+
+Closing the window hides it. If no system tray is available the window stays on screen and
+closing it quits, so the program can never become something you can neither see nor stop.
+
+See `tray/README.md` for building it and for how the cue timing is kept identical to the
+operator window.
 
 ## OSC server
 
