@@ -13,6 +13,7 @@ clap = { version = "4.5.61", default-features = false, features = ["std", "deriv
 crossbeam-channel = "0.5.17"
 ctrlc = { version = "3.5.2", features = ["termination"] }
 directories = "6.0.0"
+eframe = { version = "0.36", default-features = false, features = ["glow", "default_fonts"] }
 rodio = { version = "0.22", default-features = false, features = ["playback"] }
 rust_socketio = "0.6.0"
 serde = { version = "1.0.229", features = ["derive"] }

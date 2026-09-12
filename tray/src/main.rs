@@ -13,6 +13,7 @@ mod engine;
 mod model;
 mod net;
 mod session;
+mod ui;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -43,9 +44,51 @@ fn main() {
     }
     let settings = cli.overlay(stored);
 
-    // The window is not built yet, so every run is headless for now.
-    let _ = cli.settings;
-    headless(&settings, cli.verbose);
+    if cli.headless {
+        headless(&settings, cli.verbose);
+        return;
+    }
+
+    if let Err(err) = windowed(settings, path, cli.settings) {
+        eprintln!("[ui] {err}");
+        std::process::exit(1);
+    }
+}
+
+/// Runs with the settings window. The tray icon lands in the next commit; until then the
+/// window is the whole interface, so it opens on launch and closing it quits.
+fn windowed(
+    settings: Settings,
+    config_path: Option<std::path::PathBuf>,
+    _force_settings: bool,
+) -> eframe::Result {
+    let audio = audio::spawn(settings.volume);
+    let session = session::spawn(
+        audio.clone(),
+        Mutes {
+            count: settings.mute_count,
+            beep: settings.mute_beep,
+        },
+    );
+    // Without a host the supervisor has nothing to attempt; the window is how one is
+    // supplied, and Apply starts it.
+    let net = net::spawn(settings.address().unwrap_or_default(), session.updates());
+
+    let (_to_ui, from_tray) = crossbeam_channel::unbounded();
+
+    ui::run(
+        ui::Wiring {
+            settings,
+            config_path,
+            audio,
+            session,
+            net,
+            from_tray,
+            hide_on_close: false,
+            start_visible: true,
+        },
+        |_ctx| {},
+    )
 }
 
 /// Runs with no window and no tray: connect, play cues, log state changes. This is the
