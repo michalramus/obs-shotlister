@@ -50,16 +50,16 @@ jobs:
 
       - run: yarn install --frozen-lockfile
 
-      - run: yarn dist:mac
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # --publish never: electron-builder otherwise auto-detects the GitHub provider on a
+      # tagged CI build and opens its own draft release named after the version, which is
+      # where the second, tray-less v0.1.2 release came from. create-release below is the
+      # only thing allowed to touch the release.
+      - run: yarn dist:mac --publish never
 
       - uses: actions/upload-artifact@v4
         with:
           name: mac-artifacts
-          path: |
-            dist/*.dmg
-            dist/*.dmg.blockmap
+          path: dist/*.dmg*
           if-no-files-found: error
 
   build-win:
@@ -75,9 +75,8 @@ jobs:
 
       - run: yarn install --frozen-lockfile
 
-      - run: yarn dist:win
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # electron-builder would otherwise publish its own draft release; see build-mac.
+      - run: yarn dist:win --publish never
 
       - uses: actions/upload-artifact@v4
         with:
@@ -98,9 +97,8 @@ jobs:
 
       - run: yarn install --frozen-lockfile
 
-      - run: yarn dist:linux
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # electron-builder would otherwise publish its own draft release; see build-mac.
+      - run: yarn dist:linux --publish never
 
       - uses: actions/upload-artifact@v4
         with:
@@ -237,12 +235,19 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Create draft release
+      # Create on the first run, upload on a re-run: one release per tag, holding every
+      # platform's app installer and every platform's cue tray build.
+      - name: Create or update the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --draft \
-            --title "OBS Queuer v${{ steps.version.outputs.VERSION }}" \
-            --generate-notes \
-            artifacts/*
+          tag="${{ github.ref_name }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" artifacts/* --clobber
+          else
+            gh release create "$tag" \
+              --draft \
+              --title "OBS Queuer v${{ steps.version.outputs.VERSION }}" \
+              --generate-notes \
+              artifacts/*
+          fi
