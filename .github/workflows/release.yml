@@ -14,7 +14,31 @@ permissions:
 # with anything else landing there.
 
 jobs:
+  # Guards the rule above. A tag whose tree declares a different version is the failure
+  # that broke v0.1.2, and it is much cheaper to catch here than in a shipped artifact.
+  verify-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Check package.json and tray/Cargo.toml match the tag
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          app=$(node -p "require('./package.json').version")
+          tray=$(sed -n 's/^version = "\(.*\)"/\1/p' tray/Cargo.toml | head -1)
+          echo "tag=$tag package.json=$app tray/Cargo.toml=$tray"
+          fail=0
+          [ "$app" = "$tag" ] || { echo "::error::package.json is $app, expected $tag"; fail=1; }
+          [ "$tray" = "$tag" ] || { echo "::error::tray/Cargo.toml is $tray, expected $tag"; fail=1; }
+          exit $fail
+
   build-mac:
+    needs: verify-version
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +63,7 @@ jobs:
           if-no-files-found: error
 
   build-win:
+    needs: verify-version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +86,7 @@ jobs:
           if-no-files-found: error
 
   build-linux:
+    needs: verify-version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,8 +110,112 @@ jobs:
             dist/*.AppImage
           if-no-files-found: error
 
+  # The Cue Tray is a separate Rust program in tray/, not part of the Electron bundle, so
+  # it needs its own build per platform. It ships as a bare binary: the cue sounds are
+  # compiled into it and there is nothing to install alongside.
+  tray-linux:
+    needs: verify-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        # libasound2-dev for the audio device (cpal); the rest is what eframe's winit and
+        # glow backends link against on X11 and Wayland.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libxkbcommon-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libgl1-mesa-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tray
+
+      - run: cargo build --release --locked
+        working-directory: tray
+
+      - run: cargo test --locked
+        working-directory: tray
+
+      - run: mv target/release/shotlister-tray shotlister-tray-linux-x86_64
+        working-directory: tray
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tray-linux
+          path: tray/shotlister-tray-linux-x86_64
+          if-no-files-found: error
+
+  tray-win:
+    needs: verify-version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tray
+
+      # The build script vendors and compiles libopus, which wants cmake on PATH here.
+      - uses: lukka/get-cmake@latest
+
+      - run: cargo build --release --locked
+        working-directory: tray
+
+      - run: cargo test --locked
+        working-directory: tray
+
+      - run: mv target/release/shotlister-tray.exe shotlister-tray-windows-x86_64.exe
+        working-directory: tray
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tray-win
+          path: tray/shotlister-tray-windows-x86_64.exe
+          if-no-files-found: error
+
+  tray-mac:
+    needs: verify-version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tray
+
+      - run: cargo test --locked
+        working-directory: tray
+
+      # Must be a bundle, not a bare binary: without an Info.plist there is no LSUIElement,
+      # so macOS gives it a Dock icon instead of a menu bar item.
+      - run: ./scripts/bundle-mac.sh
+        working-directory: tray
+
+      # ditto rather than zip, so the ad-hoc signature survives the round trip.
+      - name: Zip the app bundle
+        working-directory: tray/target
+        run: ditto -c -k --keepParent "Shotlister Cue Tray.app" "shotlister-cue-tray-${{ needs.verify-version.outputs.version }}-mac.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tray-mac
+          path: tray/target/*.zip
+          if-no-files-found: error
+
   create-release:
-    needs: [build-mac, build-win, build-linux]
+    needs: [build-mac, build-win, build-linux, tray-linux, tray-win, tray-mac]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
