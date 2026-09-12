@@ -247,7 +247,7 @@ jobs:
           else
             gh release create "$tag" \
               --draft \
-              --title "OBS Queuer v${{ steps.version.outputs.VERSION }}" \
+              --title "Shotlister v${{ steps.version.outputs.VERSION }}" \
               --generate-notes \
               artifacts/*
           fi
