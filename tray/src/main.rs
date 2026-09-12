@@ -13,6 +13,7 @@ mod engine;
 mod model;
 mod net;
 mod session;
+mod tray;
 mod ui;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -55,12 +56,11 @@ fn main() {
     }
 }
 
-/// Runs with the settings window. The tray icon lands in the next commit; until then the
-/// window is the whole interface, so it opens on launch and closing it quits.
+/// Runs with the tray icon and the settings window.
 fn windowed(
     settings: Settings,
     config_path: Option<std::path::PathBuf>,
-    _force_settings: bool,
+    force_settings: bool,
 ) -> eframe::Result {
     let audio = audio::spawn(settings.volume);
     let session = session::spawn(
@@ -74,21 +74,67 @@ fn windowed(
     // supplied, and Apply starts it.
     let net = net::spawn(settings.address().unwrap_or_default(), session.updates());
 
-    let (_to_ui, from_tray) = crossbeam_channel::unbounded();
+    let (to_ui, from_tray) = crossbeam_channel::unbounded();
 
-    ui::run(
-        ui::Wiring {
-            settings,
-            config_path,
-            audio,
-            session,
-            net,
-            from_tray,
-            hide_on_close: false,
-            start_visible: true,
-        },
-        |_ctx| {},
-    )
+    // Nothing has been configured yet, so there is nothing for the tray to be quietly
+    // doing in the background — put the window in front of the person who just launched it.
+    let needs_setup = settings.address().is_none();
+
+    // The tray cannot be installed before the event loop exists, and whether it installed
+    // decides two things the window needs to know, so it is set up from the creation
+    // callback and reported back through a channel.
+    let (installed_tx, installed_rx) = crossbeam_channel::bounded(1);
+    let mut wiring = ui::Wiring {
+        settings,
+        config_path,
+        audio: audio.clone(),
+        session: session.clone(),
+        net: net.clone(),
+        from_tray,
+        // Both overwritten from the channel below, before the first pass runs.
+        hide_on_close: true,
+        start_visible: true,
+        installed: Some(installed_rx),
+    };
+    wiring.start_visible = force_settings || needs_setup;
+
+    ui::run(wiring, move |ctx| {
+        let has_tray = tray::install(to_ui, ctx.clone());
+        if !has_tray {
+            // Without an icon there is no way back to a hidden window and no way to quit,
+            // so the window has to stay in charge of its own lifetime.
+            ctx.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(true));
+        }
+        let _ = installed_tx.send(has_tray);
+
+        // Keep the icon honest about the link without the window being open.
+        std::thread::Builder::new()
+            .name("cue-tray-status".into())
+            .spawn(move || {
+                let mut last = None;
+                loop {
+                    std::thread::sleep(Duration::from_millis(500));
+                    let link = net.status();
+                    let live = session.status();
+                    let connected = matches!(link.state, LinkState::Connected);
+                    let detail = match &link.state {
+                        LinkState::Connected if live.running => {
+                            format!("Running — {}", link.address)
+                        }
+                        LinkState::Connected => format!("Connected — {}", link.address),
+                        LinkState::Connecting => format!("Connecting to {}", link.address),
+                        LinkState::Failed(err) => format!("Not connected — {err}"),
+                    };
+
+                    let next = Some((connected, detail.clone()));
+                    if next != last {
+                        tray::set_connected(connected, &detail);
+                        last = next;
+                    }
+                }
+            })
+            .expect("spawning the tray status thread");
+    })
 }
 
 /// Runs with no window and no tray: connect, play cues, log state changes. This is the

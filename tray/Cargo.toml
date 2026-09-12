@@ -32,3 +32,17 @@ strip = "symbols"
 # socket or audio thread must be contained and recovered rather than killing the process
 # mid-programme. The ~300 KB abort would save is bought back by pruning rodio's features.
 panic = "unwind"
+
+# Windows and macOS deliver tray events through the same native run loop the window uses,
+# so one main thread can own both.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tray-icon = "0.22"
+
+# On Linux tray-icon is GTK-based and wants a GTK main loop on the main thread, which is
+# where winit has to be. ksni speaks StatusNotifierItem over D-Bus from its own thread with
+# no GUI toolkit involved, and SNI is what Cinnamon, KDE, Xfce and GNOME's AppIndicator
+# extension actually implement.
+[target.'cfg(target_os = "linux")'.dependencies]
+# `blocking` rather than the default tokio integration: the tray needs one D-Bus thread,
+# not an async runtime.
+ksni = { version = "0.3", default-features = false, features = ["blocking"] }

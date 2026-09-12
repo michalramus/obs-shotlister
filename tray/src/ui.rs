@@ -22,11 +22,14 @@ use crate::net::{LinkState, NetHandle};
 use crate::session::SessionHandle;
 
 /// Sent from the tray thread, which owns no state of its own.
+///
+/// Deliberately only two: the tray menu shows the window and quits, and every setting lives
+/// in the window. A checkable "Mute beep" in the menu would have to be kept in step with
+/// the window, and a mute toggle that shows the wrong state during a show is worse than one
+/// extra click.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiMsg {
     Show,
-    ToggleMuteCount,
-    ToggleMuteBeep,
     Quit,
 }
 
@@ -45,6 +48,9 @@ pub struct Wiring {
     /// or the program becomes unreachable and unkillable from the desktop.
     pub hide_on_close: bool,
     pub start_visible: bool,
+    /// Carries whether the tray installed. The answer is only known once the event loop is
+    /// up, which is after this struct is built.
+    pub installed: Option<Receiver<bool>>,
 }
 
 /// Runs the window. `on_ctx` is handed the egui context once it exists: the tray needs it
@@ -145,14 +151,6 @@ impl App {
         while let Ok(msg) = self.wiring.from_tray.try_recv() {
             match msg {
                 UiMsg::Show => self.set_visible(ctx, true),
-                UiMsg::ToggleMuteCount => {
-                    self.wiring.settings.mute_count = !self.wiring.settings.mute_count;
-                    self.push_mutes(ctx);
-                }
-                UiMsg::ToggleMuteBeep => {
-                    self.wiring.settings.mute_beep = !self.wiring.settings.mute_beep;
-                    self.push_mutes(ctx);
-                }
                 UiMsg::Quit => return true,
             }
         }
@@ -182,6 +180,16 @@ impl eframe::App for App {
     /// Runs even while the window is hidden, which is what lets a tray click reopen it and
     /// a pending save reach disk with nothing on screen.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some(installed) = &self.wiring.installed {
+            if let Ok(has_tray) = installed.try_recv() {
+                self.wiring.hide_on_close = has_tray;
+                if !has_tray {
+                    self.visible = true;
+                }
+                self.wiring.installed = None;
+            }
+        }
+
         if self.handle_tray(ctx) {
             self.quit(ctx);
             return;
