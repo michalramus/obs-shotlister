@@ -10,18 +10,67 @@ mod audio;
 mod engine;
 mod model;
 mod net;
+mod session;
 
 use std::time::Duration;
 
+use engine::Mutes;
+use net::LinkState;
+
 fn main() {
-    // A proper CLI arrives with the settings work; until then this is the only flag, and
-    // it exists so audio can be verified by ear before any networking is involved.
-    if std::env::args().any(|a| a == "--play-test") {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // A proper CLI arrives with the settings work; these two flags exist so the pieces
+    // can be exercised as they land.
+    if args.iter().any(|a| a == "--play-test") {
         play_test();
         return;
     }
 
-    println!("shotlister-tray");
+    let Some(address) = args.first() else {
+        eprintln!("usage: shotlister-tray <http://host:3000>");
+        eprintln!("       shotlister-tray --play-test");
+        std::process::exit(2);
+    };
+
+    run(address);
+}
+
+fn run(address: &str) {
+    let audio = audio::spawn(1.0);
+    let session = session::spawn(audio.clone(), Mutes::default());
+    let net = net::spawn(address.to_string(), session.updates());
+
+    println!("connecting to {address} — ctrl-c to stop");
+
+    // Until the window exists, report the link and the Live position as they change so the
+    // thing is observable while it runs.
+    let mut last = String::new();
+    loop {
+        std::thread::sleep(Duration::from_millis(250));
+
+        let link = net.status();
+        let live = session.status();
+        let line = match &link.state {
+            LinkState::Connecting => "connecting…".to_string(),
+            LinkState::Failed(err) => format!("disconnected: {err}"),
+            LinkState::Connected => match (live.running, live.live_index, live.remaining_ms) {
+                (true, Some(index), Some(remaining)) => format!(
+                    "connected — shot {}/{}, {:.1}s left",
+                    index + 1,
+                    live.shot_count,
+                    remaining as f64 / 1000.0
+                ),
+                (true, _, _) => "connected — running".to_string(),
+                _ => "connected — stopped".to_string(),
+            },
+        };
+
+        if line != last {
+            println!("{line}");
+            last = line;
+        }
+    }
 }
 
 /// Plays every cue in countdown order, then the beep and "one" together, which is what the
