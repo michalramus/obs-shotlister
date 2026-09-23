@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { applyMigrations } from '../db/index'
-import { listShots, createShot, updateShot, deleteShot, reorderShots } from './shots'
+import { listShots, createShot, updateShot, deleteShot, reorderShots, splitShot } from './shots'
 import type { Shot } from '../../shared/types'
 
 // ---------------------------------------------------------------------------
@@ -20,20 +20,20 @@ function seed(db: Database.Database): { projectId: string; rundownId: string; ca
   const projectId = 'p1'
   const rundownId = 'rd-1'
   const cameraId = 'cam-1'
-  db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(projectId, 'Proj', 1000)
+  db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+    projectId,
+    'Proj',
+    1000,
+  )
   db.prepare('INSERT INTO rundowns (id, project_id, name, created_at) VALUES (?, ?, ?, ?)').run(
     rundownId,
     projectId,
     'Morning',
     1000,
   )
-  db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-    cameraId,
-    projectId,
-    1,
-    'Wide',
-    '#e74c3c',
-  )
+  db.prepare(
+    'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+  ).run(cameraId, projectId, 1, 'Wide', '#e74c3c')
   return { projectId, rundownId, cameraId }
 }
 
@@ -136,8 +136,16 @@ describe('createShot', () => {
   })
 
   it('assigns orderIndex = max existing + 1', () => {
-    const s1 = createShot(db, { rundownId: ids.rundownId, cameraId: ids.cameraId, durationMs: 1000 })
-    const s2 = createShot(db, { rundownId: ids.rundownId, cameraId: ids.cameraId, durationMs: 2000 })
+    const s1 = createShot(db, {
+      rundownId: ids.rundownId,
+      cameraId: ids.cameraId,
+      durationMs: 1000,
+    })
+    const s2 = createShot(db, {
+      rundownId: ids.rundownId,
+      cameraId: ids.cameraId,
+      durationMs: 2000,
+    })
     expect(s1.orderIndex).toBe(0)
     expect(s2.orderIndex).toBe(1)
   })
@@ -186,13 +194,9 @@ describe('updateShot', () => {
   })
 
   it('updates cameraId', () => {
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'cam-2',
-      ids.projectId,
-      2,
-      'Close',
-      '#3498db',
-    )
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('cam-2', ids.projectId, 2, 'Close', '#3498db')
     const updated = updateShot(db, { id: shotId, cameraId: 'cam-2' })
     expect(updated.cameraId).toBe('cam-2')
   })
@@ -225,7 +229,11 @@ describe('deleteShot', () => {
   })
 
   it('removes the shot', () => {
-    const shot = createShot(db, { rundownId: ids.rundownId, cameraId: ids.cameraId, durationMs: 1000 })
+    const shot = createShot(db, {
+      rundownId: ids.rundownId,
+      cameraId: ids.cameraId,
+      durationMs: 1000,
+    })
     deleteShot(db, shot.id)
     expect(listShots(db, ids.rundownId)).toHaveLength(0)
   })
@@ -253,9 +261,21 @@ describe('reorderShots', () => {
   })
 
   it('reorders shots by assigning new orderIndex values', () => {
-    const s1 = createShot(db, { rundownId: ids.rundownId, cameraId: ids.cameraId, durationMs: 1000 })
-    const s2 = createShot(db, { rundownId: ids.rundownId, cameraId: ids.cameraId, durationMs: 2000 })
-    const s3 = createShot(db, { rundownId: ids.rundownId, cameraId: ids.cameraId, durationMs: 3000 })
+    const s1 = createShot(db, {
+      rundownId: ids.rundownId,
+      cameraId: ids.cameraId,
+      durationMs: 1000,
+    })
+    const s2 = createShot(db, {
+      rundownId: ids.rundownId,
+      cameraId: ids.cameraId,
+      durationMs: 2000,
+    })
+    const s3 = createShot(db, {
+      rundownId: ids.rundownId,
+      cameraId: ids.cameraId,
+      durationMs: 3000,
+    })
 
     // Reverse order
     reorderShots(db, [s3.id, s2.id, s1.id])
@@ -267,8 +287,16 @@ describe('reorderShots', () => {
   })
 
   it('persists reorder after fetch', () => {
-    const s1 = createShot(db, { rundownId: ids.rundownId, cameraId: ids.cameraId, durationMs: 1000 })
-    const s2 = createShot(db, { rundownId: ids.rundownId, cameraId: ids.cameraId, durationMs: 2000 })
+    const s1 = createShot(db, {
+      rundownId: ids.rundownId,
+      cameraId: ids.cameraId,
+      durationMs: 1000,
+    })
+    const s2 = createShot(db, {
+      rundownId: ids.rundownId,
+      cameraId: ids.cameraId,
+      durationMs: 2000,
+    })
 
     reorderShots(db, [s2.id, s1.id])
 
@@ -310,8 +338,7 @@ describe('deleteShot modes', () => {
     )
   }
 
-  const totalMs = (): number =>
-    listShots(db, rundownId).reduce((sum, s) => sum + s.durationMs, 0)
+  const totalMs = (): number => listShots(db, rundownId).reduce((sum, s) => sum + s.durationMs, 0)
 
   describe("default mode ('extend')", () => {
     it('gives the deleted time to the shot on the left', () => {
@@ -374,7 +401,9 @@ describe('deleteShot modes', () => {
       const [, b] = seed([1000, 2000])
       deleteShot(db, b.id)
 
-      expect(listShots(db, 'r2')).toEqual([expect.objectContaining({ id: other.id, durationMs: 9000 })])
+      expect(listShots(db, 'r2')).toEqual([
+        expect.objectContaining({ id: other.id, durationMs: 9000 }),
+      ])
     })
   })
 
@@ -397,5 +426,72 @@ describe('deleteShot modes', () => {
 
   it.each(['extend', 'ripple'] as const)('throws for an unknown id in %s mode', (mode) => {
     expect(() => deleteShot(db, 'nope', mode)).toThrow(/Shot not found/)
+  })
+})
+
+describe('Calls keep their Part through edits', () => {
+  let db: Database.Database
+  let rundownId: string
+
+  beforeEach(() => {
+    db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    applyMigrations(db)
+    db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run('p1', 'P', 1)
+    db.prepare(
+      "INSERT INTO rundowns (id, project_id, name, created_at, kind) VALUES (?,?,?,?,'voice')",
+    ).run('rd1', 'p1', 'Song', 1)
+    db.prepare('INSERT INTO parts (id, project_id, number, name, color) VALUES (?,?,?,?,?)').run(
+      'pt1',
+      'p1',
+      1,
+      'gitara',
+      '#0f0',
+    )
+    db.prepare('INSERT INTO parts (id, project_id, number, name, color) VALUES (?,?,?,?,?)').run(
+      'pt2',
+      'p1',
+      2,
+      'wokal',
+      '#00f',
+    )
+    rundownId = 'rd1'
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('splits a Call into two Calls on the same Part', () => {
+    const call = createShot(db, { rundownId, partId: 'pt1', durationMs: 10000 })
+    const { first, second } = splitShot(db, { shotId: call.id, atMs: 4000 })
+    expect(first.partId).toBe('pt1')
+    expect(second.partId).toBe('pt1')
+    expect(second.durationMs).toBe(6000)
+  })
+
+  it('splits onto a different Part when one is named', () => {
+    const call = createShot(db, { rundownId, partId: 'pt1', durationMs: 10000 })
+    const { first, second } = splitShot(db, { shotId: call.id, atMs: 4000, newPartId: 'pt2' })
+    expect(first.partId).toBe('pt1')
+    expect(second.partId).toBe('pt2')
+  })
+
+  it('reassigns a Call to another Part', () => {
+    const call = createShot(db, { rundownId, partId: 'pt1', durationMs: 5000 })
+    expect(updateShot(db, { id: call.id, partId: 'pt2' }).partId).toBe('pt2')
+  })
+
+  it('keeps the Camera assignment when a Part is assigned, so conversion stays exact', () => {
+    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?,?,?,?,?)').run(
+      'c1',
+      'p1',
+      1,
+      'Wide',
+      '#f00',
+    )
+    const item = createShot(db, { rundownId, cameraId: 'c1', durationMs: 5000 })
+    const updated = updateShot(db, { id: item.id, partId: 'pt1' })
+    expect(updated).toMatchObject({ cameraId: 'c1', partId: 'pt1' })
   })
 })

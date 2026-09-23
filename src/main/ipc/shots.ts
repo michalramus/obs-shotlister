@@ -80,7 +80,17 @@ export function createShot(db: Database.Database, input: CreateShotInput): Shot 
 
   db.prepare(
     'INSERT INTO shots (id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-  ).run(id, input.rundownId, cameraId, partId, input.durationMs, input.label ?? null, orderIndex, transitionName, transitionMs)
+  ).run(
+    id,
+    input.rundownId,
+    cameraId,
+    partId,
+    input.durationMs,
+    input.label ?? null,
+    orderIndex,
+    transitionName,
+    transitionMs,
+  )
 
   return {
     id,
@@ -98,7 +108,9 @@ export function createShot(db: Database.Database, input: CreateShotInput): Shot 
 export function updateShot(db: Database.Database, input: UpdateShotInput): Shot {
   // Check existence first
   const existing = db
-    .prepare('SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?')
+    .prepare(
+      'SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?',
+    )
     .get(input.id) as ShotRow | undefined
 
   if (!existing) {
@@ -106,19 +118,25 @@ export function updateShot(db: Database.Database, input: UpdateShotInput): Shot 
   }
 
   const cameraId = input.cameraId ?? existing.camera_id
+  // Assigning a Part never clears the Camera, and vice versa: both targets are
+  // retained so converting a Rundown away from its Kind and back is exact.
+  const partId = input.partId ?? existing.part_id
   const durationMs = input.durationMs ?? existing.duration_ms
   // label can be explicitly set to null to clear it
   const label = 'label' in input ? (input.label ?? null) : existing.label
   // transitionName can be explicitly set to null to clear it
-  const transitionName = 'transitionName' in input ? (input.transitionName ?? null) : existing.transition_name
+  const transitionName =
+    'transitionName' in input ? (input.transitionName ?? null) : existing.transition_name
   const transitionMs = input.transitionMs ?? existing.transition_ms
 
   db.prepare(
-    'UPDATE shots SET camera_id = ?, duration_ms = ?, label = ?, transition_name = ?, transition_ms = ? WHERE id = ?',
-  ).run(cameraId, durationMs, label, transitionName, transitionMs, input.id)
+    'UPDATE shots SET camera_id = ?, part_id = ?, duration_ms = ?, label = ?, transition_name = ?, transition_ms = ? WHERE id = ?',
+  ).run(cameraId, partId, durationMs, label, transitionName, transitionMs, input.id)
 
   const updated = db
-    .prepare('SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?')
+    .prepare(
+      'SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?',
+    )
     .get(input.id) as ShotRow
   return rowToShot(updated)
 }
@@ -176,11 +194,20 @@ export function reorderShots(db: Database.Database, ids: string[]): void {
   updateAll()
 }
 
-export function splitShot(db: Database.Database, input: SplitShotInput): { first: Shot; second: Shot } {
-  const existing = db.prepare('SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?').get(input.shotId) as ShotRow | undefined
+export function splitShot(
+  db: Database.Database,
+  input: SplitShotInput,
+): { first: Shot; second: Shot } {
+  const existing = db
+    .prepare(
+      'SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?',
+    )
+    .get(input.shotId) as ShotRow | undefined
   if (!existing) throw new Error(`Shot not found: ${input.shotId}`)
   if (input.atMs <= 0 || input.atMs >= existing.duration_ms) {
-    throw new Error(`Invalid split position: ${input.atMs} (shot duration: ${existing.duration_ms})`)
+    throw new Error(
+      `Invalid split position: ${input.atMs} (shot duration: ${existing.duration_ms})`,
+    )
   }
 
   const newId = randomUUID()
@@ -188,18 +215,41 @@ export function splitShot(db: Database.Database, input: SplitShotInput): { first
 
   const doSplit = db.transaction(() => {
     // Shift all subsequent shots up by 1
-    db.prepare('UPDATE shots SET order_index = order_index + 1 WHERE rundown_id = ? AND order_index > ?')
-      .run(existing.rundown_id, existing.order_index)
+    db.prepare(
+      'UPDATE shots SET order_index = order_index + 1 WHERE rundown_id = ? AND order_index > ?',
+    ).run(existing.rundown_id, existing.order_index)
     // Update existing shot duration
     db.prepare('UPDATE shots SET duration_ms = ? WHERE id = ?').run(input.atMs, input.shotId)
-    // Insert new shot
-    db.prepare('INSERT INTO shots (id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(newId, existing.rundown_id, input.newCameraId, existing.duration_ms - input.atMs, null, newOrderIndex, null, 0)
+    // Insert new shot. The half that is split off inherits whichever target the
+    // caller did not name, so splitting a Call in a Voice-over Rundown does not
+    // silently produce an item with no Part — which a Live session would then
+    // refuse to start on.
+    db.prepare(
+      'INSERT INTO shots (id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(
+      newId,
+      existing.rundown_id,
+      input.newCameraId ?? existing.camera_id,
+      input.newPartId ?? existing.part_id,
+      existing.duration_ms - input.atMs,
+      null,
+      newOrderIndex,
+      null,
+      0,
+    )
   })
   doSplit()
 
-  const first = db.prepare('SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?').get(input.shotId) as ShotRow
-  const second = db.prepare('SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?').get(newId) as ShotRow
+  const first = db
+    .prepare(
+      'SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?',
+    )
+    .get(input.shotId) as ShotRow
+  const second = db
+    .prepare(
+      'SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?',
+    )
+    .get(newId) as ShotRow
 
   return { first: rowToShot(first), second: rowToShot(second) }
 }
