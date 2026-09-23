@@ -1,4 +1,4 @@
-# OBS Queuer
+# Shotlister
 
 Camera shot queue manager for live productions(something like cuepilot but without the timecode). Runs as an Electron desktop app with an embedded web server so phone browsers on the same LAN can monitor the live shot list.
 
@@ -119,7 +119,7 @@ shotlister-tray --headless --host 192.168.1.20   # no GUI, for a service or star
 shotlister-tray --play-test                      # play every cue once and exit
 ```
 
-Point it at the machine running OBS Queuer, on the same port the phone monitor uses
+Point it at the machine running Shotlister, on the same port the phone monitor uses
 (`3000` by default). Left-click the tray icon for the settings window; right-click for
 Settings and Quit.
 
@@ -127,7 +127,7 @@ Settings and Quit.
 
 | Flag | Description |
 |---|---|
-| `--host <HOST>` | Address of the machine running OBS Queuer. Accepts `10.0.0.5`, `10.0.0.5:3000`, or a pasted `http://10.0.0.5:3000` |
+| `--host <HOST>` | Address of the machine running Shotlister. Accepts `10.0.0.5`, `10.0.0.5:3000`, or a pasted `http://10.0.0.5:3000` |
 | `--port <PORT>` | Port the server listens on. Default `3000` |
 | `--volume <LEVEL>` | Playback volume, `0.0` to `1.0`. Default `1.0` |
 | `--mute-count` | Start with the spoken countdown muted |

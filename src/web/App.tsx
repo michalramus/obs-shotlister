@@ -195,7 +195,7 @@ export default function App(): React.JSX.Element {
   return (
     <div style={s.root}>
       <header style={s.header}>
-        <span style={s.title}>OBS Queuer</span>
+        <span style={s.title}>Shotlister</span>
 
         <button
           style={s.zoomBtn}

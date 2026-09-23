@@ -1,9 +1,9 @@
 appId: com.obsqueuer.app
-productName: OBS Queuer
+productName: Shotlister
 copyright: Copyright © 2024
 
-# The installed app is still called OBS Queuer; only the downloadable files are named after
-# the project, so a release lists shotlister-* next to shotlister-tray-*.
+# Downloadable files are named after the project, so a release lists shotlister-* next to
+# shotlister-tray-*.
 artifactName: shotlister-${version}-${os}-${arch}.${ext}
 
 # Files to include from the build output

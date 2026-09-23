@@ -619,7 +619,7 @@ function registerIpcHandlers(): void {
   registerIpcHandler('export:database', async () => {
     const data = exportDatabaseData(getDatabase())
     const result = await dialog.showSaveDialog({
-      defaultPath: 'obs-queuer-backup.json',
+      defaultPath: 'shotlister-backup.json',
       filters: [{ name: 'JSON', extensions: ['json'] }],
     })
     if (result.canceled || !result.filePath) return
