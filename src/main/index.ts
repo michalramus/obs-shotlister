@@ -82,6 +82,9 @@ import {
   saveAudioDevices,
 } from './ipc/settings'
 import { clipsDir } from './tts/cache'
+import { createRenderService } from './tts/service'
+import type { RenderService } from './tts/service'
+import { phraseDurations } from './ipc/tts'
 import { startOscServer, stopOscServer } from './osc/server'
 import {
   listTransitionMappings,
@@ -113,6 +116,7 @@ const obsClient = createOBSClient()
 let live: LiveSession
 let obs: OBSSwitcher
 let publish: ChangePublisher
+let render: RenderService
 let obsAutoReconnect = false
 let obsReconnectTimer: ReturnType<typeof setTimeout> | null = null
 let currentUiMode: 'edit' | 'live' = 'edit'
@@ -373,6 +377,19 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler('audio:devices:save', (payload: AudioDeviceSettings) =>
     saveAudioDevices(db, payload),
+  )
+
+  // Announcement rendering
+  registerIpcHandler('tts:status', ({ projectId }: { projectId: string }) =>
+    render.status(projectId),
+  )
+
+  registerIpcHandler('tts:render', ({ projectId }: { projectId: string }) =>
+    render.renderMissing(projectId),
+  )
+
+  registerIpcHandler('tts:phraseDurations', ({ projectId }: { projectId: string }) =>
+    phraseDurations(db, projectId),
   )
 
   registerIpcHandler('project:setActive', (payload: { projectId: string | null }) => {
@@ -867,8 +884,20 @@ app.whenReady().then(() => {
     clipsDir: clipsDir(app.getPath('userData')),
   })
   obs = createOBSSwitcher(_db, obsClient, live)
+  render = createRenderService(
+    _db,
+    app.getPath('userData'),
+    () => live.getState().running,
+    (status) => pushToWindow('tts:status-push', status),
+  )
   publish = createChangePublisher(_db, live, () => _io)
   live.clear()
+  // App start is one of the only two moments the cache may be touched (ADR
+  // 0005). Deliberately not awaited: a slow sweep must not hold up the window,
+  // and a failed one is a disk-space problem, never a reason not to start.
+  render
+    .sweepOrphans()
+    .catch((err: unknown) => console.error('[tts] sweep on start failed:', err))
   registerIpcHandlers()
   const audioDir = app.isPackaged
     ? join(process.resourcesPath, 'audio')
@@ -940,6 +969,15 @@ app.whenReady().then(() => {
 
 app.on('will-quit', () => {
   stopOscServer()
+})
+
+// The other permitted moment. `before-quit` rather than `will-quit` because the
+// sweep is async and `will-quit` does not wait; a sweep that does not finish
+// before the process goes is simply retried at the next start.
+app.on('before-quit', () => {
+  render?.sweepOrphans().catch((err: unknown) => {
+    console.error('[tts] sweep on quit failed:', err)
+  })
 })
 
 app.on('window-all-closed', () => {

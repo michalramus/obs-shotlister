@@ -307,6 +307,11 @@ export interface IpcContract {
   'audio:devices:get': { payload: NoPayload; result: AudioDeviceSettings }
   'audio:devices:save': { payload: AudioDeviceSettings; result: void }
 
+  // --- Announcement rendering ---
+  'tts:status': { payload: { projectId: string }; result: ProjectRenderStatus }
+  'tts:render': { payload: { projectId: string }; result: ProjectRenderStatus }
+  'tts:phraseDurations': { payload: { projectId: string }; result: Record<string, number> }
+
   // --- Shots ---
   'shots:list': { payload: { rundownId: string }; result: Shot[] }
   'shots:create': { payload: CreateShotInput; result: Shot }
@@ -404,6 +409,8 @@ export interface IpcPushContract {
    * API lives; the main process has no audio API at all.
    */
   'live:announcement-push': AnnouncementPlan | null
+  /** Render progress, so the warning strip updates without being polled. */
+  'tts:status-push': ProjectRenderStatus
   'obs:status': { status: OBSConnectionStatus }
   'obs:validationResult': OBSValidateResult | null
   'server:error': string
@@ -478,6 +485,12 @@ export interface ElectronApi {
   audioDevices: {
     get: Request<'audio:devices:get'>
     save: Request<'audio:devices:save'>
+  }
+  tts: {
+    status: Request<'tts:status'>
+    render: Request<'tts:render'>
+    phraseDurations: Request<'tts:phraseDurations'>
+    onStatusPush: Subscribe<'tts:status-push'>
   }
   shots: {
     list: Request<'shots:list'>
@@ -579,6 +592,7 @@ export const IPC_CHANNELS = [
   'lyrics:list', 'lyrics:upsert', 'lyrics:delete',
   'voice:settings:get', 'voice:settings:save', 'voice:project:get', 'voice:project:save',
   'voice:effective', 'audio:devices:get', 'audio:devices:save',
+  'tts:status', 'tts:render', 'tts:phraseDurations',
   'shots:list', 'shots:create', 'shots:update', 'shots:delete', 'shots:reorder', 'shots:split',
   'live:get', 'live:start', 'live:stop', 'live:next', 'live:skip-next', 'live:restart',
   'live:getPreviewFirst', 'live:savePreviewFirst',
