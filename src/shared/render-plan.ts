@@ -1,0 +1,174 @@
+/**
+ * Deciding what speech a Project still needs synthesised, and what it no longer
+ * needs at all.
+ *
+ * Announcements are rendered ahead of a show and merely played back during one
+ * (ADR 0005), so something has to answer three questions before the operator
+ * goes live: which Parts have usable audio, what is still to synthesise, and
+ * which clips in the cache nothing points at any more. All three fall out of the
+ * same comparison, so they are computed together, once, by this module.
+ *
+ * It is pure: plain data in, plain data out. No filesystem, no database, no
+ * Piper. The caller loads the cache index and the render log, and acts on the
+ * plan — this module never learns that clips are files.
+ */
+
+import { createHash } from 'node:crypto'
+import type { PartRenderState, RenderState } from './ipc-contract'
+import type { Part } from './types'
+
+/**
+ * The countdown numbers rendered for every Voice, unconditionally.
+ *
+ * Deliberately not derived from the countdown a Project currently uses: rendering
+ * all of 1..60 up front removes an invalidation path entirely, so changing which
+ * numbers count down is a settings change that can never require a re-render.
+ */
+export const NUMBER_CLIP_RANGE = { first: 1, last: 60 } as const
+
+/**
+ * Joins the hashed fields with NUL, which cannot occur in a Part name, a voice id
+ * or an engine id — so no two different triples can collide by disagreeing about
+ * where one field ends and the next begins.
+ */
+const HASH_FIELD_SEPARATOR = '\u0000'
+
+/** 32 hex chars = 128 bits, far more than enough to keep one cache collision-free. */
+const HASH_LENGTH = 32
+
+/**
+ * The content address of one clip.
+ *
+ * Every clip filename in the system derives from this, so it must stay stable
+ * forever: changing the separator, the digest or the length orphans the whole
+ * cache on the next app start.
+ */
+export function clipHash(text: string, voice: string, engine: string): string {
+  return createHash('sha256')
+    .update([text, voice, engine].join(HASH_FIELD_SEPARATOR))
+    .digest('hex')
+    .slice(0, HASH_LENGTH)
+}
+
+/**
+ * What is actually spoken for a Part: its name followed by the Project's
+ * connector — "gitara" + "za" → "gitara za". A Call's label is never spoken and
+ * never reaches a hash, so every Call on the same Part shares one clip.
+ *
+ * Empty pieces are dropped rather than leaving stray whitespace in the hashed
+ * text, because whitespace would silently fork the cache.
+ */
+export function partPhrase(name: string, connector: string): string {
+  return [name.trim(), connector.trim()].filter((piece) => piece.length > 0).join(' ')
+}
+
+export interface RenderPlanInput {
+  /** Every Part in scope for the Project, in whatever order the caller wants reported. */
+  parts: Part[]
+  /** The per-Project connector spoken after a Part's name ("za" / "in"). */
+  connector: string
+  voice: string
+  engine: string
+  /** Every hash the cache currently holds. */
+  cachedHashes: Iterable<string>
+  /**
+   * What each Part was last rendered to: partId -> hash.
+   *
+   * Normally the caller loads the `part_renders` rows for this voice and engine.
+   * Handing over a row rendered with a *different* voice is what makes a Voice
+   * change read as `stale` rather than `missing` — this module only ever compares
+   * hashes, so the caller's choice of rows decides which of the two it reports.
+   */
+  lastRendered: Map<string, string>
+  /** The spoken word for each countdown number, e.g. 7 -> 'siedem'. */
+  countdownNumberWords: Map<number, string>
+}
+
+/** One clip the caller still has to synthesise. */
+export interface RenderPlanItem {
+  hash: string
+  text: string
+  voice: string
+  engine: string
+}
+
+export interface RenderPlan {
+  parts: PartRenderState[]
+  toRender: RenderPlanItem[]
+  /** Hashes present in the cache that nothing needs; what orphan cleanup consumes. */
+  toSweep: string[]
+}
+
+/**
+ * Whether a Part's audio is usable, from the hash it was last rendered to.
+ *
+ * `missing` covers two cases that look different but sound the same: never
+ * rendered at all, and rendered to a clip that has since vanished from the cache
+ * (deleted behind our back). Both mean nothing would be spoken, so both have to
+ * push the operator to render. `stale` is reserved for the case where a clip
+ * *would* play but says the wrong thing — the Part was renamed, or the connector
+ * or the Voice changed — which is the distinction the operator actually acts on.
+ */
+function partRenderState(
+  lastHash: string | undefined,
+  currentHash: string,
+  cached: ReadonlySet<string>,
+): RenderState {
+  if (lastHash === undefined) return 'missing'
+  if (!cached.has(lastHash)) return 'missing'
+  return lastHash === currentHash ? 'rendered' : 'stale'
+}
+
+/**
+ * Computes the render state of every Part, the clips still to synthesise, and the
+ * orphans that can be swept.
+ *
+ * Scheduling is the caller's business: sweeping happens at app start and app close
+ * only, never during a session (ADR 0005), and this function has no idea when it
+ * was called.
+ */
+export function computeRenderPlan(input: RenderPlanInput): RenderPlan {
+  const { parts, connector, voice, engine, lastRendered, countdownNumberWords } = input
+  const cached = new Set(input.cachedHashes)
+
+  // Every hash the cache is entitled to keep. Whatever is left over is an orphan.
+  const wanted = new Set<string>()
+  const toRender: RenderPlanItem[] = []
+  const queued = new Set<string>()
+
+  // Two Parts can share a name and a number word can repeat, so the queue is
+  // deduplicated by hash: synthesising one clip twice writes the same file twice.
+  const want = (text: string): string => {
+    const hash = clipHash(text, voice, engine)
+    wanted.add(hash)
+    if (!cached.has(hash) && !queued.has(hash)) {
+      queued.add(hash)
+      toRender.push({ hash, text, voice, engine })
+    }
+    return hash
+  }
+
+  const partStates: PartRenderState[] = parts.map((part) => {
+    const hash = want(partPhrase(part.name, connector))
+    return {
+      partId: part.id,
+      name: part.name,
+      state: partRenderState(lastRendered.get(part.id), hash, cached),
+    }
+  })
+
+  for (let number = NUMBER_CLIP_RANGE.first; number <= NUMBER_CLIP_RANGE.last; number++) {
+    const word = countdownNumberWords.get(number)
+    // A number with no word supplied is skipped rather than throwing: an
+    // incomplete word list is a settings problem, not a reason to refuse to
+    // render everything else.
+    if (word === undefined || word.trim().length === 0) continue
+    want(word)
+  }
+
+  return {
+    parts: partStates,
+    toRender,
+    toSweep: [...cached].filter((hash) => !wanted.has(hash)),
+  }
+}

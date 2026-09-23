@@ -11,9 +11,13 @@
  * which numbers a countdown uses must never be able to require a re-render.
  */
 
-/** Every number a countdown may use. Rendered in full for each Voice. */
-export const NUMBER_CLIP_MIN = 1
-export const NUMBER_CLIP_MAX = 60
+import { NUMBER_CLIP_RANGE } from './render-plan'
+
+// The range comes from the render planner rather than being restated here: the
+// two must agree exactly, or a countdown number would be offered that no Voice
+// ever renders a clip for.
+export const NUMBER_CLIP_MIN = NUMBER_CLIP_RANGE.first
+export const NUMBER_CLIP_MAX = NUMBER_CLIP_RANGE.last
 
 /** Languages a Voice can be announced in. Falls back to English. */
 export type NumberLanguage = 'pl' | 'en'
