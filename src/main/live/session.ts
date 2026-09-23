@@ -17,8 +17,10 @@
 
 import type Database from 'better-sqlite3'
 import type { Shot } from '../../shared/types'
-import type { LiveState } from '../../shared/ipc-contract'
+import type { AnnouncementPlan, LiveState } from '../../shared/ipc-contract'
 import { listShots } from '../ipc/shots'
+import { getRundown, unassignedItemCount } from '../ipc/rundowns'
+import { createAnnouncementBuilder } from './announcer'
 
 interface LiveStateRow {
   rundown_id: string | null
@@ -39,6 +41,20 @@ export interface LiveQueueEntry extends QueueShotRow {
 export interface NextShotResult {
   state: LiveState
   hiddenShotId: string | null
+}
+
+export interface LiveSessionOptions {
+  /**
+   * Called with the Announcement to speak before the next visible Call, and
+   * with `null` to cut off whatever is speaking without starting anything.
+   *
+   * A collaborator rather than a direct push, because the session must stay
+   * playable against an in-memory database with no audio and no Electron: the
+   * caller decides that "a plan" means "send it to the renderer".
+   */
+  onAnnouncement?: (plan: AnnouncementPlan | null) => void
+  /** Where rendered clips live, normally `<userData>/tts`. */
+  clipsDir?: string
 }
 
 export interface LiveSession {
@@ -69,11 +85,27 @@ export interface LiveSession {
   clear: () => void
 }
 
-export function createLiveSession(db: Database.Database): LiveSession {
+export function createLiveSession(
+  db: Database.Database,
+  options: LiveSessionOptions = {},
+): LiveSession {
   let queue: LiveQueueEntry[] = []
   let liveShotId: string | null = null
   let startedAt: number | null = null
   let running = false
+  /** Which Call the last plan was issued for; an Announcement never repeats. */
+  let announcedCallId: string | null = null
+
+  const { onAnnouncement } = options
+  if (onAnnouncement && options.clipsDir === undefined) {
+    // Fail at construction rather than as silence on show night: a session that
+    // announces needs somewhere to find its clips, and there is no useful
+    // default to guess at from here.
+    throw new Error('createLiveSession: onAnnouncement requires clipsDir')
+  }
+  const announcer = onAnnouncement
+    ? createAnnouncementBuilder(db, options.clipsDir as string)
+    : null
 
   function selection(): LiveStateRow {
     return db
@@ -114,6 +146,103 @@ export function createLiveSession(db: Database.Database): LiveSession {
 
   function hiddenIds(): Set<string> {
     return new Set(queue.filter((s) => s.hidden).map((s) => s.id))
+  }
+
+  // --- Announcements -------------------------------------------------------
+  //
+  // A Camera Rundown is untouched by all of this: it keeps its fixed countdown
+  // Cues and gains no speech. Only a Voice-over Rundown reaches the callback,
+  // and only when the *next visible* Call changes — which is what makes an
+  // Announcement fire once per Call and never repeat.
+
+  function isVoiceRundown(rundownId: string | null): boolean {
+    if (!rundownId) return false
+    return getRundown(db, rundownId)?.kind === 'voice'
+  }
+
+  /**
+   * Hands a plan to the caller. Errors are logged and swallowed: whatever the
+   * renderer does with an Announcement, it may not abort the Live advance that
+   * produced it — a show keeps running even when speech does not.
+   */
+  function emitAnnouncement(plan: AnnouncementPlan | null): void {
+    try {
+      onAnnouncement?.(plan)
+    } catch (err) {
+      console.error('[live] onAnnouncement threw:', err)
+    }
+  }
+
+  /** Cuts off whatever is speaking. Silent when nothing was announced. */
+  function cancelAnnouncement(): void {
+    if (!onAnnouncement || announcedCallId === null) return
+    announcedCallId = null
+    emitAnnouncement(null)
+  }
+
+  /**
+   * What the *plan* says is left of the live Call, not what a stopwatch says.
+   *
+   * Timers are advisory (ADR 0002), so the countdown is placed against the
+   * Call's own `durationMs`. Subtracting what has already elapsed matters for
+   * exactly one caller — Skip, which re-announces mid-Call — and is a no-op for
+   * Start and Next, where the Call went live this instant. Past the duration
+   * this goes negative and the scheduler drops every cue, which is how overrun
+   * stays silent without anyone having to ask whether it is overrun.
+   */
+  function leadMsToNextCall(): number {
+    const live = session.getLiveShot()
+    if (!live || startedAt === null) return 0
+    return live.durationMs - (Date.now() - startedAt)
+  }
+
+  /** Issues a plan for the next visible Call, if that Call has changed. */
+  function announce(): void {
+    if (!onAnnouncement || !announcer) return
+
+    let next: Shot | null
+    let leadMs: number
+    try {
+      const { rundown_id } = selection()
+      if (!running || !isVoiceRundown(rundown_id)) return
+      next = session.getNextVisibleShot()
+      leadMs = leadMsToNextCall()
+    } catch (err) {
+      // Resolving what to say is never worth losing the advance that asked.
+      console.error('[live] announce lookup failed:', err)
+      return
+    }
+
+    if (!next) {
+      cancelAnnouncement()
+      return
+    }
+    if (next.id === announcedCallId) return
+
+    // Issued even when the plan is null: a new Call became next, so whatever is
+    // still speaking about the old one has to stop either way.
+    announcedCallId = next.id
+    emitAnnouncement(announcer.planFor(next, leadMs))
+  }
+
+  /**
+   * Refuses to start a Rundown any of whose items has no target for its Kind.
+   *
+   * A refusal rather than a warning: a silent gap is discovered during the show,
+   * which is the one moment it cannot be fixed. Unrendered speech is the other
+   * way round — it warns and starts (ADR 0005), and that warning is the UI's.
+   */
+  function assertEveryItemAssigned(rundownId: string): void {
+    const unassigned = unassignedItemCount(db, rundownId)
+    if (unassigned === 0) return
+
+    const voice = getRundown(db, rundownId)?.kind === 'voice'
+    const items = unassigned === 1 ? '1 item' : `${unassigned} items`
+    const kind = voice ? 'Voice-over Rundown' : 'Camera Rundown'
+    const target = voice ? 'Part' : 'Camera'
+    throw new Error(
+      `Cannot start: ${items} in this ${kind} ${unassigned === 1 ? 'has' : 'have'} no ${target} assigned`,
+    )
   }
 
   const session: LiveSession = {
@@ -174,6 +303,7 @@ export function createLiveSession(db: Database.Database): LiveSession {
     start(rundownId) {
       const shots = queueShots(rundownId)
       if (shots.length === 0) throw new Error('Cannot start: rundown has no shots')
+      assertEveryItemAssigned(rundownId)
 
       session.setActiveRundown(rundownId)
 
@@ -181,13 +311,17 @@ export function createLiveSession(db: Database.Database): LiveSession {
       liveShotId = shots[0].id
       startedAt = Date.now()
       running = true
+      announcedCallId = null
 
-      return stateFrom(selection(), 0)
+      const state = stateFrom(selection(), 0)
+      announce()
+      return state
     },
 
     stop() {
       const row = selection()
       resetProgress()
+      cancelAnnouncement()
       return stateFrom(row, null)
     },
 
@@ -202,6 +336,7 @@ export function createLiveSession(db: Database.Database): LiveSession {
       if (!upcoming) {
         // Past the last Shot — the Live session ends.
         resetProgress()
+        cancelAnnouncement()
         return { state: stateFrom(row, null), hiddenShotId: null }
       }
 
@@ -210,7 +345,9 @@ export function createLiveSession(db: Database.Database): LiveSession {
       liveShotId = upcoming.id
       startedAt = Date.now()
 
-      return { state: stateFrom(row, liveIndex()), hiddenShotId }
+      const result = { state: stateFrom(row, liveIndex()), hiddenShotId }
+      announce()
+      return result
     },
 
     skipNext() {
@@ -224,6 +361,9 @@ export function createLiveSession(db: Database.Database): LiveSession {
       if (!toSkip) return { state: stateFrom(row, liveIndex()), hiddenShotId: null }
 
       queue = queue.map((s) => (s.id === toSkip.id ? { ...s, hidden: true } : s))
+      // Immediately, not at the next advance: the band must never be told to
+      // play something the operator has just dropped.
+      announce()
       return { state: stateFrom(row, liveIndex()), hiddenShotId: toSkip.id }
     },
 
@@ -233,18 +373,23 @@ export function createLiveSession(db: Database.Database): LiveSession {
 
       const shots = queueShots(row.rundown_id)
       if (shots.length === 0) throw new Error('Cannot restart: rundown has no shots')
+      assertEveryItemAssigned(row.rundown_id)
 
       queue = shots.map((s) => ({ ...s, hidden: false }))
       liveShotId = shots[0].id
       startedAt = Date.now()
       running = true
+      announcedCallId = null
 
-      return stateFrom(row, 0)
+      const state = stateFrom(row, 0)
+      announce()
+      return state
     },
 
     clear() {
       db.prepare('UPDATE live_state SET rundown_id = NULL WHERE id = 1').run()
       resetProgress()
+      cancelAnnouncement()
     },
   }
 
