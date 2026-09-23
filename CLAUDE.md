@@ -61,3 +61,17 @@ This runs in production. All async operations must handle errors explicitly. No 
 
 #live mode approach
 When any feature is about live mode, don't edit database - any changes made in live mode should be not be persistand.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues in `michalramus/obs-shotlister`, managed with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage labels, unchanged. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
