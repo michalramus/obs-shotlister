@@ -1,6 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useAppStore } from './store'
-import { ProjectSelector } from './components/ProjectSelector'
 import { CameraConfigPanel } from './components/CameraConfigPanel'
 import { RundownSidebar } from './components/RundownSidebar'
 import { ShotListPanel } from './components/ShotListPanel'
@@ -13,6 +12,7 @@ import { ResolveImportDialog } from './components/ResolveImportDialog'
 import { OBSSettingsPanel } from './components/OBSSettingsPanel'
 import { OSCSettingsPanel } from './components/OSCSettingsPanel'
 import { TimelineEditor } from './components/TimelineEditor'
+import { TopBar } from './components/TopBar'
 
 const styles = {
   root: {
@@ -23,90 +23,6 @@ const styles = {
     color: '#fff',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
   } satisfies React.CSSProperties,
-
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    padding: '10px 16px',
-    background: '#1a1a1a',
-    borderBottom: '1px solid #333',
-    gap: '12px',
-    flexShrink: 0,
-  } satisfies React.CSSProperties,
-
-  appName: {
-    fontSize: '15px',
-    fontWeight: 700,
-    color: '#fff',
-    marginRight: '12px',
-    whiteSpace: 'nowrap' as const,
-  } satisfies React.CSSProperties,
-
-  headerActions: {
-    marginLeft: 'auto',
-    display: 'flex',
-    gap: '8px',
-    alignItems: 'center',
-  } satisfies React.CSSProperties,
-
-  importBtn: {
-    padding: '5px 12px',
-    background: 'none',
-    border: '1px solid #444',
-    borderRadius: '4px',
-    color: '#888',
-    fontSize: '12px',
-    cursor: 'pointer',
-  } satisfies React.CSSProperties,
-
-  obsBtn: {
-    padding: '5px 12px',
-    background: 'none',
-    border: '1px solid #444',
-    borderRadius: '4px',
-    color: '#888',
-    fontSize: '12px',
-    cursor: 'pointer',
-  } satisfies React.CSSProperties,
-
-  dropdownWrapper: {
-    position: 'relative' as const,
-  } satisfies React.CSSProperties,
-
-  dropdownMenu: {
-    position: 'absolute' as const,
-    right: 0,
-    top: '100%',
-    marginTop: '4px',
-    background: '#2a2a2a',
-    border: '1px solid #444',
-    borderRadius: '4px',
-    zIndex: 100,
-    minWidth: '160px',
-    overflow: 'hidden',
-  } satisfies React.CSSProperties,
-
-  dropdownItem: {
-    display: 'block',
-    width: '100%',
-    padding: '7px 14px',
-    background: 'none',
-    border: 'none',
-    color: '#ccc',
-    fontSize: '12px',
-    cursor: 'pointer',
-    textAlign: 'left' as const,
-    whiteSpace: 'nowrap' as const,
-  } satisfies React.CSSProperties,
-
-  obsDot: (status: string): React.CSSProperties => ({
-    width: '8px',
-    height: '8px',
-    borderRadius: '50%',
-    display: 'inline-block',
-    background: status === 'connected' ? '#27ae60' : status === 'connecting' ? '#f39c12' : '#555',
-    marginRight: '4px',
-  }),
 
   body: {
     flex: 1,
@@ -206,12 +122,18 @@ export default function App(): React.JSX.Element {
   const [showResolveImport, setShowResolveImport] = useState(false)
   const [showObsPanel, setShowObsPanel] = useState(false)
   const [showOscPanel, setShowOscPanel] = useState(false)
-  const [showExportMenu, setShowExportMenu] = useState(false)
-  const [showImportMenu, setShowImportMenu] = useState(false)
+  const [oscSettings, setOscSettings] = useState({ enabled: false, port: 8000 })
   const [loadError, setLoadError] = useState<string | null>(null)
   const [serverError, setServerError] = useState<string | null>(null)
   const [headerFlash, setHeaderFlash] = useState(false)
   const isFirstLiveIndexRef = useRef(true)
+
+  const refreshOscSettings = useCallback(() => {
+    window.api.osc
+      .getSettings()
+      .then(setOscSettings)
+      .catch((err: unknown) => console.error('[App] getOscSettings:', err))
+  }, [])
 
   useEffect(() => {
     if (isFirstLiveIndexRef.current) {
@@ -242,6 +164,7 @@ export default function App(): React.JSX.Element {
       window.api.live.onShotHiddenPush(markShotHidden),
       window.api.server.onError(setServerError),
     ]
+    refreshOscSettings()
     window.api.assets
       .getAudioDir()
       .then((dir) => {
@@ -258,6 +181,7 @@ export default function App(): React.JSX.Element {
     setObsValidationResult,
     handleLiveStatePush,
     markShotHidden,
+    refreshOscSettings,
   ])
 
   // Keyboard shortcuts
@@ -328,30 +252,25 @@ export default function App(): React.JSX.Element {
 
   async function handleExportProject(): Promise<void> {
     if (!activeProjectId) return
-    setShowExportMenu(false)
     await window.api.exportImport.exportProject({ projectId: activeProjectId })
   }
 
   async function handleExportRundown(): Promise<void> {
     if (!activeRundownId) return
-    setShowExportMenu(false)
     await window.api.exportImport.exportRundown({ rundownId: activeRundownId })
   }
 
   async function handleExportDatabase(): Promise<void> {
-    setShowExportMenu(false)
     await window.api.exportImport.exportDatabase()
   }
 
   async function handleImportProject(): Promise<void> {
-    setShowImportMenu(false)
     await window.api.exportImport.importProject()
     await loadProjects()
   }
 
   async function handleImportRundown(): Promise<void> {
     if (!activeProjectId) return
-    setShowImportMenu(false)
     const newRundownId = await window.api.exportImport.importRundown({ projectId: activeProjectId })
     if (newRundownId) {
       await loadProjects()
@@ -361,7 +280,6 @@ export default function App(): React.JSX.Element {
   async function handleImportDatabase(): Promise<void> {
     const confirmed = window.confirm('This will replace ALL data. Are you sure?')
     if (!confirmed) return
-    setShowImportMenu(false)
     const ok = await window.api.exportImport.importDatabase()
     if (ok) {
       await loadProjects()
@@ -501,192 +419,57 @@ export default function App(): React.JSX.Element {
 
   return (
     <div style={styles.root}>
-      <header
-        style={{
-          ...styles.header,
-          background: headerFlash ? '#888' : '#1a1a1a',
-          transition: 'background 0.35s ease-out',
+      <TopBar
+        flash={headerFlash}
+        audio={{ muteCount, muteBeep, volume: audioVolume }}
+        onToggleMuteCount={() => {
+          const v = !muteCount
+          setMuteCount(v)
+          localStorage.setItem('obs-queuer-mute-count', String(v))
         }}
-      >
-        <span style={styles.appName}>OBS Queuer</span>
-        <ProjectSelector onOpenCameraConfig={() => setShowCameraConfig(true)} />
-        <div style={styles.headerActions}>
-          <button
-            onClick={() => {
-              const v = !muteCount
-              setMuteCount(v)
-              localStorage.setItem('obs-queuer-mute-count', String(v))
-            }}
-            style={{ ...styles.importBtn, color: muteCount ? '#555' : '#888' }}
-            title={muteCount ? 'Unmute countdown' : 'Mute countdown'}
-          >
-            {muteCount ? '🔇 Count' : '🔊 Count'}
-          </button>
-          <button
-            onClick={() => {
-              const v = !muteBeep
-              setMuteBeep(v)
-              localStorage.setItem('obs-queuer-mute-beep', String(v))
-            }}
-            style={{ ...styles.importBtn, color: muteBeep ? '#555' : '#888' }}
-            title={muteBeep ? 'Unmute beep' : 'Mute beep'}
-          >
-            {muteBeep ? '🔇 Beep' : '🔊 Beep'}
-          </button>
-          <label
-            style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#888', fontSize: 12 }}
-            title="Audio communicates volume"
-          >
-            Vol
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.05}
-              value={audioVolume}
-              onChange={(e) => {
-                const v = parseFloat(e.target.value)
-                setAudioVolume(v)
-                localStorage.setItem('obs-queuer-audio-volume', String(v))
-              }}
-              style={{ width: 70, accentColor: '#888' }}
-            />
-          </label>
-          {activeRundownId && (
-            <button
-              style={styles.importBtn}
-              onClick={() => setShowResolveImport(true)}
-              title="Import from DaVinci Resolve CSV"
-            >
-              Import from Resolve
-            </button>
-          )}
-
-          {/* Export dropdown */}
-          <div style={styles.dropdownWrapper}>
-            <button
-              style={styles.obsBtn}
-              onClick={() => {
-                setShowExportMenu((v) => !v)
-                setShowImportMenu(false)
-              }}
-            >
-              Export
-            </button>
-            {showExportMenu && (
-              <>
-                <div
-                  style={{ position: 'fixed', inset: 0, zIndex: 99 }}
-                  onClick={() => setShowExportMenu(false)}
-                />
-                <div style={styles.dropdownMenu}>
-                  {activeRundownId !== null && (
-                    <button
-                      style={styles.dropdownItem}
-                      onClick={() => {
-                        handleExportRundown().catch((err: unknown) =>
-                          console.error('[App] exportRundown:', err),
-                        )
-                      }}
-                    >
-                      Export rundown
-                    </button>
-                  )}
-                  {activeProjectId !== null && (
-                    <button
-                      style={styles.dropdownItem}
-                      onClick={() => {
-                        handleExportProject().catch((err: unknown) =>
-                          console.error('[App] exportProject:', err),
-                        )
-                      }}
-                    >
-                      Export project
-                    </button>
-                  )}
-                  <button
-                    style={styles.dropdownItem}
-                    onClick={() => {
-                      handleExportDatabase().catch((err: unknown) =>
-                        console.error('[App] exportDatabase:', err),
-                      )
-                    }}
-                  >
-                    Export DB
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Import dropdown */}
-          <div style={styles.dropdownWrapper}>
-            <button
-              style={styles.obsBtn}
-              onClick={() => {
-                setShowImportMenu((v) => !v)
-                setShowExportMenu(false)
-              }}
-            >
-              Import
-            </button>
-            {showImportMenu && (
-              <>
-                <div
-                  style={{ position: 'fixed', inset: 0, zIndex: 99 }}
-                  onClick={() => setShowImportMenu(false)}
-                />
-                <div style={styles.dropdownMenu}>
-                  <button
-                    style={styles.dropdownItem}
-                    onClick={() => {
-                      handleImportProject().catch((err: unknown) =>
-                        console.error('[App] importProject:', err),
-                      )
-                    }}
-                  >
-                    Import project
-                  </button>
-                  {activeProjectId !== null && (
-                    <button
-                      style={styles.dropdownItem}
-                      onClick={() => {
-                        handleImportRundown().catch((err: unknown) =>
-                          console.error('[App] importRundown:', err),
-                        )
-                      }}
-                    >
-                      Import rundown
-                    </button>
-                  )}
-                  <button
-                    style={styles.dropdownItem}
-                    onClick={() => {
-                      handleImportDatabase().catch((err: unknown) =>
-                        console.error('[App] importDatabase:', err),
-                      )
-                    }}
-                  >
-                    Import DB
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-
-          <button
-            style={styles.obsBtn}
-            onClick={() => setShowObsPanel(true)}
-            title="OBS Connection"
-          >
-            <span style={styles.obsDot(obsStatus)} />
-            OBS
-          </button>
-          <button style={styles.obsBtn} onClick={() => setShowOscPanel(true)} title="OSC Server">
-            OSC
-          </button>
-        </div>
-      </header>
+        onToggleMuteBeep={() => {
+          const v = !muteBeep
+          setMuteBeep(v)
+          localStorage.setItem('obs-queuer-mute-beep', String(v))
+        }}
+        onChangeVolume={(v) => {
+          setAudioVolume(v)
+          localStorage.setItem('obs-queuer-audio-volume', String(v))
+        }}
+        hasActiveProject={activeProjectId !== null}
+        hasActiveRundown={activeRundownId !== null}
+        onImportResolve={() => setShowResolveImport(true)}
+        onImportProject={() => {
+          handleImportProject().catch((err: unknown) => console.error('[App] importProject:', err))
+        }}
+        onImportRundown={() => {
+          handleImportRundown().catch((err: unknown) => console.error('[App] importRundown:', err))
+        }}
+        onImportDatabase={() => {
+          handleImportDatabase().catch((err: unknown) =>
+            console.error('[App] importDatabase:', err),
+          )
+        }}
+        onExportRundown={() => {
+          handleExportRundown().catch((err: unknown) => console.error('[App] exportRundown:', err))
+        }}
+        onExportProject={() => {
+          handleExportProject().catch((err: unknown) => console.error('[App] exportProject:', err))
+        }}
+        onExportDatabase={() => {
+          handleExportDatabase().catch((err: unknown) =>
+            console.error('[App] exportDatabase:', err),
+          )
+        }}
+        connections={{
+          obsStatus,
+          oscEnabled: oscSettings.enabled,
+          oscPort: oscSettings.port,
+        }}
+        onOpenObsPanel={() => setShowObsPanel(true)}
+        onOpenOscPanel={() => setShowOscPanel(true)}
+        onOpenCameraConfig={() => setShowCameraConfig(true)}
+      />
 
       {serverError !== null && (
         <div style={{ ...styles.warningBanner, background: '#c0392b', cursor: 'default' }}>
@@ -753,7 +536,14 @@ export default function App(): React.JSX.Element {
       {showCameraConfig && <CameraConfigPanel onClose={() => setShowCameraConfig(false)} />}
       {showResolveImport && <ResolveImportDialog onClose={() => setShowResolveImport(false)} />}
       {showObsPanel && <OBSSettingsPanel onClose={() => setShowObsPanel(false)} />}
-      {showOscPanel && <OSCSettingsPanel onClose={() => setShowOscPanel(false)} />}
+      {showOscPanel && (
+        <OSCSettingsPanel
+          onClose={() => {
+            setShowOscPanel(false)
+            refreshOscSettings()
+          }}
+        />
+      )}
     </div>
   )
 }
