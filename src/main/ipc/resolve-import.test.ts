@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { applyMigrations } from '../db/index'
-import { parseTimecode, parseResolveCSV, confirmResolveImport, splitCsvLine } from './resolve-import'
+import {
+  parseTimecode,
+  parseResolveCSV,
+  confirmResolveImport,
+  splitCsvLine,
+} from './resolve-import'
 import { listShots } from './shots'
 
 // ---------------------------------------------------------------------------
@@ -104,21 +109,32 @@ describe('confirmResolveImport — append', () => {
     return db
   }
 
-  function seedDb(db: Database.Database): { rundownId: string; cameraId1: string; cameraId2: string } {
+  function seedDb(db: Database.Database): {
+    rundownId: string
+    cameraId1: string
+    cameraId2: string
+  } {
     const projectId = 'p1'
     const rundownId = 'rd-1'
     const cameraId1 = 'cam-1'
     const cameraId2 = 'cam-2'
-    db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(projectId, 'P', 1000)
+    db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+      projectId,
+      'P',
+      1000,
+    )
     db.prepare('INSERT INTO rundowns (id, project_id, name, created_at) VALUES (?, ?, ?, ?)').run(
-      rundownId, projectId, 'Morning', 1000,
+      rundownId,
+      projectId,
+      'Morning',
+      1000,
     )
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      cameraId1, projectId, 1, 'Wide', '#e74c3c',
-    )
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      cameraId2, projectId, 2, 'Close', '#3498db',
-    )
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run(cameraId1, projectId, 1, 'Wide', '#e74c3c')
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run(cameraId2, projectId, 2, 'Close', '#3498db')
     return { rundownId, cameraId1, cameraId2 }
   }
 
@@ -126,9 +142,7 @@ describe('confirmResolveImport — append', () => {
     const db = openDb()
     const { rundownId, cameraId1 } = seedDb(db)
 
-    const rows = [
-      { label: 'Opening', durationTimecode: '00:00:05:00', resolveColor: 'Red' },
-    ]
+    const rows = [{ label: 'Opening', durationTimecode: '00:00:05:00', resolveColor: 'Red' }]
     const mapping: Record<string, string | null> = { Red: cameraId1 }
 
     const shots = confirmResolveImport(db, {
@@ -174,9 +188,7 @@ describe('confirmResolveImport — append', () => {
       'INSERT INTO shots (id, rundown_id, camera_id, duration_ms, order_index) VALUES (?, ?, ?, ?, ?)',
     ).run('existing-1', rundownId, cameraId1, 3000, 0)
 
-    const rows = [
-      { label: 'New Shot', durationTimecode: '00:00:02:00', resolveColor: 'Blue' },
-    ]
+    const rows = [{ label: 'New Shot', durationTimecode: '00:00:02:00', resolveColor: 'Blue' }]
     const mapping: Record<string, string | null> = { Blue: cameraId2 }
 
     confirmResolveImport(db, { rundownId, mode: 'append', mapping, rows, fps: 25 })
@@ -208,20 +220,25 @@ describe('confirmResolveImport — replace', () => {
     const projectId = 'p1'
     const rundownId = 'rd-1'
     const cameraId = 'cam-1'
-    db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(projectId, 'P', 1000)
+    db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+      projectId,
+      'P',
+      1000,
+    )
     db.prepare('INSERT INTO rundowns (id, project_id, name, created_at) VALUES (?, ?, ?, ?)').run(
-      rundownId, projectId, 'Morning', 1000,
+      rundownId,
+      projectId,
+      'Morning',
+      1000,
     )
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      cameraId, projectId, 1, 'Wide', '#e74c3c',
-    )
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run(cameraId, projectId, 1, 'Wide', '#e74c3c')
     db.prepare(
       'INSERT INTO shots (id, rundown_id, camera_id, duration_ms, order_index) VALUES (?, ?, ?, ?, ?)',
     ).run('old-shot', rundownId, cameraId, 9000, 0)
 
-    const rows = [
-      { label: 'New', durationTimecode: '00:00:01:00', resolveColor: 'Red' },
-    ]
+    const rows = [{ label: 'New', durationTimecode: '00:00:01:00', resolveColor: 'Red' }]
 
     const shots = confirmResolveImport(db, {
       rundownId,
@@ -355,5 +372,56 @@ describe('confirmResolveImport atomicity', () => {
     const remaining = listShots(db, rundownId)
     expect(remaining).toHaveLength(1)
     expect(remaining[0].label).toBe('existing')
+  })
+})
+
+describe('confirmResolveImport in a Voice-over Rundown', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = new Database(':memory:')
+    db.pragma('foreign_keys = ON')
+    applyMigrations(db)
+    db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run('p1', 'P', 1)
+    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?,?,?,?,?)').run(
+      'c1',
+      'p1',
+      1,
+      'Wide',
+      '#fff',
+    )
+    db.prepare('INSERT INTO rundowns (id, project_id, name, created_at) VALUES (?,?,?,?)').run(
+      'rd1',
+      'p1',
+      'Song',
+      1,
+    )
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  const input = {
+    rundownId: 'rd1',
+    mode: 'append' as const,
+    mapping: { Red: 'c1' },
+    rows: [{ label: 'a', durationTimecode: '00:00:05:00', resolveColor: 'Red' }],
+    fps: 25,
+  }
+
+  it('imports into a Camera Rundown', () => {
+    expect(confirmResolveImport(db, input)).toHaveLength(1)
+  })
+
+  it('refuses a Voice-over Rundown, whose Calls have no Camera to map to', () => {
+    db.prepare("UPDATE rundowns SET kind = 'voice' WHERE id = ?").run('rd1')
+    expect(() => confirmResolveImport(db, input)).toThrow(/Voice-over Rundown/)
+  })
+
+  it('leaves the Rundown untouched when it refuses', () => {
+    db.prepare("UPDATE rundowns SET kind = 'voice' WHERE id = ?").run('rd1')
+    expect(() => confirmResolveImport(db, { ...input, mode: 'replace' })).toThrow()
+    expect(db.prepare('SELECT COUNT(*) AS n FROM shots').get()).toEqual({ n: 0 })
   })
 })

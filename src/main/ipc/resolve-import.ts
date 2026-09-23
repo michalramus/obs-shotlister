@@ -8,18 +8,13 @@
  */
 
 import Database from 'better-sqlite3'
+import { getRundown } from './rundowns'
 import { createShot } from './shots'
-import type {
-  ParsedRow,
-  ParseResult,
-  ConfirmImportInput,
-} from '../../shared/ipc-contract'
+import type { ParsedRow, ParseResult, ConfirmImportInput } from '../../shared/ipc-contract'
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-
 
 // ---------------------------------------------------------------------------
 // Timecode parsing
@@ -137,6 +132,14 @@ export function confirmResolveImport(
   input: ConfirmImportInput,
 ): import('../../shared/types').Shot[] {
   const { rundownId, mode, mapping, rows, fps } = input
+
+  // Resolve markers map to Cameras by their colour, and a Call has no Camera to
+  // map to — these Rundowns are not authored in Resolve at all. Refused rather
+  // than silently importing items no Live session would agree to start on.
+  const rundown = getRundown(db, rundownId)
+  if (rundown?.kind === 'voice') {
+    throw new Error('Cannot import a Resolve CSV into a Voice-over Rundown')
+  }
 
   // All-or-nothing: a bad timecode partway through must not leave the rundown
   // holding half an import.
