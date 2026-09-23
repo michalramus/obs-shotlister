@@ -20,6 +20,10 @@ import type {
   PartScope,
   PartUpsertInput,
   LyricUpsertInput,
+  ProjectRenderStatus,
+  AudioDeviceSettings,
+  GlobalVoiceSettings,
+  ProjectVoiceSettings,
 } from '../shared/ipc-contract'
 
 interface AppStore {
@@ -92,6 +96,27 @@ interface AppStore {
   promotePart: (id: string, scope: PartScope) => Promise<void>
   setPartsColor: (ids: string[], color: string) => Promise<void>
 
+  // Announcement rendering
+  renderStatus: ProjectRenderStatus | null
+  /** Phrase clip length per Part id; absent means nothing is rendered for it. */
+  phraseDurations: Record<string, number>
+  setRenderStatus: (status: ProjectRenderStatus) => void
+  loadRenderStatus: (projectId: string) => Promise<void>
+  loadPhraseDurations: (projectId: string) => Promise<void>
+  renderMissing: (projectId: string) => Promise<void>
+
+  // Audio output devices
+  audioDevices: AudioDeviceSettings
+  loadAudioDevices: () => Promise<void>
+  saveAudioDevices: (devices: AudioDeviceSettings) => Promise<void>
+
+  // Voice-over settings
+  voiceSettings: GlobalVoiceSettings | null
+  projectVoiceSettings: ProjectVoiceSettings | null
+  loadVoiceSettings: (projectId: string | null) => Promise<void>
+  saveVoiceSettings: (settings: GlobalVoiceSettings) => Promise<void>
+  saveProjectVoiceSettings: (projectId: string, settings: ProjectVoiceSettings) => Promise<void>
+
   // Lyric CRUD actions
   loadLyrics: (rundownId: string) => Promise<void>
   upsertLyric: (input: LyricUpsertInput) => Promise<Lyric>
@@ -140,6 +165,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   parts: [],
   partsInScope: [],
   lyrics: [],
+  renderStatus: null,
+  phraseDurations: {},
+  audioDevices: { cueSinkId: null, announcementSinkId: null },
+  voiceSettings: null,
+  projectVoiceSettings: null,
 
   // Rundown media
   rundownMedia: null,
@@ -486,6 +516,57 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const { activeProjectId, activeRundownId } = get()
     if (activeProjectId) await get().loadParts(activeProjectId)
     if (activeRundownId) await get().loadPartsInScope(activeRundownId)
+  },
+
+  // Announcement rendering
+  setRenderStatus: (status) => set({ renderStatus: status }),
+
+  loadRenderStatus: async (projectId) => {
+    set({ renderStatus: await window.api.tts.status({ projectId }) })
+  },
+
+  loadPhraseDurations: async (projectId) => {
+    set({ phraseDurations: await window.api.tts.phraseDurations({ projectId }) })
+  },
+
+  renderMissing: async (projectId) => {
+    set({ renderStatus: await window.api.tts.render({ projectId }) })
+    // Durations are what Edit mode badges against, and a render is the only
+    // thing that changes them.
+    await get().loadPhraseDurations(projectId)
+  },
+
+  // Audio output devices
+  loadAudioDevices: async () => {
+    set({ audioDevices: await window.api.audioDevices.get() })
+  },
+
+  saveAudioDevices: async (devices) => {
+    await window.api.audioDevices.save(devices)
+    set({ audioDevices: devices })
+  },
+
+  // Voice-over settings
+  loadVoiceSettings: async (projectId) => {
+    const voiceSettings = await window.api.voice.getSettings()
+    const projectVoiceSettings =
+      projectId === null ? null : await window.api.voice.getProjectSettings({ projectId })
+    set({ voiceSettings, projectVoiceSettings })
+  },
+
+  saveVoiceSettings: async (settings) => {
+    await window.api.voice.saveSettings(settings)
+    set({ voiceSettings: settings })
+    // Voice is part of every clip's content address, so changing it can turn
+    // every Part stale at once — the strip has to find out immediately.
+    const { activeProjectId } = get()
+    if (activeProjectId) await get().loadRenderStatus(activeProjectId)
+  },
+
+  saveProjectVoiceSettings: async (projectId, settings) => {
+    await window.api.voice.saveProjectSettings({ projectId, settings })
+    set({ projectVoiceSettings: settings })
+    await get().loadRenderStatus(projectId)
   },
 
   // Lyrics
