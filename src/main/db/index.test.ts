@@ -78,15 +78,26 @@ describe('applyMigrations', () => {
     it('requires created_at to be NOT NULL', () => {
       applyMigrations(db)
       expect(() => {
-        db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, NULL)').run('p1', 'Proj')
+        db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, NULL)').run(
+          'p1',
+          'Proj',
+        )
       }).toThrow()
     })
 
     it('enforces PRIMARY KEY uniqueness', () => {
       applyMigrations(db)
-      db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run('p1', 'Project A', 1000)
+      db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+        'p1',
+        'Project A',
+        1000,
+      )
       expect(() => {
-        db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run('p1', 'Project B', 2000)
+        db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+          'p1',
+          'Project B',
+          2000,
+        )
       }).toThrow()
     })
   })
@@ -94,7 +105,11 @@ describe('applyMigrations', () => {
   describe('cameras table constraints', () => {
     beforeEach(() => {
       applyMigrations(db)
-      db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run('proj-1', 'Test Project', 1000)
+      db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+        'proj-1',
+        'Test Project',
+        1000,
+      )
     })
 
     it('enforces UNIQUE(project_id, number)', () => {
@@ -109,7 +124,11 @@ describe('applyMigrations', () => {
     })
 
     it('allows same number for different projects', () => {
-      db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run('proj-2', 'Other Project', 2000)
+      db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+        'proj-2',
+        'Other Project',
+        2000,
+      )
       db.prepare(
         'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
       ).run('cam-1', 'proj-1', 1, 'Camera A', '#e74c3c')
@@ -143,7 +162,11 @@ describe('applyMigrations', () => {
   describe('rundowns table constraints', () => {
     beforeEach(() => {
       applyMigrations(db)
-      db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run('proj-1', 'Test Project', 1000)
+      db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+        'proj-1',
+        'Test Project',
+        1000,
+      )
     })
 
     it('cascades delete from projects to rundowns', () => {
@@ -164,7 +187,11 @@ describe('applyMigrations', () => {
   describe('shots table constraints', () => {
     beforeEach(() => {
       applyMigrations(db)
-      db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run('proj-1', 'Test Project', 1000)
+      db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+        'proj-1',
+        'Test Project',
+        1000,
+      )
       db.prepare('INSERT INTO rundowns (id, project_id, name, created_at) VALUES (?, ?, ?, ?)').run(
         'rd-1',
         'proj-1',
@@ -241,9 +268,154 @@ describe('indexes', () => {
   })
 
   it('adds const_length_ms to transition_mappings on a fresh database', () => {
-    const cols = database
-      .prepare('PRAGMA table_info(transition_mappings)')
-      .all() as Array<{ name: string }>
+    const cols = database.prepare('PRAGMA table_info(transition_mappings)').all() as Array<{
+      name: string
+    }>
     expect(cols.map((c) => c.name)).toContain('const_length_ms')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Upgrading a database written before Voice-over Rundowns existed.
+//
+// Every other migration here adds a column and is safe to replay. Dropping the
+// NOT NULL on shots.camera_id is not: SQLite cannot do it in place, so the
+// table is rebuilt, and a rebuild that loses a row or a constraint loses an
+// operator's Rundown. These tests run the upgrade against the real pre-feature
+// schema rather than against a fresh database.
+// ---------------------------------------------------------------------------
+
+/** The schema exactly as it stood before Kind, Parts and Lyrics were added. */
+function openLegacyDb(): Database.Database {
+  const db = openMemoryDb()
+  db.exec(`
+    CREATE TABLE projects (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL
+    );
+    CREATE TABLE cameras (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      number INTEGER NOT NULL, name TEXT NOT NULL, color TEXT NOT NULL,
+      resolve_color TEXT, obs_scene TEXT,
+      UNIQUE(project_id, number)
+    );
+    CREATE TABLE rundowns (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name TEXT NOT NULL, created_at INTEGER NOT NULL,
+      order_index INTEGER NOT NULL DEFAULT 0, folder TEXT
+    );
+    CREATE TABLE shots (
+      id TEXT PRIMARY KEY,
+      rundown_id TEXT NOT NULL REFERENCES rundowns(id) ON DELETE CASCADE,
+      camera_id TEXT NOT NULL REFERENCES cameras(id),
+      duration_ms INTEGER NOT NULL, label TEXT, order_index INTEGER NOT NULL,
+      transition_name TEXT, transition_ms INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE live_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1), rundown_id TEXT,
+      skipped_ids TEXT NOT NULL DEFAULT '[]', project_id TEXT
+    );
+    INSERT OR IGNORE INTO live_state (id, skipped_ids) VALUES (1, '[]');
+
+    INSERT INTO projects VALUES ('p1', 'Gig', 1000);
+    INSERT INTO cameras VALUES ('c1', 'p1', 1, 'Wide', '#e74c3c', 'Red', 'Scene 1');
+    INSERT INTO rundowns VALUES ('rd1', 'p1', 'Set one', 2000, 0, 'Day 1');
+    INSERT INTO shots VALUES ('s1', 'rd1', 'c1', 5000, 'intro', 0, 'fade', 500);
+    INSERT INTO shots VALUES ('s2', 'rd1', 'c1', 9000, NULL, 1, NULL, 0);
+  `)
+  return db
+}
+
+function columnIsNotNull(db: Database.Database, table: string, column: string): boolean {
+  const columns = db.pragma(`table_info(${table})`) as { name: string; notnull: number }[]
+  return columns.find((c) => c.name === column)?.notnull === 1
+}
+
+describe('upgrading a pre-Voice-over database', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openLegacyDb()
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('migrates existing Rundowns to the camera Kind', () => {
+    applyMigrations(db)
+    const row = db.prepare('SELECT kind FROM rundowns WHERE id = ?').get('rd1') as { kind: string }
+    expect(row.kind).toBe('camera')
+  })
+
+  it('keeps every Shot, with its Camera, label, order and transition intact', () => {
+    applyMigrations(db)
+    const shots = db.prepare('SELECT * FROM shots ORDER BY order_index').all() as Record<
+      string,
+      unknown
+    >[]
+    expect(shots).toHaveLength(2)
+    expect(shots[0]).toMatchObject({
+      id: 's1',
+      rundown_id: 'rd1',
+      camera_id: 'c1',
+      part_id: null,
+      duration_ms: 5000,
+      label: 'intro',
+      order_index: 0,
+      transition_name: 'fade',
+      transition_ms: 500,
+    })
+    expect(shots[1]).toMatchObject({ id: 's2', camera_id: 'c1', label: null, transition_ms: 0 })
+  })
+
+  it('drops the NOT NULL on camera_id so a Call can exist without one', () => {
+    applyMigrations(db)
+    expect(columnIsNotNull(db, 'shots', 'camera_id')).toBe(false)
+    expect(() =>
+      db
+        .prepare('INSERT INTO shots (id, rundown_id, duration_ms, order_index) VALUES (?, ?, ?, ?)')
+        .run('s3', 'rd1', 1000, 2),
+    ).not.toThrow()
+  })
+
+  it('keeps the rest of the shots constraints through the rebuild', () => {
+    applyMigrations(db)
+    // rundown_id stays required and still cascades; camera_id stays a real FK.
+    expect(columnIsNotNull(db, 'shots', 'rundown_id')).toBe(true)
+    expect(() =>
+      db
+        .prepare(
+          'INSERT INTO shots (id, rundown_id, camera_id, duration_ms, order_index) VALUES (?, ?, ?, ?, ?)',
+        )
+        .run('s4', 'rd1', 'nope', 1000, 3),
+    ).toThrow()
+
+    db.prepare('DELETE FROM rundowns WHERE id = ?').run('rd1')
+    const remaining = db.prepare('SELECT COUNT(*) AS n FROM shots').get() as { n: number }
+    expect(remaining.n).toBe(0)
+  })
+
+  it('leaves foreign key enforcement on after the rebuild', () => {
+    applyMigrations(db)
+    expect(db.pragma('foreign_keys', { simple: true })).toBe(1)
+  })
+
+  it('rebuilds only once, and replaying the migrations changes nothing', () => {
+    applyMigrations(db)
+    const before = db.prepare('SELECT * FROM shots ORDER BY id').all()
+    applyMigrations(db)
+    applyMigrations(db)
+    expect(db.prepare('SELECT * FROM shots ORDER BY id').all()).toEqual(before)
+    expect(columnIsNotNull(db, 'shots', 'camera_id')).toBe(false)
+  })
+
+  it('preserves the shots index the hot reads depend on', () => {
+    applyMigrations(db)
+    const index = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_shots_rundown'")
+      .get()
+    expect(index).toBeDefined()
   })
 })
