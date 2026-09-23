@@ -16,7 +16,14 @@ import type {
   OBSConnectionStatus,
   OBSValidateResult,
   TransitionMapping,
+  PartScope,
+  PartUpsertInput,
+  LyricUpsertInput,
+  GlobalVoiceSettings,
+  ProjectVoiceSettings,
+  AudioDeviceSettings,
 } from '../shared/ipc-contract'
+import type { RundownKind } from '../shared/types'
 import { getDatabase } from './db/index'
 import {
   listProjects,
@@ -34,7 +41,19 @@ import {
   deleteRundown,
   reorderRundowns,
   setRundownFolder,
+  setRundownKind,
+  unassignedItemCount,
 } from './ipc/rundowns'
+import {
+  listParts,
+  listPartsInScope,
+  upsertPart,
+  deletePart,
+  promotePart,
+  setPartsColor,
+  renameFolder,
+} from './ipc/parts'
+import { listLyrics, upsertLyric, deleteLyric } from './ipc/lyrics'
 import { listShots, createShot, updateShot, deleteShot, reorderShots, splitShot } from './ipc/shots'
 import { createLiveSession } from './live/session'
 import type { LiveSession } from './live/session'
@@ -54,6 +73,13 @@ import {
   saveOscSettings,
   getPreviewFirst,
   savePreviewFirst,
+  getGlobalVoiceSettings,
+  saveGlobalVoiceSettings,
+  getProjectVoiceSettings,
+  saveProjectVoiceSettings,
+  getEffectiveVoiceSettings,
+  getAudioDevices,
+  saveAudioDevices,
 } from './ipc/settings'
 import { startOscServer, stopOscServer } from './osc/server'
 import {
@@ -258,6 +284,94 @@ function registerIpcHandlers(): void {
     ({ id, folder }: { id: string; folder: string | null }) => {
       return setRundownFolder(db, id, folder)
     },
+  )
+
+  registerIpcHandler('rundowns:setKind', ({ id, kind }: { id: string; kind: RundownKind }) => {
+    const rundown = setRundownKind(db, id, kind)
+    // The Kind changes which target column the item Track reads, so phones and
+    // the Cue Tray have to be told even though no item row moved.
+    publish.rundownChanged()
+    return rundown
+  })
+
+  registerIpcHandler('rundowns:unassignedCount', ({ rundownId }: { rundownId: string }) =>
+    unassignedItemCount(db, rundownId),
+  )
+
+  registerIpcHandler(
+    'rundowns:renameFolder',
+    ({ projectId, from, to }: { projectId: string; from: string; to: string }) => {
+      renameFolder(db, projectId, from, to)
+      publish.rundownChanged()
+    },
+  )
+
+  // Parts
+  registerIpcHandler('parts:list', ({ projectId }: { projectId: string }) =>
+    listParts(db, projectId),
+  )
+
+  registerIpcHandler('parts:listInScope', ({ rundownId }: { rundownId: string }) =>
+    listPartsInScope(db, rundownId),
+  )
+
+  registerIpcHandler('parts:upsert', (payload: PartUpsertInput) => {
+    const part = upsertPart(db, payload)
+    // A Part's name and colour are what a Call renders as, so phones need the
+    // new list even though no Call itself changed.
+    publish.rundownChanged()
+    return part
+  })
+
+  registerIpcHandler('parts:delete', ({ id }: { id: string }) => {
+    deletePart(db, id)
+    publish.rundownChanged()
+  })
+
+  registerIpcHandler('parts:promote', ({ id, scope }: { id: string; scope: PartScope }) =>
+    promotePart(db, id, scope),
+  )
+
+  registerIpcHandler('parts:setColor', ({ ids, color }: { ids: string[]; color: string }) => {
+    const parts = setPartsColor(db, ids, color)
+    publish.rundownChanged()
+    return parts
+  })
+
+  // Lyrics
+  registerIpcHandler('lyrics:list', ({ rundownId }: { rundownId: string }) =>
+    listLyrics(db, rundownId),
+  )
+
+  registerIpcHandler('lyrics:upsert', (payload: LyricUpsertInput) => upsertLyric(db, payload))
+
+  registerIpcHandler('lyrics:delete', ({ id }: { id: string }) => deleteLyric(db, id))
+
+  // Voice-over settings
+  registerIpcHandler('voice:settings:get', () => getGlobalVoiceSettings(db))
+
+  registerIpcHandler('voice:settings:save', (payload: GlobalVoiceSettings) =>
+    saveGlobalVoiceSettings(db, payload),
+  )
+
+  registerIpcHandler('voice:project:get', ({ projectId }: { projectId: string }) =>
+    getProjectVoiceSettings(db, projectId),
+  )
+
+  registerIpcHandler(
+    'voice:project:save',
+    ({ projectId, settings }: { projectId: string; settings: ProjectVoiceSettings }) =>
+      saveProjectVoiceSettings(db, projectId, settings),
+  )
+
+  registerIpcHandler('voice:effective', ({ projectId }: { projectId: string | null }) =>
+    getEffectiveVoiceSettings(db, projectId),
+  )
+
+  registerIpcHandler('audio:devices:get', () => getAudioDevices(db))
+
+  registerIpcHandler('audio:devices:save', (payload: AudioDeviceSettings) =>
+    saveAudioDevices(db, payload),
   )
 
   registerIpcHandler('project:setActive', (payload: { projectId: string | null }) => {

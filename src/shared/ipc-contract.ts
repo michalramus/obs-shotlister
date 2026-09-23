@@ -12,7 +12,7 @@
  * renderer bundle.
  */
 
-import type { Project, Camera, Rundown, Shot, Marker } from './types'
+import type { Project, Camera, Rundown, Shot, Marker, Part, Lyric, RundownKind } from './types'
 
 /** A channel that takes no payload. */
 type NoPayload = undefined
@@ -275,6 +275,37 @@ export interface IpcContract {
   'rundowns:setActive': { payload: { rundownId: string | null }; result: void }
   'rundowns:reorder': { payload: { ids: string[] }; result: void }
   'rundowns:setFolder': { payload: { id: string; folder: string | null }; result: Rundown }
+  'rundowns:setKind': { payload: { id: string; kind: RundownKind }; result: Rundown }
+  'rundowns:unassignedCount': { payload: { rundownId: string }; result: number }
+  'rundowns:renameFolder': {
+    payload: { projectId: string; from: string; to: string }
+    result: void
+  }
+
+  // --- Parts ---
+  'parts:list': { payload: { projectId: string }; result: Part[] }
+  'parts:listInScope': { payload: { rundownId: string }; result: Part[] }
+  'parts:upsert': { payload: PartUpsertInput; result: Part }
+  'parts:delete': { payload: { id: string }; result: void }
+  'parts:promote': { payload: { id: string; scope: PartScope }; result: Part }
+  'parts:setColor': { payload: { ids: string[]; color: string }; result: Part[] }
+
+  // --- Lyrics ---
+  'lyrics:list': { payload: { rundownId: string }; result: Lyric[] }
+  'lyrics:upsert': { payload: LyricUpsertInput; result: Lyric }
+  'lyrics:delete': { payload: { id: string }; result: void }
+
+  // --- Voice-over settings ---
+  'voice:settings:get': { payload: NoPayload; result: GlobalVoiceSettings }
+  'voice:settings:save': { payload: GlobalVoiceSettings; result: void }
+  'voice:project:get': { payload: { projectId: string }; result: ProjectVoiceSettings }
+  'voice:project:save': {
+    payload: { projectId: string; settings: ProjectVoiceSettings }
+    result: void
+  }
+  'voice:effective': { payload: { projectId: string | null }; result: EffectiveVoiceSettings }
+  'audio:devices:get': { payload: NoPayload; result: AudioDeviceSettings }
+  'audio:devices:save': { payload: AudioDeviceSettings; result: void }
 
   // --- Shots ---
   'shots:list': { payload: { rundownId: string }; result: Shot[] }
@@ -414,6 +445,33 @@ export interface ElectronApi {
     setActive: Request<'rundowns:setActive'>
     reorder: Request<'rundowns:reorder'>
     setFolder: Request<'rundowns:setFolder'>
+    setKind: Request<'rundowns:setKind'>
+    unassignedCount: Request<'rundowns:unassignedCount'>
+    renameFolder: Request<'rundowns:renameFolder'>
+  }
+  parts: {
+    list: Request<'parts:list'>
+    listInScope: Request<'parts:listInScope'>
+    upsert: Request<'parts:upsert'>
+    delete: Request<'parts:delete'>
+    promote: Request<'parts:promote'>
+    setColor: Request<'parts:setColor'>
+  }
+  lyrics: {
+    list: Request<'lyrics:list'>
+    upsert: Request<'lyrics:upsert'>
+    delete: Request<'lyrics:delete'>
+  }
+  voice: {
+    getSettings: Request<'voice:settings:get'>
+    saveSettings: Request<'voice:settings:save'>
+    getProjectSettings: Request<'voice:project:get'>
+    saveProjectSettings: Request<'voice:project:save'>
+    getEffectiveSettings: Request<'voice:effective'>
+  }
+  audioDevices: {
+    get: Request<'audio:devices:get'>
+    save: Request<'audio:devices:save'>
   }
   shots: {
     list: Request<'shots:list'>
@@ -508,6 +566,12 @@ export const IPC_CHANNELS = [
   'cameras:list', 'cameras:upsert', 'cameras:delete',
   'rundowns:list', 'rundowns:create', 'rundowns:rename', 'rundowns:delete',
   'rundowns:setActive', 'rundowns:reorder', 'rundowns:setFolder',
+  'rundowns:setKind', 'rundowns:unassignedCount', 'rundowns:renameFolder',
+  'parts:list', 'parts:listInScope', 'parts:upsert', 'parts:delete',
+  'parts:promote', 'parts:setColor',
+  'lyrics:list', 'lyrics:upsert', 'lyrics:delete',
+  'voice:settings:get', 'voice:settings:save', 'voice:project:get', 'voice:project:save',
+  'voice:effective', 'audio:devices:get', 'audio:devices:save',
   'shots:list', 'shots:create', 'shots:update', 'shots:delete', 'shots:reorder', 'shots:split',
   'live:get', 'live:start', 'live:stop', 'live:next', 'live:skip-next', 'live:restart',
   'live:getPreviewFirst', 'live:savePreviewFirst',

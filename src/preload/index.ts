@@ -49,6 +49,33 @@ const api: ElectronApi = {
     setActive: request('rundowns:setActive'),
     reorder: request('rundowns:reorder'),
     setFolder: request('rundowns:setFolder'),
+    setKind: request('rundowns:setKind'),
+    unassignedCount: request('rundowns:unassignedCount'),
+    renameFolder: request('rundowns:renameFolder'),
+  },
+  parts: {
+    list: request('parts:list'),
+    listInScope: request('parts:listInScope'),
+    upsert: request('parts:upsert'),
+    delete: request('parts:delete'),
+    promote: request('parts:promote'),
+    setColor: request('parts:setColor'),
+  },
+  lyrics: {
+    list: request('lyrics:list'),
+    upsert: request('lyrics:upsert'),
+    delete: request('lyrics:delete'),
+  },
+  voice: {
+    getSettings: request('voice:settings:get'),
+    saveSettings: request('voice:settings:save'),
+    getProjectSettings: request('voice:project:get'),
+    saveProjectSettings: request('voice:project:save'),
+    getEffectiveSettings: request('voice:effective'),
+  },
+  audioDevices: {
+    get: request('audio:devices:get'),
+    save: request('audio:devices:save'),
   },
   shots: {
     list: request('shots:list'),
