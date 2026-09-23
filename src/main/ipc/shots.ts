@@ -75,16 +75,18 @@ export function createShot(db: Database.Database, input: CreateShotInput): Shot 
 
   const transitionName = input.transitionName ?? null
   const transitionMs = input.transitionMs ?? 0
+  const cameraId = input.cameraId ?? null
+  const partId = input.partId ?? null
 
   db.prepare(
-    'INSERT INTO shots (id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-  ).run(id, input.rundownId, input.cameraId, input.durationMs, input.label ?? null, orderIndex, transitionName, transitionMs)
+    'INSERT INTO shots (id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run(id, input.rundownId, cameraId, partId, input.durationMs, input.label ?? null, orderIndex, transitionName, transitionMs)
 
   return {
     id,
     rundownId: input.rundownId,
-    cameraId: input.cameraId,
-    partId: null,
+    cameraId,
+    partId,
     durationMs: input.durationMs,
     label: input.label ?? null,
     orderIndex,

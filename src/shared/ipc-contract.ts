@@ -37,9 +37,16 @@ export type CameraUpsertInput = Omit<Camera, 'id' | 'obsScene' | 'resolveColor'>
   resolveColor?: string | null
 }
 
+/**
+ * Creating one item of a Rundown. A Shot carries `cameraId`, a Call carries
+ * `partId`; both are optional because an item may legitimately be created
+ * unassigned, and a Live session — not the writer — is what refuses to run on
+ * an unassigned Rundown.
+ */
 export interface CreateShotInput {
   rundownId: string
-  cameraId: string
+  cameraId?: string | null
+  partId?: string | null
   durationMs: number
   label?: string | null
   transitionName?: string | null
@@ -48,7 +55,8 @@ export interface CreateShotInput {
 
 export interface UpdateShotInput {
   id: string
-  cameraId?: string
+  cameraId?: string | null
+  partId?: string | null
   durationMs?: number
   label?: string | null
   transitionName?: string | null
@@ -58,7 +66,143 @@ export interface UpdateShotInput {
 export interface SplitShotInput {
   shotId: string
   atMs: number
-  newCameraId: string
+  newCameraId?: string | null
+  newPartId?: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Parts
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a Part is defined. Scope is additive (ADR 0006), so this governs which
+ * Rundowns *see* the Part in their picker and never which Part a Call resolves
+ * to — a Call's `partId` is a hard foreign key that means the same thing
+ * everywhere.
+ */
+export type PartScope =
+  | { kind: 'project' }
+  | { kind: 'folder'; folder: string }
+  | { kind: 'rundown'; rundownId: string }
+
+export type PartUpsertInput = {
+  id?: string
+  projectId: string
+  number?: number
+  name: string
+  color?: string
+  scope?: PartScope
+}
+
+// ---------------------------------------------------------------------------
+// Voice-over settings
+//
+// Voice, countdown and placement are global with a per-Project override; the
+// connector word is per-Project only, because it is a property of the band's
+// language rather than of the machine. `EffectiveVoiceSettings` is what the
+// override resolution returns and what the scheduler and renderer consume, so
+// neither has to know a setting came from a default.
+// ---------------------------------------------------------------------------
+
+/**
+ * When the Part name is spoken relative to the countdown.
+ *
+ * - `flush`: scheduled backwards from the first number using the clip's stored
+ *   duration, so name and numbers arrive as one continuous sentence.
+ * - `immediate`: spoken the moment the previous Call goes live.
+ */
+export type PhrasePlacement = 'flush' | 'immediate'
+
+export interface GlobalVoiceSettings {
+  voice: string
+  countdown: number[]
+  placement: PhrasePlacement
+  /** Re-render on change (debounced) rather than only when asked. */
+  autoRender: boolean
+}
+
+export interface ProjectVoiceSettings {
+  voice: string | null
+  countdown: number[] | null
+  placement: PhrasePlacement | null
+  connector: string
+}
+
+export interface EffectiveVoiceSettings {
+  voice: string
+  countdown: number[]
+  placement: PhrasePlacement
+  connector: string
+}
+
+/**
+ * Output device per sound, so Announcements can be piped to a virtual cable
+ * feeding Mumble while the operator keeps the countdown Cues on their own
+ * speakers. `null` means the system default.
+ */
+export interface AudioDeviceSettings {
+  cueSinkId: string | null
+  announcementSinkId: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Render state
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a Part's speech is usable.
+ *
+ * - `rendered`: a clip exists for the current name, Voice and engine.
+ * - `stale`: a clip exists for an older name — renaming a Part orphans its
+ *   audio rather than silently keeping it (ADR 0005).
+ * - `missing`: never rendered.
+ */
+export type RenderState = 'rendered' | 'stale' | 'missing'
+
+export interface PartRenderState {
+  partId: string
+  name: string
+  state: RenderState
+}
+
+export interface ProjectRenderStatus {
+  parts: PartRenderState[]
+  /** Parts that are `stale` or `missing`; what the warning strip counts. */
+  unrenderedCount: number
+  /** True while a render is in flight, so the UI can disable its button. */
+  rendering: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Announcements
+// ---------------------------------------------------------------------------
+
+/** One clip to play, and how long after the plan was issued to play it. */
+export interface AnnouncementCue {
+  url: string
+  atMs: number
+}
+
+/**
+ * What to speak before one Call, pushed to the renderer when that Call becomes
+ * next. A plan arriving cuts off whatever is still speaking — Announcements are
+ * never queued — and `null` cancels without starting anything.
+ */
+export interface AnnouncementPlan {
+  callId: string
+  cues: AnnouncementCue[]
+}
+
+// ---------------------------------------------------------------------------
+// Lyrics
+// ---------------------------------------------------------------------------
+
+export interface LyricUpsertInput {
+  id?: string
+  rundownId: string
+  startMs: number
+  endMs: number
+  text: string
 }
 
 /**
