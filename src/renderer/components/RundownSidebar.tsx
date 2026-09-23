@@ -20,7 +20,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useAppStore } from '../store'
-import type { Rundown } from '../../shared/types'
+import type { Rundown, RundownKind } from '../../shared/types'
 
 const s = {
   sidebar: {
@@ -169,6 +169,24 @@ const s = {
   } satisfies React.CSSProperties,
 }
 
+/**
+ * The Kind badge, shown on Voice-over Rundowns only.
+ *
+ * A Camera Rundown must look exactly as it did before Kinds existed, so the
+ * badge marks the exception rather than labelling both.
+ */
+const KIND_BADGE_STYLE: React.CSSProperties = {
+  fontSize: '9px',
+  fontWeight: 700,
+  letterSpacing: '0.06em',
+  color: '#c8a2e0',
+  border: '1px solid #5a4a6a',
+  borderRadius: '2px',
+  padding: '0 3px',
+  lineHeight: '13px',
+  flexShrink: 0,
+}
+
 const DROP_LINE_STYLE: React.CSSProperties = {
   height: '2px',
   background: '#5a9fd4',
@@ -262,6 +280,12 @@ function RundownItemContent({
       </span>
 
       {isActive && <span style={s.activeDot} />}
+
+      {rundown.kind === 'voice' && (
+        <span style={KIND_BADGE_STYLE} title="Voice-over rundown">
+          VO
+        </span>
+      )}
 
       {editingId === rundown.id ? (
         <input
@@ -541,6 +565,7 @@ export function RundownSidebar(): React.JSX.Element {
   const removeRundown = useAppStore((s) => s.removeRundown)
   const reorderRundowns = useAppStore((s) => s.reorderRundowns)
   const setRundownFolder = useAppStore((s) => s.setRundownFolder)
+  const setRundownKind = useAppStore((s) => s.setRundownKind)
 
   const [newName, setNewName] = useState('')
   const [showNewInput, setShowNewInput] = useState(false)
@@ -691,6 +716,20 @@ export function RundownSidebar(): React.JSX.Element {
     } catch (err) {
       console.error('[RundownSidebar] delete error:', err)
     }
+  }
+
+  /**
+   * Converting is non-destructive — order, durations, labels and transitions
+   * survive, and both target columns are kept, so converting back restores the
+   * Camera assignments exactly — so it asks for no confirmation.
+   */
+  async function handleSetKind(id: string, kind: RundownKind): Promise<void> {
+    try {
+      await setRundownKind(id, kind)
+    } catch (err) {
+      console.error('[RundownSidebar] setKind error:', err)
+    }
+    setContextMenu(null)
   }
 
   function handleContextMenu(rundownId: string, e: React.MouseEvent): void {
@@ -973,6 +1012,17 @@ export function RundownSidebar(): React.JSX.Element {
             }}
           >
             Rename
+          </button>
+          <button
+            style={s.contextMenuItem}
+            onClick={() =>
+              void handleSetKind(
+                contextMenu.rundownId,
+                contextRundown.kind === 'voice' ? 'camera' : 'voice',
+              )
+            }
+          >
+            {contextRundown.kind === 'voice' ? 'Convert to camera rundown' : 'Convert to voice-over rundown'}
           </button>
           {contextRundown.folder && (
             <button
