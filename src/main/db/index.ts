@@ -184,12 +184,26 @@ export function applyMigrations(database: Database.Database): void {
       text       TEXT NOT NULL
     );
 
+    -- One row per synthesised clip. Content-addressed on (text, Voice, engine),
+    -- with the duration stored alongside because flush placement schedules the
+    -- phrase backwards from the first number and needs to know how long it runs.
     CREATE TABLE IF NOT EXISTS tts_clips (
       hash        TEXT PRIMARY KEY,
       text        TEXT NOT NULL,
       voice       TEXT NOT NULL,
       engine      TEXT NOT NULL,
       duration_ms INTEGER NOT NULL
+    );
+
+    -- Which clip a Part was last rendered to. Without this the cache alone
+    -- cannot tell a Part that was renamed (stale) from one never rendered
+    -- (missing), because a content-addressed clip carries no Part identity.
+    CREATE TABLE IF NOT EXISTS part_renders (
+      part_id TEXT NOT NULL REFERENCES parts(id) ON DELETE CASCADE,
+      voice   TEXT NOT NULL,
+      engine  TEXT NOT NULL,
+      hash    TEXT NOT NULL,
+      PRIMARY KEY (part_id, voice, engine)
     );
   `)
 
