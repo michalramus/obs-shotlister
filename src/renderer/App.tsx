@@ -305,7 +305,7 @@ export default function App(): React.JSX.Element {
           console.error('[App] editShot:', err),
         )
       } else {
-        splitShot(shotId, atMs, newCameraId).catch((err: unknown) =>
+        splitShot(shotId, atMs, { newCameraId }).catch((err: unknown) =>
           console.error('[App] splitShot:', err),
         )
       }

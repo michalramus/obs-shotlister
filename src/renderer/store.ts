@@ -1,5 +1,14 @@
 import { create } from 'zustand'
-import type { Project, Camera, Rundown, Shot, Marker } from '../shared/types'
+import type {
+  Project,
+  Camera,
+  Rundown,
+  Shot,
+  Marker,
+  Part,
+  Lyric,
+  RundownKind,
+} from '../shared/types'
 import { applyLivePosition } from '../shared/live-view'
 import type {
   LiveState,
@@ -8,6 +17,9 @@ import type {
   OBSConnectionStatus,
   OBSValidateResult,
   DeleteShotMode,
+  PartScope,
+  PartUpsertInput,
+  LyricUpsertInput,
 } from '../shared/ipc-contract'
 
 interface AppStore {
@@ -17,6 +29,9 @@ interface AppStore {
   rundowns: Rundown[] // rundowns for active project
   shots: Shot[] // shots for active rundown
   markers: Marker[] // markers for active rundown
+  parts: Part[] // every Part in the active project
+  partsInScope: Part[] // the additive union the active rundown may choose from
+  lyrics: Lyric[] // Lyrics Track of the active rundown
 
   // Selection
   activeProjectId: string | null
@@ -66,6 +81,21 @@ interface AppStore {
   removeRundown: (id: string) => Promise<void>
   reorderRundowns: (ids: string[]) => Promise<void>
   setRundownFolder: (id: string, folder: string | null) => Promise<void>
+  setRundownKind: (id: string, kind: RundownKind) => Promise<void>
+  renameFolder: (from: string, to: string) => Promise<void>
+
+  // Part CRUD actions
+  loadParts: (projectId: string) => Promise<void>
+  loadPartsInScope: (rundownId: string) => Promise<void>
+  upsertPart: (input: PartUpsertInput) => Promise<Part>
+  removePart: (id: string) => Promise<void>
+  promotePart: (id: string, scope: PartScope) => Promise<void>
+  setPartsColor: (ids: string[], color: string) => Promise<void>
+
+  // Lyric CRUD actions
+  loadLyrics: (rundownId: string) => Promise<void>
+  upsertLyric: (input: LyricUpsertInput) => Promise<Lyric>
+  removeLyric: (id: string) => Promise<void>
 
   // Shot CRUD actions
   loadShots: (rundownId: string) => Promise<void>
@@ -73,7 +103,11 @@ interface AppStore {
   editShot: (input: UpdateShotInput) => Promise<void>
   removeShot: (id: string, mode?: DeleteShotMode) => Promise<void>
   reorderShots: (ids: string[]) => Promise<void>
-  splitShot: (shotId: string, atMs: number, newCameraId: string) => Promise<void>
+  splitShot: (
+    shotId: string,
+    atMs: number,
+    target: { newCameraId?: string | null; newPartId?: string | null },
+  ) => Promise<void>
 
   // Marker CRUD actions
   loadMarkers: (rundownId: string) => Promise<void>
@@ -103,6 +137,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   rundowns: [],
   shots: [],
   markers: [],
+  parts: [],
+  partsInScope: [],
+  lyrics: [],
 
   // Rundown media
   rundownMedia: null,
@@ -308,6 +345,22 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setRundownFolder: async (id, folder) => {
     const updated = await window.api.rundowns.setFolder({ id, folder })
     set((state) => ({ rundowns: state.rundowns.map((r) => (r.id === id ? updated : r)) }))
+    // Moving between folders changes which Parts are offered, never which Part
+    // an existing Call resolves to (ADR 0006).
+    if (get().activeRundownId === id) await get().loadPartsInScope(id)
+  },
+
+  setRundownKind: async (id, kind) => {
+    const updated = await window.api.rundowns.setKind({ id, kind })
+    set((state) => ({ rundowns: state.rundowns.map((r) => (r.id === id ? updated : r)) }))
+  },
+
+  renameFolder: async (from, to) => {
+    const { activeProjectId } = get()
+    if (!activeProjectId) throw new Error('No active project')
+    await window.api.rundowns.renameFolder({ projectId: activeProjectId, from, to })
+    await get().loadRundowns(activeProjectId)
+    await get().loadParts(activeProjectId)
   },
 
   removeRundown: async (id) => {
@@ -348,6 +401,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ shots })
     await get().loadMarkers(rundownId)
     await get().loadRundownMedia(rundownId)
+    await get().loadLyrics(rundownId)
+    await get().loadPartsInScope(rundownId)
   },
 
   addShot: async (input) => {
@@ -384,10 +439,76 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  splitShot: async (shotId, atMs, newCameraId) => {
-    await window.api.shots.split({ shotId, atMs, newCameraId })
+  splitShot: async (shotId, atMs, target) => {
+    await window.api.shots.split({ shotId, atMs, ...target })
     const { activeRundownId } = get()
     if (activeRundownId) await get().loadShots(activeRundownId)
+  },
+
+  // Parts
+  loadParts: async (projectId) => {
+    const parts = await window.api.parts.list({ projectId })
+    set({ parts })
+  },
+
+  loadPartsInScope: async (rundownId) => {
+    const partsInScope = await window.api.parts.listInScope({ rundownId })
+    set({ partsInScope })
+  },
+
+  upsertPart: async (input) => {
+    const part = await window.api.parts.upsert(input)
+    const { activeProjectId, activeRundownId } = get()
+    // Scope decides which list a Part lands in, and a new Part is created at
+    // Rundown scope, so both lists are refetched rather than patched.
+    if (activeProjectId) await get().loadParts(activeProjectId)
+    if (activeRundownId) await get().loadPartsInScope(activeRundownId)
+    return part
+  },
+
+  removePart: async (id) => {
+    await window.api.parts.delete({ id })
+    set((state) => ({
+      parts: state.parts.filter((p) => p.id !== id),
+      partsInScope: state.partsInScope.filter((p) => p.id !== id),
+    }))
+  },
+
+  promotePart: async (id, scope) => {
+    await window.api.parts.promote({ id, scope })
+    const { activeProjectId, activeRundownId } = get()
+    if (activeProjectId) await get().loadParts(activeProjectId)
+    if (activeRundownId) await get().loadPartsInScope(activeRundownId)
+  },
+
+  setPartsColor: async (ids, color) => {
+    await window.api.parts.setColor({ ids, color })
+    const { activeProjectId, activeRundownId } = get()
+    if (activeProjectId) await get().loadParts(activeProjectId)
+    if (activeRundownId) await get().loadPartsInScope(activeRundownId)
+  },
+
+  // Lyrics
+  loadLyrics: async (rundownId) => {
+    const lyrics = await window.api.lyrics.list({ rundownId })
+    set({ lyrics })
+  },
+
+  upsertLyric: async (input) => {
+    const lyric = await window.api.lyrics.upsert(input)
+    set((state) => {
+      const exists = state.lyrics.some((l) => l.id === lyric.id)
+      const updated = exists
+        ? state.lyrics.map((l) => (l.id === lyric.id ? lyric : l))
+        : [...state.lyrics, lyric]
+      return { lyrics: updated.sort((a, b) => a.startMs - b.startMs) }
+    })
+    return lyric
+  },
+
+  removeLyric: async (id) => {
+    await window.api.lyrics.delete({ id })
+    set((state) => ({ lyrics: state.lyrics.filter((l) => l.id !== id) }))
   },
 
   // Marker CRUD
