@@ -99,6 +99,7 @@ const api: ElectronApi = {
     savePreviewFirst: request('live:savePreviewFirst'),
     onStatePush: subscribe('live:state-push'),
     onShotHiddenPush: subscribe('live:shot-hidden-push'),
+    onAnnouncementPush: subscribe('live:announcement-push'),
   },
   project: {
     setActive: request('project:setActive'),

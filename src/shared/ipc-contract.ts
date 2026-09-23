@@ -398,6 +398,12 @@ export type IpcResult<C extends IpcChannel> = IpcContract[C]['result']
 export interface IpcPushContract {
   'live:state-push': LiveState
   'live:shot-hidden-push': string
+  /**
+   * What to speak before the Call that just became next, or `null` to cut off
+   * whatever is speaking. Playback is in the renderer, where the output-device
+   * API lives; the main process has no audio API at all.
+   */
+  'live:announcement-push': AnnouncementPlan | null
   'obs:status': { status: OBSConnectionStatus }
   'obs:validationResult': OBSValidateResult | null
   'server:error': string
@@ -495,6 +501,7 @@ export interface ElectronApi {
     savePreviewFirst: Request<'live:savePreviewFirst'>
     onStatePush: Subscribe<'live:state-push'>
     onShotHiddenPush: Subscribe<'live:shot-hidden-push'>
+    onAnnouncementPush: Subscribe<'live:announcement-push'>
   }
   project: {
     setActive: Request<'project:setActive'>
