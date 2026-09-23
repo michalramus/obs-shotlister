@@ -152,3 +152,7 @@ vite.config.ts.timestamp-*
 
 # Rust cue tray
 tray/target/
+
+# Piper TTS engine and voices, fetched by scripts/fetch-piper.mjs
+resources/piper/
+resources/piper-voices/

@@ -20,6 +20,13 @@ extraResources:
     to: audio
     filter:
       - '**/*.opus'
+  # Piper and its voice models, fetched by scripts/fetch-piper.mjs. Only the
+  # target's own engine is copied — ${platform}-${arch} expands to exactly the
+  # directory names that script writes — so a build never ships three engines.
+  - from: resources/piper/${platform}-${arch}
+    to: piper
+  - from: resources/piper-voices
+    to: piper-voices
 
 # Never unpack better-sqlite3 native module from asar
 asarUnpack:
