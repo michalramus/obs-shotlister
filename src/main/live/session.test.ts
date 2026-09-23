@@ -538,18 +538,18 @@ describe('LiveSession announcements', () => {
       vi.advanceTimersByTime(1000)
       session.skipNext()
 
-      // A skipped Call extends the countdown: the plan names what follows it,
-      // and the lead is what is left of the live Call plus the skipped one's
-      // planned time — here the remainder of the live Call.
+      // A skipped Call extends the countdown: the band plays through its time
+      // and only then reaches what follows, so the lead is the remainder of the
+      // live Call (11s) plus the skipped Call's planned 12s.
       expect(plans[1]).toEqual({
         callId: 'call-2',
         cues: [
-          { url: clipUrl('refren za'), atMs: 1000 - PHRASE_MS },
-          { url: numberUrl(10), atMs: 1000 },
-          { url: numberUrl(5), atMs: 6000 },
-          { url: numberUrl(3), atMs: 8000 },
-          { url: numberUrl(2), atMs: 9000 },
-          { url: numberUrl(1), atMs: 10000 },
+          { url: clipUrl('refren za'), atMs: 13000 - PHRASE_MS },
+          { url: numberUrl(10), atMs: 13000 },
+          { url: numberUrl(5), atMs: 18000 },
+          { url: numberUrl(3), atMs: 20000 },
+          { url: numberUrl(2), atMs: 21000 },
+          { url: numberUrl(1), atMs: 22000 },
         ],
       })
     })
@@ -566,11 +566,25 @@ describe('LiveSession announcements', () => {
       vi.useFakeTimers()
       seedVoice(db)
       session.start('rd-1')
-      // Well past the live Call's planned duration — a held Call does not nag.
-      vi.advanceTimersByTime(20000)
+      // Past the whole span the skip leaves behind — the live Call's 12s plus
+      // the skipped Call's 12s. A held moment does not nag the band.
+      vi.advanceTimersByTime(30000)
       session.skipNext()
 
       expect(plans[1]).toBeNull()
+    })
+
+    it('still announces inside the span a skip extends, before it is used up', () => {
+      vi.useFakeTimers()
+      seedVoice(db)
+      session.start('rd-1')
+      // Past the live Call's own 12s, but not past the 24s the skip makes
+      // available — there is real time left, so this is not overrun.
+      vi.advanceTimersByTime(20000)
+      session.skipNext()
+
+      expect(plans[1]).not.toBeNull()
+      expect(plans[1]!.callId).toBe('call-2')
     })
   })
 

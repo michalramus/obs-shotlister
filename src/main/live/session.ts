@@ -20,6 +20,7 @@ import type { Shot } from '../../shared/types'
 import type { AnnouncementPlan, LiveState } from '../../shared/ipc-contract'
 import { listShots } from '../ipc/shots'
 import { getRundown, unassignedItemCount } from '../ipc/rundowns'
+import { effectiveDurationMs } from '../../shared/timing'
 import { createAnnouncementBuilder } from './announcer'
 
 interface LiveStateRow {
@@ -181,17 +182,26 @@ export function createLiveSession(
   }
 
   /**
-   * What the *plan* says is left of the live Call, not what a stopwatch says.
+   * What the *plan* says is left before the next visible Call, not what a
+   * stopwatch says.
    *
-   * Timers are advisory (ADR 0002), so the countdown is placed against the
-   * Call's own `durationMs`. Past the duration this goes negative and the
-   * scheduler drops every cue, which is how overrun stays silent without anyone
-   * having to ask whether it is overrun.
+   * Timers are advisory (ADR 0002), so this is placed against planned durations
+   * rather than measured ones. It spans the Hidden and Skipped Calls between the
+   * live one and the next visible one — their time still passes, the operator
+   * simply never switches to them — so the countdown tracks what the operator
+   * will actually do rather than the index order. That is the same rule the Cue
+   * Tray already counts down by, which is why it reuses `effectiveDurationMs`
+   * rather than restating it.
+   *
+   * Past the duration this goes negative and the scheduler drops every cue,
+   * which is how overrun stays silent without anyone having to ask whether it
+   * is overrun.
    */
   function leadMsToNextCall(elapsedMs: number): number {
-    const live = session.getLiveShot()
-    if (!live) return 0
-    return live.durationMs - elapsedMs
+    const index = liveIndex()
+    if (index === null) return 0
+    const span = effectiveDurationMs(session.getShotsWithHiddenFlags(), index)
+    return span === null ? 0 : span - elapsedMs
   }
 
   /** How long the live Call has actually been on air. Only Skip needs to ask. */
