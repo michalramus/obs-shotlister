@@ -18,7 +18,8 @@ optionally mapped to an OBS scene.
 _Avoid_: source, input, angle, channel
 
 **Rundown**:
-An ordered list of Shots making up one recording or broadcast.
+An ordered list of items making up one recording or broadcast: Shots in a Camera Rundown,
+Calls in a Voice-over Rundown.
 _Avoid_: playlist, sequence, running order
 
 **Shot**:
@@ -40,30 +41,76 @@ An audio or video file aligned to a Rundown by an offset, against which the oper
 Shot boundaries. Never broadcast — it exists only to edit against.
 _Avoid_: asset, source, track
 
+**Kind**:
+Which sort of item a Rundown is made of: a Camera Rundown (Shots) or a Voice-over Rundown
+(Calls). A Rundown has exactly one Kind and can be converted between them. Not to be
+confused with Edit mode and Live mode, which are views.
+_Avoid_: mode, type, variant
+
+**Track**:
+One lane of the timeline. The item Track holds the Rundown's Shots or Calls; the Lyrics
+Track holds Lyrics. A Track is a lane, never a Rundown and never Reference media.
+_Avoid_: lane, row, layer
+
+**Lyric**:
+One line of song text on the Lyrics Track, with its own in and out points. Purely an
+orientation aid for the operator: never spoken, never sent anywhere.
+_Avoid_: caption, subtitle, marker, text cue
+
+**Part**:
+A named moment of a song within a Project — "guitar", "voice 1", "refren". The Voice-over
+Rundown counterpart of a Camera: reusable, defined once, referenced by many Calls.
+_Avoid_: section, moment, marker, tag
+
+**Call**:
+One Part's turn to be announced: a Part and a duration, and optionally a label. The unit a
+Voice-over Rundown is made of, exactly as a Shot is the unit of a Camera Rundown. No Camera
+is involved and OBS is never switched.
+_Avoid_: cue, announcement, moment, prompt
+
+**Announcement**:
+What a Voice-over Rundown speaks before a Call: that Call's Part name and connector, then
+the countdown numbers, played from clips rendered ahead of the show. Never a Cue, which is
+a fixed sound the Cue Tray plays.
+_Avoid_: cue, prompt, callout, TTS
+
+**Voice**:
+The synthetic speaker an Announcement is rendered with. Set once for the app and
+overridable per Project, because the language follows the material and not the machine.
+_Avoid_: speaker, model, engine
+
+**Render state**:
+Whether a Part's audio exists and matches its current text and Voice: *rendered*, *stale*,
+or *never rendered*. A Project reports the aggregate; a show can start while something is
+unrendered, but only behind a warning.
+_Avoid_: status, dirty, cached, synced
+
 ### Running a show
 
 **Live session**:
-One run of a Rundown, from start to stop. Knows which Shot is live and when it went live.
+One run of a Rundown, from start to stop. Knows which item is live and when it went live.
 _Avoid_: playback, broadcast, run, session
 
 **Live queue**:
-The Shots of a Rundown as they stand within a Live session, including which have been
+The items of a Rundown as they stand within a Live session, including which have been
 consumed or skipped. The Rundown itself never changes during a Live session.
 _Avoid_: playlist, stack, buffer
 
 **Hidden**:
-A Shot that has left the Live queue's future, because it has already been on air or was
-skipped. A property of the Live queue only — never of the stored Shot. A Shot going off air
+An item that has left the Live queue's future, because it has already been on air or was
+skipped. A property of the Live queue only — never of the stored item. A Shot going off air
 stays visible until its successor's Transition finishes, so briefly it is on screen without
 being live.
 _Avoid_: done, past, consumed, removed
 
 **Next**:
-Putting the next visible Shot on air and hiding the one leaving.
+Putting the next visible item on air and hiding the one leaving: switching the Camera in a
+Camera Rundown, and nothing but the Announcement in a Voice-over Rundown.
 _Avoid_: advance, go, cut, take
 
 **Skip**:
-Dropping the next Shot from the Live queue without ever putting it on air.
+Dropping the next item from the Live queue without ever putting it on air. Any Announcement
+already in flight for it stops at once.
 _Avoid_: delete, remove, drop
 
 **Preview-first**:
