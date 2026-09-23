@@ -184,20 +184,30 @@ export function createLiveSession(
    * What the *plan* says is left of the live Call, not what a stopwatch says.
    *
    * Timers are advisory (ADR 0002), so the countdown is placed against the
-   * Call's own `durationMs`. Subtracting what has already elapsed matters for
-   * exactly one caller — Skip, which re-announces mid-Call — and is a no-op for
-   * Start and Next, where the Call went live this instant. Past the duration
-   * this goes negative and the scheduler drops every cue, which is how overrun
-   * stays silent without anyone having to ask whether it is overrun.
+   * Call's own `durationMs`. Past the duration this goes negative and the
+   * scheduler drops every cue, which is how overrun stays silent without anyone
+   * having to ask whether it is overrun.
    */
-  function leadMsToNextCall(): number {
+  function leadMsToNextCall(elapsedMs: number): number {
     const live = session.getLiveShot()
-    if (!live || startedAt === null) return 0
-    return live.durationMs - (Date.now() - startedAt)
+    if (!live) return 0
+    return live.durationMs - elapsedMs
   }
 
-  /** Issues a plan for the next visible Call, if that Call has changed. */
-  function announce(): void {
+  /** How long the live Call has actually been on air. Only Skip needs to ask. */
+  function elapsedOnLiveCall(): number {
+    return startedAt === null ? 0 : Date.now() - startedAt
+  }
+
+  /**
+   * Issues a plan for the next visible Call, if that Call has changed.
+   *
+   * `elapsedMs` is how much of the live Call is already gone. Start, Next and
+   * Restart pass 0 rather than measuring: the Call went live on the line above,
+   * so the elapsed time is zero by construction, and re-reading the clock there
+   * would only fold the cost of the lookup into the countdown.
+   */
+  function announce(elapsedMs: number): void {
     if (!onAnnouncement || !announcer) return
 
     let next: Shot | null
@@ -206,7 +216,7 @@ export function createLiveSession(
       const { rundown_id } = selection()
       if (!running || !isVoiceRundown(rundown_id)) return
       next = session.getNextVisibleShot()
-      leadMs = leadMsToNextCall()
+      leadMs = leadMsToNextCall(elapsedMs)
     } catch (err) {
       // Resolving what to say is never worth losing the advance that asked.
       console.error('[live] announce lookup failed:', err)
@@ -314,7 +324,7 @@ export function createLiveSession(
       announcedCallId = null
 
       const state = stateFrom(selection(), 0)
-      announce()
+      announce(0)
       return state
     },
 
@@ -346,7 +356,7 @@ export function createLiveSession(
       startedAt = Date.now()
 
       const result = { state: stateFrom(row, liveIndex()), hiddenShotId }
-      announce()
+      announce(0)
       return result
     },
 
@@ -363,7 +373,7 @@ export function createLiveSession(
       queue = queue.map((s) => (s.id === toSkip.id ? { ...s, hidden: true } : s))
       // Immediately, not at the next advance: the band must never be told to
       // play something the operator has just dropped.
-      announce()
+      announce(elapsedOnLiveCall())
       return { state: stateFrom(row, liveIndex()), hiddenShotId: toSkip.id }
     },
 
@@ -382,7 +392,7 @@ export function createLiveSession(
       announcedCallId = null
 
       const state = stateFrom(row, 0)
-      announce()
+      announce(0)
       return state
     },
 
