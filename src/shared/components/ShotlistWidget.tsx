@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import type { Shot, Camera } from '../types'
+import type { Shot, Camera, Part, RundownKind } from '../types'
 import { formatMs, computeTiming, computeRemainingMs } from '../timing'
 
 // The countdown renders tenths of a second, so ticking faster than this only
@@ -10,6 +10,10 @@ export interface ShotlistWidgetProps {
   rundownName: string
   shots: Shot[]
   cameras: Camera[]
+  /** The Parts a Voice-over Rundown's Calls name. Unused in a Camera Rundown. */
+  parts?: Part[]
+  /** Which target each item is read from. Defaults to a Camera Rundown. */
+  kind?: RundownKind
   liveIndex: number | null
   startedAt: number | null
   running: boolean
@@ -193,6 +197,8 @@ export function ShotlistWidget({
   rundownName,
   shots,
   cameras,
+  parts,
+  kind = 'camera',
   liveIndex,
   startedAt,
   running,
@@ -337,7 +343,17 @@ export function ShotlistWidget({
         rafRef.current = null
       }
     }
-  }, [running, liveIndex, shots, startedAt, cameraFilter, audioBaseUrl, muteCount, muteBeep, playCue])
+  }, [
+    running,
+    liveIndex,
+    shots,
+    startedAt,
+    cameraFilter,
+    audioBaseUrl,
+    muteCount,
+    muteBeep,
+    playCue,
+  ])
 
   // Auto-scroll to live shot when live index changes
   useEffect(() => {
@@ -406,10 +422,29 @@ export function ShotlistWidget({
 
   const timing = computeTiming(shots, cameras, liveIndex, startedAt, now, cameraFilter)
 
+  // A Voice-over Rundown is shown unfiltered: there are no Cameras to filter by,
+  // and every musician wants the whole part list.
+  const isVoice = kind === 'voice'
   const cameraById = new Map(cameras.map((c) => [c.id, c]))
+  const partById = new Map((parts ?? []).map((p) => [p.id, p]))
+
+  /**
+   * What an item displays as, whichever Kind it belongs to.
+   *
+   * Both targets survive a conversion, so the Rundown's Kind decides which one
+   * is read rather than whichever column happens to be filled.
+   */
+  function targetOf(shot: Shot): { badge: string; name: string; color: string } | undefined {
+    if (isVoice) {
+      const part = shot.partId === null ? undefined : partById.get(shot.partId)
+      return part && { badge: String(part.number), name: part.name, color: part.color }
+    }
+    const camera = shot.cameraId === null ? undefined : cameraById.get(shot.cameraId)
+    return camera && { badge: `CAM${camera.number}`, name: camera.name, color: camera.color }
+  }
   // indexOf per row made rendering O(shots²) on every tick.
   const shotIndexById = new Map(shots.map((shot, i) => [shot.id, i]))
-  const hasFilter = cameraFilter !== undefined && cameraFilter.length > 0
+  const hasFilter = !isVoice && cameraFilter !== undefined && cameraFilter.length > 0
   const visibleShots = shots.filter((s) => {
     if (s.hidden) return false
     if (hasFilter) {
@@ -527,7 +562,7 @@ export function ShotlistWidget({
             const isLive = timing.liveIndex === shotIndexInAll
             const isNext = timing.nextVisibleIndex === shotIndexInAll
 
-            const camera = shot.cameraId === null ? undefined : cameraById.get(shot.cameraId)
+            const target = targetOf(shot)
 
             let timeLabel = formatMs(shot.durationMs)
             let progressPct: number | null = null
@@ -631,8 +666,8 @@ export function ShotlistWidget({
                   </div>
                 )}
                 <div style={s.rowContent}>
-                  {camera && <span style={s.cameraBadge(camera.color)}>CAM{camera.number}</span>}
-                  <span style={s.cameraName}>{camera?.name ?? '—'}</span>
+                  {target && <span style={s.cameraBadge(target.color)}>{target.badge}</span>}
+                  <span style={s.cameraName}>{target?.name ?? '—'}</span>
                   {shot.label && <span style={s.label}>{shot.label}</span>}
                   <span style={s.timeDisplay}>{timeLabel}</span>
                 </div>

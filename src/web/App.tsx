@@ -146,6 +146,7 @@ export default function App(): React.JSX.Element {
   const rundown = useWebStore((s) => s.rundown)
   const shots = useWebStore((s) => s.shots)
   const cameras = useWebStore((s) => s.cameras)
+  const parts = useWebStore((s) => s.parts)
   const liveIndex = useWebStore((s) => s.liveIndex)
   const startedAt = useWebStore((s) => s.startedAt)
   const running = useWebStore((s) => s.running)
@@ -214,7 +215,9 @@ export default function App(): React.JSX.Element {
           +
         </button>
 
-        {cameras.length > 0 && (
+        {/* A Voice-over Rundown has no Cameras to filter by, so the control
+            goes rather than sitting there doing nothing. */}
+        {cameras.length > 0 && rundown?.kind !== 'voice' && (
           <select
             style={s.cameraSelect}
             value={selectedCamera ?? ''}
@@ -291,6 +294,8 @@ export default function App(): React.JSX.Element {
             rundownName={rundown.name}
             shots={shots}
             cameras={cameras}
+            parts={parts}
+            kind={rundown.kind}
             liveIndex={liveIndex}
             startedAt={startedAt}
             running={running}

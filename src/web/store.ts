@@ -1,18 +1,24 @@
 import { create } from 'zustand'
-import type { Rundown, Shot, Camera } from '../shared/types'
+import type { Rundown, Shot, Camera, Part } from '../shared/types'
 import { applyLivePosition, startedAtFromElapsed } from '../shared/live-view'
 
 export interface WebStore {
   rundown: Rundown | null
   shots: Shot[]
   cameras: Camera[]
+  parts: Part[]
   liveIndex: number | null
   startedAt: number | null
   running: boolean
   connected: boolean
 
   // Actions
-  setRundownState: (data: { rundown: Rundown | null; shots: Shot[]; cameras: Camera[] }) => void
+  setRundownState: (data: {
+    rundown: Rundown | null
+    shots: Shot[]
+    cameras: Camera[]
+    parts?: Part[]
+  }) => void
   setLiveState: (data: { liveIndex: number | null; elapsedMs: number | null }) => void
   setPlayback: (data: { running: boolean }) => void
   setConnected: (connected: boolean) => void
@@ -23,6 +29,7 @@ export const useWebStore = create<WebStore>((set) => ({
   rundown: null,
   shots: [],
   cameras: [],
+  parts: [],
   liveIndex: null,
   startedAt: null,
   running: false,
@@ -38,6 +45,9 @@ export const useWebStore = create<WebStore>((set) => ({
       rundown: data.rundown,
       shots: data.shots,
       cameras: data.cameras,
+      // Optional so a phone kept open across an app upgrade still renders a
+      // Camera Rundown instead of blanking on a payload it does not recognise.
+      parts: data.parts ?? [],
     })
   },
 
@@ -55,5 +65,7 @@ export const useWebStore = create<WebStore>((set) => ({
   setConnected: (connected) => set({ connected }),
 
   setShotHidden: (shotId) =>
-    set((s) => ({ shots: s.shots.map((shot) => (shot.id === shotId ? { ...shot, hidden: true } : shot)) })),
+    set((s) => ({
+      shots: s.shots.map((shot) => (shot.id === shotId ? { ...shot, hidden: true } : shot)),
+    })),
 }))
