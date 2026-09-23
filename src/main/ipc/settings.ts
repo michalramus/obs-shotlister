@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { DEFAULT_COUNTDOWN } from '../../shared/announcement'
 import { NUMBER_CLIP_MAX, NUMBER_CLIP_MIN } from '../../shared/number-words'
 import type {
   AudioDeviceSettings,
@@ -96,7 +97,6 @@ export function savePreviewFirst(db: Database.Database, value: boolean): void {
 
 /** What a Project falls back to when it overrides nothing. */
 export const DEFAULT_VOICE = 'pl_PL-gosia-medium'
-export const DEFAULT_COUNTDOWN = [10, 5, 3, 2, 1]
 export const DEFAULT_CONNECTOR = 'za'
 
 function readSetting(db: Database.Database, key: string): string | undefined {
