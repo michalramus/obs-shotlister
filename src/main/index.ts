@@ -322,6 +322,9 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler('parts:upsert', (payload: PartUpsertInput) => {
     const part = upsertPart(db, payload)
+    // A new or renamed Part is exactly what turns audio stale, so this is where
+    // auto-render earns its keep.
+    render.scheduleAutoRender(payload.projectId)
     // A Part's name and colour are what a Call renders as, so phones need the
     // new list even though no Call itself changed.
     publish.rundownChanged()
@@ -365,8 +368,12 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler(
     'voice:project:save',
-    ({ projectId, settings }: { projectId: string; settings: ProjectVoiceSettings }) =>
-      saveProjectVoiceSettings(db, projectId, settings),
+    ({ projectId, settings }: { projectId: string; settings: ProjectVoiceSettings }) => {
+      saveProjectVoiceSettings(db, projectId, settings)
+      // Voice and connector are both part of a clip's content address, so a
+      // change here restates every phrase the Project speaks.
+      render.scheduleAutoRender(projectId)
+    },
   )
 
   registerIpcHandler('voice:effective', ({ projectId }: { projectId: string | null }) =>

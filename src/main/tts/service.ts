@@ -22,6 +22,7 @@ import {
   recordPartRenders,
   recordClip,
 } from '../ipc/tts'
+import { getGlobalVoiceSettings } from '../ipc/settings'
 import { ensureClipsDir, listCachedHashes, sweep } from './cache'
 import { renderAll } from './engine'
 
@@ -43,7 +44,20 @@ export interface RenderService {
    * running — nothing may touch the cache directory during a show.
    */
   sweepOrphans: () => Promise<number>
+  /**
+   * Renders shortly after a change, when the operator has asked for that.
+   *
+   * Debounced, because the trigger is editing: renaming a Part fires on every
+   * keystroke the caller reports, and synthesising each intermediate name would
+   * fill the cache with clips that are orphaned before they finish. A no-op
+   * when the setting is off, which is the default — a slow machine must not
+   * synthesise while the operator is still working.
+   */
+  scheduleAutoRender: (projectId: string) => void
 }
+
+/** Long enough to cover typing a Part name, short enough to feel automatic. */
+const AUTO_RENDER_DEBOUNCE_MS = 3000
 
 export function createRenderService(
   db: Database.Database,
@@ -52,6 +66,7 @@ export function createRenderService(
   onStatus?: (status: ProjectRenderStatus) => void,
 ): RenderService {
   let rendering = false
+  let autoRenderTimer: ReturnType<typeof setTimeout> | null = null
 
   async function statusFor(projectId: string): Promise<ProjectRenderStatus> {
     // Read the cache from the filesystem rather than from `tts_clips`, so a
@@ -60,44 +75,62 @@ export function createRenderService(
     return projectRenderStatus(db, projectId, cached, rendering)
   }
 
+  async function renderMissing(projectId: string): Promise<ProjectRenderStatus> {
+    if (isLive()) {
+      throw new Error('Cannot render while a Live session is running')
+    }
+    if (rendering) return statusFor(projectId)
+
+    rendering = true
+    try {
+      onStatus?.(await statusFor(projectId))
+
+      await ensureClipsDir(userDataDir)
+      const cached = await listCachedHashes(userDataDir)
+      const items = missingClips(db, projectId, cached)
+
+      const byHash = new Map(items.map((item) => [item.hash, item]))
+      const result = await renderAll(items, { userDataDir })
+
+      for (const clip of result.rendered) {
+        const item = byHash.get(clip.hash)
+        if (item) recordClip(db, item, clip.durationMs)
+      }
+      // Written after the clips exist, so a crash mid-render leaves Parts
+      // reading as missing rather than as rendered against nothing.
+      recordPartRenders(db, projectId)
+
+      for (const failure of result.failed) {
+        console.error('[tts] failed to render', failure.item.text, failure.message)
+      }
+    } finally {
+      rendering = false
+    }
+
+    const status = await statusFor(projectId)
+    onStatus?.(status)
+    return status
+  }
+
   return {
     status: statusFor,
+    renderMissing,
 
-    async renderMissing(projectId) {
-      if (isLive()) {
-        throw new Error('Cannot render while a Live session is running')
-      }
-      if (rendering) return statusFor(projectId)
+    scheduleAutoRender(projectId) {
+      if (!getGlobalVoiceSettings(db).autoRender) return
 
-      rendering = true
-      try {
-        onStatus?.(await statusFor(projectId))
-
-        await ensureClipsDir(userDataDir)
-        const cached = await listCachedHashes(userDataDir)
-        const items = missingClips(db, projectId, cached)
-
-        const byHash = new Map(items.map((item) => [item.hash, item]))
-        const result = await renderAll(items, { userDataDir })
-
-        for (const clip of result.rendered) {
-          const item = byHash.get(clip.hash)
-          if (item) recordClip(db, item, clip.durationMs)
-        }
-        // Written after the clips exist, so a crash mid-render leaves Parts
-        // reading as missing rather than as rendered against nothing.
-        recordPartRenders(db, projectId)
-
-        for (const failure of result.failed) {
-          console.error('[tts] failed to render', failure.item.text, failure.message)
-        }
-      } finally {
-        rendering = false
-      }
-
-      const status = await statusFor(projectId)
-      onStatus?.(status)
-      return status
+      if (autoRenderTimer) clearTimeout(autoRenderTimer)
+      autoRenderTimer = setTimeout(() => {
+        autoRenderTimer = null
+        // Re-checked rather than trusted from when it was scheduled: a session
+        // may have started during the debounce, and nothing synthesises then.
+        if (isLive()) return
+        renderMissing(projectId).catch((err: unknown) =>
+          console.error('[tts] auto-render failed:', err),
+        )
+      }, AUTO_RENDER_DEBOUNCE_MS)
+      // Never hold the app open waiting to synthesise.
+      autoRenderTimer.unref?.()
     },
 
     async sweepOrphans() {
