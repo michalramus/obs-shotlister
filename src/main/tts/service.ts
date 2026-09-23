@@ -1,0 +1,117 @@
+/**
+ * Running a render, and sweeping what is left over.
+ *
+ * Everything this does was decided elsewhere: `ipc/tts` says what is wanted and
+ * what is orphaned, `tts/engine` knows how to spawn Piper. This is the thin
+ * caller that performs the process spawn and the file IO, holds the one piece
+ * of state a render has — whether one is already running — and refuses to run
+ * at the two moments it must not.
+ *
+ * Untested by design (see the issue's testing decisions): it does nothing but
+ * sequence modules that are tested, and every path through it touches the
+ * filesystem or the Piper binary.
+ */
+
+import type Database from 'better-sqlite3'
+import type { ProjectRenderStatus } from '../../shared/ipc-contract'
+import {
+  forgetClips,
+  missingClips,
+  orphanedClips,
+  projectRenderStatus,
+  recordPartRenders,
+  recordClip,
+} from '../ipc/tts'
+import { ensureClipsDir, listCachedHashes, sweep } from './cache'
+import { renderAll } from './engine'
+
+export interface RenderService {
+  /** What the warning strip and the Parts panel read. Never synthesises. */
+  status: (projectId: string) => Promise<ProjectRenderStatus>
+  /**
+   * Renders everything missing across every Rundown in the Project.
+   *
+   * Refused outright while a Live session is running (ADR 0005): synthesis
+   * competes for CPU with the machine driving OBS, which is the one machine
+   * that cannot afford a spike.
+   */
+  renderMissing: (projectId: string) => Promise<ProjectRenderStatus>
+  /**
+   * Deletes clips no Project wants any more.
+   *
+   * Called at app start and app close only, never while a session might be
+   * running — nothing may touch the cache directory during a show.
+   */
+  sweepOrphans: () => Promise<number>
+}
+
+export function createRenderService(
+  db: Database.Database,
+  userDataDir: string,
+  isLive: () => boolean,
+  onStatus?: (status: ProjectRenderStatus) => void,
+): RenderService {
+  let rendering = false
+
+  async function statusFor(projectId: string): Promise<ProjectRenderStatus> {
+    // Read the cache from the filesystem rather than from `tts_clips`, so a
+    // clip deleted behind our back reads as missing rather than as rendered.
+    const cached = await listCachedHashes(userDataDir)
+    return projectRenderStatus(db, projectId, cached, rendering)
+  }
+
+  return {
+    status: statusFor,
+
+    async renderMissing(projectId) {
+      if (isLive()) {
+        throw new Error('Cannot render while a Live session is running')
+      }
+      if (rendering) return statusFor(projectId)
+
+      rendering = true
+      try {
+        onStatus?.(await statusFor(projectId))
+
+        await ensureClipsDir(userDataDir)
+        const cached = await listCachedHashes(userDataDir)
+        const items = missingClips(db, projectId, cached)
+
+        const byHash = new Map(items.map((item) => [item.hash, item]))
+        const result = await renderAll(items, { userDataDir })
+
+        for (const clip of result.rendered) {
+          const item = byHash.get(clip.hash)
+          if (item) recordClip(db, item, clip.durationMs)
+        }
+        // Written after the clips exist, so a crash mid-render leaves Parts
+        // reading as missing rather than as rendered against nothing.
+        recordPartRenders(db, projectId)
+
+        for (const failure of result.failed) {
+          console.error('[tts] failed to render', failure.item.text, failure.message)
+        }
+      } finally {
+        rendering = false
+      }
+
+      const status = await statusFor(projectId)
+      onStatus?.(status)
+      return status
+    },
+
+    async sweepOrphans() {
+      if (isLive() || rendering) return 0
+
+      const cached = await listCachedHashes(userDataDir)
+      const orphans = orphanedClips(db, cached)
+      if (orphans.length === 0) return 0
+
+      const removed = await sweep(userDataDir, orphans, (hash, error) =>
+        console.error('[tts] could not sweep', hash, error),
+      )
+      forgetClips(db, orphans)
+      return removed
+    },
+  }
+}
