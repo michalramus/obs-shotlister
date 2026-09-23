@@ -30,6 +30,21 @@ export function audioLabel({ muteCount, muteBeep, volume }: AudioState): string 
   return `Audio: ${count}, ${beep}, volume ${Math.round(volume * 100)}%`
 }
 
+/**
+ * What the warning strip says, or null when there is nothing to warn about.
+ *
+ * Stale and missing are one number here on purpose: both mean the band would
+ * hear the wrong thing or nothing at all, and the panel is where the difference
+ * is worth reading. The strip never blocks — starting a session with unrendered
+ * parts is the operator's call (ADR 0002).
+ */
+export function unrenderedLabel(unrenderedCount: number): string | null {
+  if (unrenderedCount <= 0) return null
+  return unrenderedCount === 1
+    ? '1 part has no up-to-date audio'
+    : `${unrenderedCount} parts have no up-to-date audio`
+}
+
 export interface ConnectionsState {
   obsStatus: OBSConnectionStatus
   oscEnabled: boolean
@@ -189,6 +204,30 @@ const styles = {
     fontSize: '12px',
   } satisfies React.CSSProperties,
 
+  warningStrip: {
+    background: '#e67e22',
+    color: '#fff',
+    fontSize: '12px',
+    padding: '6px 16px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    cursor: 'pointer',
+    flexShrink: 0,
+  } satisfies React.CSSProperties,
+
+  warningStripBtn: {
+    marginLeft: 'auto',
+    padding: '2px 10px',
+    background: 'rgba(0,0,0,0.2)',
+    border: '1px solid rgba(255,255,255,0.35)',
+    borderRadius: '4px',
+    color: '#fff',
+    fontSize: '12px',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap' as const,
+  } satisfies React.CSSProperties,
+
   statusDot: (status: OBSConnectionStatus): React.CSSProperties => ({
     width: '8px',
     height: '8px',
@@ -211,6 +250,9 @@ export interface TopBarProps {
   onToggleMuteCount: () => void
   onToggleMuteBeep: () => void
   onChangeVolume: (volume: number) => void
+  /** Parts that are stale or never rendered; what the warning strip counts. */
+  unrenderedCount: number
+  onOpenVoiceSettings: () => void
 
   // File
   hasActiveProject: boolean
@@ -240,6 +282,8 @@ export function TopBar({
   onToggleMuteCount,
   onToggleMuteBeep,
   onChangeVolume,
+  unrenderedCount,
+  onOpenVoiceSettings,
   hasActiveProject,
   hasActiveRundown,
   onImportResolve,
@@ -270,163 +314,205 @@ export function TopBar({
   }
 
   const backdrop = <div style={styles.popoverBackdrop} onClick={() => setOpenMenu(null)} />
+  const unrendered = unrenderedLabel(unrenderedCount)
 
   return (
-    <header
-      style={{
-        ...styles.header,
-        background: flash ? '#888' : '#1a1a1a',
-        transition: 'background 0.35s ease-out',
-      }}
-    >
-      <span style={styles.appName}>Shotlister</span>
-      <ProjectSelector onOpenCameraConfig={onOpenCameraConfig} />
+    <>
+      <header
+        style={{
+          ...styles.header,
+          background: flash ? '#888' : '#1a1a1a',
+          transition: 'background 0.35s ease-out',
+        }}
+      >
+        <span style={styles.appName}>Shotlister</span>
+        <ProjectSelector onOpenCameraConfig={onOpenCameraConfig} />
 
-      <div style={styles.actions}>
-        {/* Audio — mute countdown, mute beep, volume */}
-        <div style={styles.popoverWrapper}>
-          <button
-            style={styles.barBtn}
-            onClick={() => toggleMenu('audio')}
-            title={audioLabel(audio)}
-            aria-label={audioLabel(audio)}
-            aria-expanded={openMenu === 'audio'}
-          >
-            {AUDIO_ICON[audioIndicator(audio)]}
-          </button>
-          {openMenu === 'audio' && (
-            <>
-              {backdrop}
-              <div style={styles.popover}>
-                <div style={styles.toggleRow}>
-                  <span>Countdown</span>
-                  <button
-                    style={styles.toggleBtn(audio.muteCount)}
-                    onClick={onToggleMuteCount}
-                    title={audio.muteCount ? 'Unmute countdown' : 'Mute countdown'}
-                    aria-label={audio.muteCount ? 'Unmute countdown' : 'Mute countdown'}
-                  >
-                    {audio.muteCount ? '🔇' : '🔊'}
-                  </button>
-                </div>
-                <div style={styles.toggleRow}>
-                  <span>Beep</span>
-                  <button
-                    style={styles.toggleBtn(audio.muteBeep)}
-                    onClick={onToggleMuteBeep}
-                    title={audio.muteBeep ? 'Unmute beep' : 'Mute beep'}
-                    aria-label={audio.muteBeep ? 'Unmute beep' : 'Mute beep'}
-                  >
-                    {audio.muteBeep ? '🔇' : '🔊'}
-                  </button>
-                </div>
-                <div style={styles.volumeRow}>
-                  <span>Volume</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={audio.volume}
-                    onChange={(e) => onChangeVolume(parseFloat(e.target.value))}
-                    style={{ width: 90, accentColor: '#888' }}
-                    aria-label="Audio cue volume"
-                  />
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        {/* File — everything that moves data in or out */}
-        <div style={styles.popoverWrapper}>
-          <button
-            style={styles.barBtn}
-            onClick={() => toggleMenu('file')}
-            aria-expanded={openMenu === 'file'}
-          >
-            File
-          </button>
-          {openMenu === 'file' && (
-            <>
-              {backdrop}
-              <div style={styles.menu}>
-                {hasActiveRundown && (
-                  <>
+        <div style={styles.actions}>
+          {/* Audio — mute countdown, mute beep, volume */}
+          <div style={styles.popoverWrapper}>
+            <button
+              style={styles.barBtn}
+              onClick={() => toggleMenu('audio')}
+              title={audioLabel(audio)}
+              aria-label={audioLabel(audio)}
+              aria-expanded={openMenu === 'audio'}
+            >
+              {AUDIO_ICON[audioIndicator(audio)]}
+            </button>
+            {openMenu === 'audio' && (
+              <>
+                {backdrop}
+                <div style={styles.popover}>
+                  <div style={styles.toggleRow}>
+                    <span>Countdown</span>
                     <button
-                      style={styles.menuItem}
-                      onClick={pick(onImportResolve)}
-                      title="Import from DaVinci Resolve CSV"
+                      style={styles.toggleBtn(audio.muteCount)}
+                      onClick={onToggleMuteCount}
+                      title={audio.muteCount ? 'Unmute countdown' : 'Mute countdown'}
+                      aria-label={audio.muteCount ? 'Unmute countdown' : 'Mute countdown'}
                     >
-                      Import from Resolve
+                      {audio.muteCount ? '🔇' : '🔊'}
                     </button>
-                    <div style={styles.separator} />
-                  </>
-                )}
-                <button style={styles.menuItem} onClick={pick(onImportProject)}>
-                  Import project
-                </button>
-                {hasActiveProject && (
-                  <button style={styles.menuItem} onClick={pick(onImportRundown)}>
-                    Import rundown
+                  </div>
+                  <div style={styles.toggleRow}>
+                    <span>Beep</span>
+                    <button
+                      style={styles.toggleBtn(audio.muteBeep)}
+                      onClick={onToggleMuteBeep}
+                      title={audio.muteBeep ? 'Unmute beep' : 'Mute beep'}
+                      aria-label={audio.muteBeep ? 'Unmute beep' : 'Mute beep'}
+                    >
+                      {audio.muteBeep ? '🔇' : '🔊'}
+                    </button>
+                  </div>
+                  <div style={styles.volumeRow}>
+                    <span>Volume</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={audio.volume}
+                      onChange={(e) => onChangeVolume(parseFloat(e.target.value))}
+                      style={{ width: 90, accentColor: '#888' }}
+                      aria-label="Audio cue volume"
+                    />
+                  </div>
+                  <div style={styles.separator} />
+                  {/*
+                  The voice, the render status and the two output devices all
+                  live one click deeper: they are settings, not the per-show
+                  toggles this popover exists for.
+                */}
+                  <button
+                    style={{ ...styles.menuItem, padding: '4px 0' }}
+                    onClick={pick(onOpenVoiceSettings)}
+                    title="Voice, countdown, rendering and output devices"
+                  >
+                    Voice &amp; audio settings...
                   </button>
-                )}
-                <button style={styles.menuItem} onClick={pick(onImportDatabase)}>
-                  Import DB
-                </button>
-                <div style={styles.separator} />
-                {hasActiveRundown && (
-                  <button style={styles.menuItem} onClick={pick(onExportRundown)}>
-                    Export rundown
-                  </button>
-                )}
-                {hasActiveProject && (
-                  <button style={styles.menuItem} onClick={pick(onExportProject)}>
-                    Export project
-                  </button>
-                )}
-                <button style={styles.menuItem} onClick={pick(onExportDatabase)}>
-                  Export DB
-                </button>
-              </div>
-            </>
-          )}
-        </div>
+                </div>
+              </>
+            )}
+          </div>
 
-        {/* Connections — OBS and the OSC server */}
-        <div style={styles.popoverWrapper}>
-          <button
-            style={styles.barBtn}
-            onClick={() => toggleMenu('connections')}
-            title={connectionsTitle}
-            aria-label={connectionsTitle}
-            aria-expanded={openMenu === 'connections'}
-          >
-            <span style={styles.statusDot(connections.obsStatus)} />
-            Connections
-          </button>
-          {openMenu === 'connections' && (
-            <>
-              {backdrop}
-              <div style={styles.menu}>
-                <button
-                  style={styles.menuItem}
-                  onClick={pick(onOpenObsPanel)}
-                  title="OBS Connection"
-                >
-                  OBS<span style={styles.menuNote}>{connections.obsStatus}</span>
-                </button>
-                <button style={styles.menuItem} onClick={pick(onOpenOscPanel)} title="OSC Server">
-                  OSC
-                  <span style={styles.menuNote}>
-                    {connections.oscEnabled ? `enabled on ${connections.oscPort}` : 'off'}
-                  </span>
-                </button>
-              </div>
-            </>
-          )}
+          {/* File — everything that moves data in or out */}
+          <div style={styles.popoverWrapper}>
+            <button
+              style={styles.barBtn}
+              onClick={() => toggleMenu('file')}
+              aria-expanded={openMenu === 'file'}
+            >
+              File
+            </button>
+            {openMenu === 'file' && (
+              <>
+                {backdrop}
+                <div style={styles.menu}>
+                  {hasActiveRundown && (
+                    <>
+                      <button
+                        style={styles.menuItem}
+                        onClick={pick(onImportResolve)}
+                        title="Import from DaVinci Resolve CSV"
+                      >
+                        Import from Resolve
+                      </button>
+                      <div style={styles.separator} />
+                    </>
+                  )}
+                  <button style={styles.menuItem} onClick={pick(onImportProject)}>
+                    Import project
+                  </button>
+                  {hasActiveProject && (
+                    <button style={styles.menuItem} onClick={pick(onImportRundown)}>
+                      Import rundown
+                    </button>
+                  )}
+                  <button style={styles.menuItem} onClick={pick(onImportDatabase)}>
+                    Import DB
+                  </button>
+                  <div style={styles.separator} />
+                  {hasActiveRundown && (
+                    <button style={styles.menuItem} onClick={pick(onExportRundown)}>
+                      Export rundown
+                    </button>
+                  )}
+                  {hasActiveProject && (
+                    <button style={styles.menuItem} onClick={pick(onExportProject)}>
+                      Export project
+                    </button>
+                  )}
+                  <button style={styles.menuItem} onClick={pick(onExportDatabase)}>
+                    Export DB
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Connections — OBS and the OSC server */}
+          <div style={styles.popoverWrapper}>
+            <button
+              style={styles.barBtn}
+              onClick={() => toggleMenu('connections')}
+              title={connectionsTitle}
+              aria-label={connectionsTitle}
+              aria-expanded={openMenu === 'connections'}
+            >
+              <span style={styles.statusDot(connections.obsStatus)} />
+              Connections
+            </button>
+            {openMenu === 'connections' && (
+              <>
+                {backdrop}
+                <div style={styles.menu}>
+                  <button
+                    style={styles.menuItem}
+                    onClick={pick(onOpenObsPanel)}
+                    title="OBS Connection"
+                  >
+                    OBS<span style={styles.menuNote}>{connections.obsStatus}</span>
+                  </button>
+                  <button style={styles.menuItem} onClick={pick(onOpenOscPanel)} title="OSC Server">
+                    OSC
+                    <span style={styles.menuNote}>
+                      {connections.oscEnabled ? `enabled on ${connections.oscPort}` : 'off'}
+                    </span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
-      </div>
-    </header>
+      </header>
+
+      {/*
+      Unrendered parts have to find the operator: nothing else in the bar shows
+      them, and the discovery a show is missing its audio must not happen
+      during the show. It warns and never blocks — ADR 0002.
+    */}
+      {unrendered !== null && (
+        <div
+          style={styles.warningStrip}
+          onClick={onOpenVoiceSettings}
+          role="button"
+          aria-label={`${unrendered} — click to open voice settings`}
+        >
+          <span>Voice:</span>
+          <span>{unrendered}. A session will still start; those parts stay silent.</span>
+          <button
+            style={styles.warningStripBtn}
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpenVoiceSettings()
+            }}
+          >
+            Render...
+          </button>
+        </div>
+      )}
+    </>
   )
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { audioIndicator, audioLabel, connectionsLabel } from './TopBar'
+import { audioIndicator, audioLabel, connectionsLabel, unrenderedLabel } from './TopBar'
 
 describe('audioIndicator', () => {
   it('is on when nothing is muted', () => {
@@ -67,5 +67,24 @@ describe('connectionsLabel', () => {
     expect(connectionsLabel({ obsStatus: 'connecting', oscEnabled: false, oscPort: 8000 })).toBe(
       'OBS connecting · OSC off',
     )
+  })
+})
+
+describe('unrenderedLabel', () => {
+  it('says nothing when everything is rendered', () => {
+    expect(unrenderedLabel(0)).toBeNull()
+  })
+
+  it('counts a single part in the singular', () => {
+    expect(unrenderedLabel(1)).toBe('1 part has no up-to-date audio')
+  })
+
+  it('counts several parts', () => {
+    expect(unrenderedLabel(4)).toBe('4 parts have no up-to-date audio')
+  })
+
+  it('says nothing for a count below zero, which can only be a bad status', () => {
+    // A strip that appears for no reason is worse than one that stays hidden.
+    expect(unrenderedLabel(-1)).toBeNull()
   })
 })
