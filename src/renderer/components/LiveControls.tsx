@@ -50,6 +50,10 @@ export function LiveControls(): React.JSX.Element {
   const startedAt = useAppStore((s) => s.startedAt)
   const activeRundownId = useAppStore((s) => s.activeRundownId)
   const liveStart = useAppStore((s) => s.liveStart)
+  const unrenderedCount = useAppStore((s) => s.renderStatus?.unrenderedCount ?? 0)
+  const rundownKind = useAppStore(
+    (s) => s.rundowns.find((r) => r.id === s.activeRundownId)?.kind ?? 'camera',
+  )
   const liveStop = useAppStore((s) => s.liveStop)
   const liveNext = useAppStore((s) => s.liveNext)
   const liveSkipNext = useAppStore((s) => s.liveSkipNext)
@@ -59,6 +63,7 @@ export function LiveControls(): React.JSX.Element {
   const setUiMode = useAppStore((s) => s.setUiMode)
 
   const [inTransition, setInTransition] = useState(false)
+  const [startError, setStartError] = useState<string | null>(null)
   const transitionRafRef = useRef<number | null>(null)
   const [previewFirst, setPreviewFirst] = useState(() => {
     try {
@@ -115,6 +120,32 @@ export function LiveControls(): React.JSX.Element {
 
   function handleError(label: string, err: unknown): void {
     console.error(`[LiveControls] ${label}:`, err)
+    setStartError(err instanceof Error ? err.message : String(err))
+  }
+
+  /**
+   * Starts the Rundown, warning first about anything unrendered.
+   *
+   * The warning never blocks (ADR 0002): the operator knows things about their
+   * own show that the software does not, and a Part with no audio still counts
+   * down — the band just does not hear its name. A *refusal* is different and
+   * comes from the main process, which will not start a Rundown with an
+   * unassigned item at all; that message is surfaced rather than swallowed,
+   * because a silent dead button is how an operator finds out during the show.
+   */
+  function startRundown(): void {
+    if (!activeRundownId) return
+    setStartError(null)
+
+    if (rundownKind === 'voice' && unrenderedCount > 0) {
+      const parts = unrenderedCount === 1 ? '1 Part has' : `${unrenderedCount} Parts have`
+      const proceed = window.confirm(
+        `${parts} no up-to-date audio. Their names will not be spoken, though the countdown still plays.\n\nStart anyway?`,
+      )
+      if (!proceed) return
+    }
+
+    liveStart(activeRundownId, previewFirst).catch((err) => handleError('start', err))
   }
 
   function canStart(): boolean {
@@ -145,15 +176,24 @@ export function LiveControls(): React.JSX.Element {
             <button
               style={s.btn('primary')}
               disabled={!canStart()}
-              onClick={() => {
-                if (activeRundownId) {
-                  liveStart(activeRundownId, previewFirst).catch((err) => handleError('start', err))
-                }
-              }}
+              onClick={startRundown}
               aria-label="Start rundown"
             >
               ▶ Start
             </button>
+            {startError !== null && (
+              <span
+                role="alert"
+                style={{
+                  color: '#ff8a80',
+                  fontSize: 12,
+                  maxWidth: 420,
+                  lineHeight: 1.3,
+                }}
+              >
+                {startError}
+              </span>
+            )}
             <label
               style={{
                 display: 'flex',
