@@ -126,6 +126,48 @@ export function renameRundown(db: Database.Database, id: string, name: string): 
   return rowToRundown(row)
 }
 
+/**
+ * Converts a Rundown between Kinds.
+ *
+ * Nothing but `rundowns.kind` moves. Shots and Calls share one table and the
+ * Kind decides which target column is read, so both `camera_id` and `part_id`
+ * are left untouched: that is what makes converting away and back restore the
+ * original assignments exactly, and what carries order, durations, labels and
+ * transitions across for free.
+ */
+export function setRundownKind(db: Database.Database, id: string, kind: RundownKind): Rundown {
+  const result = db.prepare('UPDATE rundowns SET kind = ? WHERE id = ?').run(kind, id)
+
+  if (result.changes === 0) {
+    throw new Error(`Rundown not found: ${id}`)
+  }
+
+  const row = db
+    .prepare('SELECT id, project_id, name, created_at, order_index, folder, kind FROM rundowns WHERE id = ?')
+    .get(id) as RundownRow
+  return rowToRundown(row)
+}
+
+/**
+ * How many of a Rundown's items have no target for its *current* Kind.
+ *
+ * A Rundown born in one Kind has nothing in the other column, so right after a
+ * conversion every item counts. A Live session consults this before starting;
+ * the refusal itself lives with the session, not here.
+ */
+export function unassignedItemCount(db: Database.Database, rundownId: string): number {
+  const rundown = getRundown(db, rundownId)
+  if (!rundown) {
+    throw new Error(`Rundown not found: ${rundownId}`)
+  }
+
+  const column = rundown.kind === 'voice' ? 'part_id' : 'camera_id'
+  const row = db
+    .prepare(`SELECT COUNT(*) AS count FROM shots WHERE rundown_id = ? AND ${column} IS NULL`)
+    .get(rundownId) as { count: number }
+  return row.count
+}
+
 export function deleteRundown(db: Database.Database, id: string): void {
   const result = db.prepare('DELETE FROM rundowns WHERE id = ?').run(id)
 

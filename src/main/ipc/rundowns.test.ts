@@ -1,7 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { applyMigrations } from '../db/index'
-import { listRundowns, createRundown, renameRundown, deleteRundown } from './rundowns'
+import {
+  listRundowns,
+  createRundown,
+  renameRundown,
+  deleteRundown,
+  getRundown,
+  setRundownKind,
+  unassignedItemCount,
+} from './rundowns'
 import type { Rundown } from '../../shared/types'
 
 // ---------------------------------------------------------------------------
@@ -202,5 +210,186 @@ describe('deleteRundown', () => {
     deleteRundown(db, 'rd-1')
     const shot = db.prepare('SELECT id FROM shots WHERE id = ?').get('shot-1')
     expect(shot).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Kind
+// ---------------------------------------------------------------------------
+
+interface ShotSnapshot {
+  id: string
+  camera_id: string | null
+  part_id: string | null
+  duration_ms: number
+  label: string | null
+  order_index: number
+  transition_name: string | null
+  transition_ms: number
+}
+
+function snapshotShots(db: Database.Database, rundownId: string): ShotSnapshot[] {
+  return db
+    .prepare(
+      'SELECT id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE rundown_id = ? ORDER BY order_index ASC',
+    )
+    .all(rundownId) as ShotSnapshot[]
+}
+
+describe('setRundownKind', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openMemoryDb()
+    insertProject(db, 'p1', 'Project A')
+    insertRundown(db, 'rd-1', 'p1', 'Song A')
+    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
+      'cam-1',
+      'p1',
+      1,
+      'Wide',
+      '#e74c3c',
+    )
+    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
+      'cam-2',
+      'p1',
+      2,
+      'Tight',
+      '#3498db',
+    )
+    db.prepare('INSERT INTO parts (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
+      'part-1',
+      'p1',
+      1,
+      'gitara',
+      '#2ecc71',
+    )
+    db.prepare(
+      'INSERT INTO shots (id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('shot-1', 'rd-1', 'cam-1', 5000, 'intro', 0, 'fade', 500)
+    db.prepare(
+      'INSERT INTO shots (id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run('shot-2', 'rd-1', 'cam-2', 7000, null, 1, null, 0)
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('reads an existing rundown as camera after migration', () => {
+    expect(getRundown(db, 'rd-1')?.kind).toBe('camera')
+  })
+
+  it('returns the updated rundown with everything else unchanged', () => {
+    const before = getRundown(db, 'rd-1') as Rundown
+    const after = setRundownKind(db, 'rd-1', 'voice')
+    expect(after.kind).toBe('voice')
+    expect({ ...after, kind: 'camera' }).toEqual(before)
+  })
+
+  it('persists the kind', () => {
+    setRundownKind(db, 'rd-1', 'voice')
+    expect(getRundown(db, 'rd-1')?.kind).toBe('voice')
+  })
+
+  it('throws if rundown does not exist', () => {
+    expect(() => setRundownKind(db, 'nonexistent', 'voice')).toThrow()
+  })
+
+  it('leaves every item byte-identical across a camera -> voice -> camera round trip', () => {
+    const before = snapshotShots(db, 'rd-1')
+    setRundownKind(db, 'rd-1', 'voice')
+    setRundownKind(db, 'rd-1', 'camera')
+    expect(snapshotShots(db, 'rd-1')).toEqual(before)
+  })
+
+  it('retains camera assignments while the rundown is a voice rundown', () => {
+    setRundownKind(db, 'rd-1', 'voice')
+    expect(snapshotShots(db, 'rd-1').map((s) => s.camera_id)).toEqual(['cam-1', 'cam-2'])
+  })
+
+  it('retains part assignments across a voice -> camera -> voice round trip', () => {
+    db.prepare('UPDATE shots SET part_id = ? WHERE id = ?').run('part-1', 'shot-1')
+    setRundownKind(db, 'rd-1', 'voice')
+    const before = snapshotShots(db, 'rd-1')
+    setRundownKind(db, 'rd-1', 'camera')
+    setRundownKind(db, 'rd-1', 'voice')
+    expect(snapshotShots(db, 'rd-1')).toEqual(before)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// unassignedItemCount
+// ---------------------------------------------------------------------------
+
+describe('unassignedItemCount', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openMemoryDb()
+    insertProject(db, 'p1', 'Project A')
+    insertRundown(db, 'rd-1', 'p1', 'Song A')
+    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
+      'cam-1',
+      'p1',
+      1,
+      'Wide',
+      '#e74c3c',
+    )
+    db.prepare('INSERT INTO parts (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
+      'part-1',
+      'p1',
+      1,
+      'gitara',
+      '#2ecc71',
+    )
+    db.prepare(
+      'INSERT INTO shots (id, rundown_id, camera_id, duration_ms, order_index) VALUES (?, ?, ?, ?, ?)',
+    ).run('shot-1', 'rd-1', 'cam-1', 5000, 0)
+    db.prepare(
+      'INSERT INTO shots (id, rundown_id, camera_id, duration_ms, order_index) VALUES (?, ?, ?, ?, ?)',
+    ).run('shot-2', 'rd-1', 'cam-1', 7000, 1)
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('is zero for a fully assigned camera rundown', () => {
+    expect(unassignedItemCount(db, 'rd-1')).toBe(0)
+  })
+
+  it('counts items with no camera in a camera rundown', () => {
+    db.prepare('UPDATE shots SET camera_id = NULL WHERE id = ?').run('shot-2')
+    expect(unassignedItemCount(db, 'rd-1')).toBe(1)
+  })
+
+  it('counts every item of a rundown born as camera once converted to voice', () => {
+    setRundownKind(db, 'rd-1', 'voice')
+    expect(unassignedItemCount(db, 'rd-1')).toBe(2)
+  })
+
+  it('ignores the camera column once the rundown is a voice rundown', () => {
+    db.prepare('UPDATE shots SET camera_id = NULL, part_id = ? WHERE rundown_id = ?').run(
+      'part-1',
+      'rd-1',
+    )
+    setRundownKind(db, 'rd-1', 'voice')
+    expect(unassignedItemCount(db, 'rd-1')).toBe(0)
+  })
+
+  it('counts items with no part in a voice rundown', () => {
+    db.prepare('UPDATE shots SET part_id = ? WHERE id = ?').run('part-1', 'shot-1')
+    setRundownKind(db, 'rd-1', 'voice')
+    expect(unassignedItemCount(db, 'rd-1')).toBe(1)
+  })
+
+  it('is zero for a rundown with no items', () => {
+    insertRundown(db, 'rd-2', 'p1', 'Empty', 2000)
+    expect(unassignedItemCount(db, 'rd-2')).toBe(0)
+  })
+
+  it('throws if rundown does not exist', () => {
+    expect(() => unassignedItemCount(db, 'nonexistent')).toThrow()
   })
 })
