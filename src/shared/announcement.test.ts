@@ -148,11 +148,32 @@ describe('scheduleAnnouncement — flush placement', () => {
     expect(plan!.cues[1]).toEqual({ url: '5.opus', atMs: 10000 })
   })
 
-  it('drops the whole Announcement when the phrase would start before 0', () => {
-    // 5.2s of lead: "5" starts at 200ms, leaving 200ms for an 800ms phrase.
+  it('drops a number the phrase cannot fit in front of, rather than falling silent', () => {
+    // 5.2s of lead: "5" starts at 200ms, leaving 200ms for an 800ms phrase — so
+    // the utterance begins at "3" instead. The Call is too short for the full
+    // countdown, which the spec answers with the largest number that still
+    // fits, not with silence.
     const plan = scheduleAnnouncement(makeInput({ leadMs: 5200 }))
 
-    expect(plan).toBeNull()
+    expect(plan!.cues).toEqual([
+      { url: 'phrase.opus', atMs: 1400 }, // 2200 - 800
+      { url: '3.opus', atMs: 2200 },
+      { url: '2.opus', atMs: 3200 },
+      { url: '1.opus', atMs: 4200 },
+    ])
+  })
+
+  it('speaks the name alone when no number leaves room in front of it', () => {
+    // 1.5s of lead: only "1" survives, at 500ms, and an 800ms phrase will not
+    // fit before it — so the phrase flushes against the Call's own start.
+    const plan = scheduleAnnouncement(makeInput({ leadMs: 1500 }))
+
+    expect(plan!.cues).toEqual([{ url: 'phrase.opus', atMs: 700 }]) // 1500 - 800
+  })
+
+  it('drops the Announcement only when the phrase is longer than the lead', () => {
+    // This, and only this, is what Edit mode badges.
+    expect(scheduleAnnouncement(makeInput({ leadMs: 700 }))).toBeNull()
   })
 
   it('keeps the Announcement when the phrase fits exactly at 0', () => {

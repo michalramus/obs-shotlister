@@ -72,52 +72,61 @@ export function scheduleAnnouncement(input: ScheduleInput): AnnouncementPlan | n
     numberCues.push({ url: clip.url, atMs })
   }
 
-  const cues: AnnouncementCue[] = [...numberCues]
-
-  if (phrase) {
-    const phraseAt = phraseStartMs(placement, phrase, numberCues, leadMs)
-    // Too short for even the phrase: the whole Announcement goes, numbers
-    // included. A countdown with no name in front of it tells the band when but
-    // never what, which is worse than staying quiet.
-    if (phraseAt === null) return null
-    cues.push({ url: phrase.url, atMs: phraseAt })
+  if (!phrase) {
+    // Nothing to name, but the numbers still tell the band when.
+    return numberCues.length > 0 ? { callId, cues: sortByTime(numberCues) } : null
   }
 
-  if (cues.length === 0) return null
+  const placed = placePhrase(placement, phrase, numberCues, leadMs)
+  // Too short for even the phrase: the whole Announcement goes, numbers
+  // included. A countdown with no name in front of it tells the band when but
+  // never what, which is worse than staying quiet. Edit mode badges this.
+  if (!placed) return null
 
-  cues.sort((a, b) => a.atMs - b.atMs)
-  return { callId, cues }
+  const cues = [...placed.numbers, { url: phrase.url, atMs: placed.phraseAtMs }]
+
+  return { callId, cues: sortByTime(cues) }
+}
+
+function sortByTime(cues: AnnouncementCue[]): AnnouncementCue[] {
+  return [...cues].sort((a, b) => a.atMs - b.atMs)
 }
 
 /**
- * Where the phrase starts, or `null` when it does not fit.
- *
- * Under `flush` the phrase ends exactly where the first spoken number begins, so
- * name and countdown are one continuous utterance. With no numbers left to
- * anchor against — an empty countdown, or every number dropped — flush falls
- * back to the Call's own start, which is the next thing that happens and keeps
- * the name as late and therefore as actionable as possible.
+ * Where the phrase goes, and which numbers survive alongside it.
  *
  * Under `immediate` the phrase starts the instant the previous Call goes live
  * regardless of where the numbers land, so it may overlap the first number on a
  * very short Call; the renderer, not the schedule, decides what that sounds
  * like. "Fits" there means the phrase finishes at or before the Call starts.
+ *
+ * Under `flush` the phrase ends exactly where the first spoken number begins,
+ * so name and countdown are one continuous utterance. When the phrase will not
+ * fit before the highest number, that number is dropped and the utterance
+ * begins at the next one down — the Call is simply "too short for the full
+ * countdown", and the spec's answer to that is to start from the largest number
+ * that still fits, not to fall silent. Only a phrase too long for the lead
+ * itself drops the Announcement, which is the case Edit mode badges.
  */
-function phraseStartMs(
+function placePhrase(
   placement: PhrasePlacement,
   phrase: AnnouncementClip,
   numberCues: AnnouncementCue[],
   leadMs: number,
-): number | null {
+): { phraseAtMs: number; numbers: AnnouncementCue[] } | null {
   if (placement === 'immediate') {
-    return phrase.durationMs <= leadMs ? 0 : null
+    return phrase.durationMs <= leadMs ? { phraseAtMs: 0, numbers: numberCues } : null
   }
 
-  const firstNumberAt = numberCues.reduce<number | null>(
-    (earliest, cue) => (earliest === null || cue.atMs < earliest ? cue.atMs : earliest),
-    null,
-  )
-  const anchorMs = firstNumberAt ?? leadMs
-  const atMs = anchorMs - phrase.durationMs
-  return atMs >= 0 ? atMs : null
+  const ascending = sortByTime(numberCues)
+  for (let i = 0; i < ascending.length; i++) {
+    const phraseAtMs = ascending[i].atMs - phrase.durationMs
+    if (phraseAtMs >= 0) return { phraseAtMs, numbers: ascending.slice(i) }
+  }
+
+  // No number left to anchor against — an empty countdown, or every one of them
+  // dropped. Flush against the Call's own start, which is the next thing that
+  // happens and keeps the name as late, and so as actionable, as possible.
+  const phraseAtMs = leadMs - phrase.durationMs
+  return phraseAtMs >= 0 ? { phraseAtMs, numbers: [] } : null
 }
