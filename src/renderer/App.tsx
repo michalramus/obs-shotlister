@@ -14,6 +14,7 @@ import { OBSSettingsPanel } from './components/OBSSettingsPanel'
 import { OSCSettingsPanel } from './components/OSCSettingsPanel'
 import { TimelineEditor } from './components/TimelineEditor'
 import { TopBar } from './components/TopBar'
+import { createAnnouncementPlayer } from './audio/announcements'
 
 const styles = {
   root: {
@@ -90,6 +91,12 @@ export default function App(): React.JSX.Element {
   const loadCameras = useAppStore((s) => s.loadCameras)
   const loadRundowns = useAppStore((s) => s.loadRundowns)
   const loadParts = useAppStore((s) => s.loadParts)
+  const loadRenderStatus = useAppStore((s) => s.loadRenderStatus)
+  const loadPhraseDurations = useAppStore((s) => s.loadPhraseDurations)
+  const loadAudioDevices = useAppStore((s) => s.loadAudioDevices)
+  const setRenderStatus = useAppStore((s) => s.setRenderStatus)
+  const phraseDurations = useAppStore((s) => s.phraseDurations)
+  const announcementSinkId = useAppStore((s) => s.audioDevices.announcementSinkId)
   const loadLiveState = useAppStore((s) => s.loadLiveState)
   const activeProjectId = useAppStore((s) => s.activeProjectId)
   const activeRundownId = useAppStore((s) => s.activeRundownId)
@@ -146,6 +153,11 @@ export default function App(): React.JSX.Element {
   const [serverError, setServerError] = useState<string | null>(null)
   const [headerFlash, setHeaderFlash] = useState(false)
   const isFirstLiveIndexRef = useRef(true)
+  // One player for the app's lifetime: a new plan cuts off the one in flight,
+  // which only works if both went through the same instance.
+  const announcementSinkRef = useRef(announcementSinkId)
+  announcementSinkRef.current = announcementSinkId
+  const announcementPlayer = useRef(createAnnouncementPlayer(() => announcementSinkRef.current))
 
   const refreshOscSettings = useCallback(() => {
     window.api.osc
@@ -181,6 +193,8 @@ export default function App(): React.JSX.Element {
       window.api.obs.onValidationResult(setObsValidationResult),
       window.api.live.onStatePush(handleLiveStatePush),
       window.api.live.onShotHiddenPush(markShotHidden),
+      window.api.live.onAnnouncementPush((plan) => announcementPlayer.current.play(plan)),
+      window.api.tts.onStatusPush(setRenderStatus),
       window.api.server.onError(setServerError),
     ]
     refreshOscSettings()
@@ -190,8 +204,10 @@ export default function App(): React.JSX.Element {
         setAudioBaseUrl(toMediaUrl(dir))
       })
       .catch((err: unknown) => console.error('[App] getAudioDir:', err))
+    const player = announcementPlayer.current
     return () => {
       for (const off of unsubscribes) off()
+      player.dispose()
     }
   }, [
     loadProjects,
@@ -252,8 +268,20 @@ export default function App(): React.JSX.Element {
       loadParts(activeProjectId).catch((err: unknown) => {
         console.error('[App] Failed to load parts:', err)
       })
+      loadRenderStatus(activeProjectId).catch((err: unknown) => {
+        console.error('[App] Failed to load render status:', err)
+      })
+      loadPhraseDurations(activeProjectId).catch((err: unknown) => {
+        console.error('[App] Failed to load phrase durations:', err)
+      })
     }
-  }, [activeProjectId, loadCameras, loadRundowns, loadParts])
+  }, [activeProjectId, loadCameras, loadRundowns, loadParts, loadRenderStatus, loadPhraseDurations])
+
+  useEffect(() => {
+    loadAudioDevices().catch((err: unknown) =>
+      console.error('[App] Failed to load audio devices:', err),
+    )
+  }, [loadAudioDevices])
 
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null
   const activeRundown = rundowns.find((r) => r.id === activeRundownId) ?? null
@@ -320,6 +348,7 @@ export default function App(): React.JSX.Element {
     mediaVideoRef: videoRef,
     // The media track only applies to edit mode; live mode hides it.
     rundownMedia: uiMode === 'edit' ? rundownMedia : null,
+    phraseDurationMsByPartId: phraseDurations,
     onShotClick: (id: string) => setSelectedShotId(id),
     onSplitShot: (shotId: string, atMs: number, newCameraId: string) => {
       if (atMs <= 0) {
@@ -430,13 +459,11 @@ export default function App(): React.JSX.Element {
       alignItems: 'center',
       justifyContent: 'center',
     }
-    rightPanel =
-      activeRundown !== null ? <div style={styles.right}>{shotListPanel}</div> : null
+    rightPanel = activeRundown !== null ? <div style={styles.right}>{shotListPanel}</div> : null
   } else {
     centerContent = shotListPanel
     centerContentStyle = { flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }
-    rightPanel =
-      activeRundown !== null ? <div style={styles.right}>{shotlistWidget}</div> : null
+    rightPanel = activeRundown !== null ? <div style={styles.right}>{shotlistWidget}</div> : null
   }
 
   return (
