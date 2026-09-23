@@ -30,6 +30,49 @@ const styles = {
     whiteSpace: 'nowrap' as const,
   } satisfies React.CSSProperties,
 
+  menuWrapper: {
+    position: 'relative' as const,
+  } satisfies React.CSSProperties,
+
+  menuBackdrop: {
+    position: 'fixed' as const,
+    inset: 0,
+    zIndex: 99,
+  } satisfies React.CSSProperties,
+
+  menu: {
+    position: 'absolute' as const,
+    left: 0,
+    top: '100%',
+    marginTop: '4px',
+    background: '#2a2a2a',
+    border: '1px solid #444',
+    borderRadius: '4px',
+    zIndex: 100,
+    minWidth: '180px',
+    overflow: 'hidden',
+    padding: '4px 0',
+  } satisfies React.CSSProperties,
+
+  menuItem: {
+    display: 'block',
+    width: '100%',
+    padding: '7px 14px',
+    background: 'none',
+    border: 'none',
+    color: '#ccc',
+    fontSize: '12px',
+    cursor: 'pointer',
+    textAlign: 'left' as const,
+    whiteSpace: 'nowrap' as const,
+  } satisfies React.CSSProperties,
+
+  menuSeparator: {
+    height: '1px',
+    background: '#3d3d3d',
+    margin: '4px 0',
+  } satisfies React.CSSProperties,
+
   modal: {
     position: 'fixed' as const,
     inset: 0,
@@ -322,6 +365,7 @@ export function ProjectSelector({ onOpenCameraConfig }: ProjectSelectorProps): R
   const [showNewModal, setShowNewModal] = useState(false)
   const [showRenameModal, setShowRenameModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [showProjectMenu, setShowProjectMenu] = useState(false)
 
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null
 
@@ -355,32 +399,60 @@ export function ProjectSelector({ onOpenCameraConfig }: ProjectSelectorProps): R
         </select>
 
         {activeProject !== null && (
-          <>
+          <div style={styles.menuWrapper}>
             <button
               style={styles.button}
-              onClick={() => setShowRenameModal(true)}
-              title="Rename project"
-              aria-label="Rename project"
+              onClick={() => setShowProjectMenu((v) => !v)}
+              title="Project settings"
+              aria-label="Project settings"
+              aria-expanded={showProjectMenu}
             >
-              Rename
+              ⚙ Project
             </button>
-            <button
-              style={styles.button}
-              onClick={onOpenCameraConfig}
-              title="Camera configuration"
-              aria-label="Configure cameras"
-            >
-              ⚙ Cameras
-            </button>
-            <button
-              style={{ ...styles.button, borderColor: '#c0392b', color: '#e74c3c' }}
-              onClick={() => setShowDeleteModal(true)}
-              title="Delete project"
-              aria-label="Delete project"
-            >
-              Delete
-            </button>
-          </>
+            {showProjectMenu && (
+              <>
+                <div style={styles.menuBackdrop} onClick={() => setShowProjectMenu(false)} />
+                <div style={styles.menu}>
+                  <button
+                    style={styles.menuItem}
+                    onClick={() => {
+                      setShowProjectMenu(false)
+                      setShowRenameModal(true)
+                    }}
+                    aria-label="Rename project"
+                  >
+                    Rename…
+                  </button>
+                  <button
+                    style={styles.menuItem}
+                    onClick={() => {
+                      setShowProjectMenu(false)
+                      onOpenCameraConfig()
+                    }}
+                    aria-label="Configure cameras"
+                  >
+                    Cameras…
+                  </button>
+                  {/*
+                    Delete lives behind this menu rather than in the bar row: it
+                    is irreversible, and a bar slot next to the volume slider is
+                    one stray click away during a show.
+                  */}
+                  <div style={styles.menuSeparator} />
+                  <button
+                    style={{ ...styles.menuItem, color: '#e74c3c' }}
+                    onClick={() => {
+                      setShowProjectMenu(false)
+                      setShowDeleteModal(true)
+                    }}
+                    aria-label="Delete project"
+                  >
+                    Delete project
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         )}
 
         <button style={styles.button} onClick={() => setShowNewModal(true)}>
