@@ -11,6 +11,7 @@ import { toMediaUrl } from '../shared/media-url'
 import type { DeleteShotMode } from '../shared/ipc-contract'
 import { ResolveImportDialog } from './components/ResolveImportDialog'
 import { OBSSettingsPanel } from './components/OBSSettingsPanel'
+import { VoiceSettingsPanel } from './components/VoiceSettingsPanel'
 import { OSCSettingsPanel } from './components/OSCSettingsPanel'
 import { TimelineEditor } from './components/TimelineEditor'
 import { TopBar } from './components/TopBar'
@@ -96,6 +97,7 @@ export default function App(): React.JSX.Element {
   const loadAudioDevices = useAppStore((s) => s.loadAudioDevices)
   const setRenderStatus = useAppStore((s) => s.setRenderStatus)
   const phraseDurations = useAppStore((s) => s.phraseDurations)
+  const unrenderedCount = useAppStore((s) => s.renderStatus?.unrenderedCount ?? 0)
   const announcementSinkId = useAppStore((s) => s.audioDevices.announcementSinkId)
   const loadLiveState = useAppStore((s) => s.loadLiveState)
   const activeProjectId = useAppStore((s) => s.activeProjectId)
@@ -147,6 +149,7 @@ export default function App(): React.JSX.Element {
   const [showPartsConfig, setShowPartsConfig] = useState(false)
   const [showResolveImport, setShowResolveImport] = useState(false)
   const [showObsPanel, setShowObsPanel] = useState(false)
+  const [showVoicePanel, setShowVoicePanel] = useState(false)
   const [showOscPanel, setShowOscPanel] = useState(false)
   const [oscSettings, setOscSettings] = useState({ enabled: false, port: 8000 })
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -518,6 +521,8 @@ export default function App(): React.JSX.Element {
         onOpenObsPanel={() => setShowObsPanel(true)}
         onOpenOscPanel={() => setShowOscPanel(true)}
         onOpenCameraConfig={() => setShowCameraConfig(true)}
+        unrenderedCount={unrenderedCount}
+        onOpenVoiceSettings={() => setShowVoicePanel(true)}
       />
 
       {serverError !== null && (
@@ -601,6 +606,7 @@ export default function App(): React.JSX.Element {
       {showPartsConfig && <PartsConfigPanel onClose={() => setShowPartsConfig(false)} />}
       {showResolveImport && <ResolveImportDialog onClose={() => setShowResolveImport(false)} />}
       {showObsPanel && <OBSSettingsPanel onClose={() => setShowObsPanel(false)} />}
+      {showVoicePanel && <VoiceSettingsPanel onClose={() => setShowVoicePanel(false)} />}
       {showOscPanel && (
         <OSCSettingsPanel
           onClose={() => {
