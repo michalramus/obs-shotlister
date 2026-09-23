@@ -8,6 +8,7 @@ import {
   recordClip,
   recordPartRenders,
   forgetClips,
+  phraseDurations,
 } from './tts'
 import { saveProjectVoiceSettings, saveGlobalVoiceSettings } from './settings'
 import { upsertPart } from './parts'
@@ -263,5 +264,44 @@ describe('recordPartRenders', () => {
     recordPartRenders(db, 'p1')
     db.prepare('DELETE FROM parts WHERE id = ?').run(part.id)
     expect(db.prepare('SELECT COUNT(*) AS n FROM part_renders').get()).toEqual({ n: 0 })
+  })
+})
+
+describe('phraseDurations', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openMemoryDb()
+    insertProject(db, 'p1')
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('reports the duration of each Part’s current phrase', () => {
+    const part = upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    recordClip(
+      db,
+      { hash: phraseHash('gitara', 'za'), text: 'gitara za', voice: VOICE, engine: ENGINE_ID },
+      820,
+    )
+    expect(phraseDurations(db, 'p1')).toEqual({ [part.id]: 820 })
+  })
+
+  it('omits a Part with no rendered clip rather than reporting it as zero-length', () => {
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    expect(phraseDurations(db, 'p1')).toEqual({})
+  })
+
+  it('omits a renamed Part, whose old clip no longer describes it', () => {
+    const part = upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    recordClip(
+      db,
+      { hash: phraseHash('gitara', 'za'), text: 'gitara za', voice: VOICE, engine: ENGINE_ID },
+      820,
+    )
+    upsertPart(db, { id: part.id, projectId: 'p1', name: 'wokal' })
+    expect(phraseDurations(db, 'p1')).toEqual({})
   })
 })

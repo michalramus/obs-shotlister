@@ -169,3 +169,25 @@ export function forgetClips(db: Database.Database, hashes: readonly string[]): v
   })
   apply()
 }
+
+/**
+ * How long each Part's phrase clip runs, keyed by Part id.
+ *
+ * Edit mode needs this to badge a Call too short to say its own name: the
+ * scheduler drops such an Announcement entirely, and the operator should find
+ * that out while editing rather than during a show. A Part with no rendered
+ * clip is absent rather than zero — nothing is known about its length, which is
+ * a different thing from knowing it is short.
+ */
+export function phraseDurations(db: Database.Database, projectId: string): Record<string, number> {
+  const settings = getEffectiveVoiceSettings(db, projectId)
+  const lookup = db.prepare('SELECT duration_ms FROM tts_clips WHERE hash = ?')
+
+  const durations: Record<string, number> = {}
+  for (const part of listParts(db, projectId)) {
+    const hash = clipHash(partPhrase(part.name, settings.connector), settings.voice, ENGINE_ID)
+    const row = lookup.get(hash) as { duration_ms: number } | undefined
+    if (row) durations[part.id] = row.duration_ms
+  }
+  return durations
+}
