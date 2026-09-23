@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useAppStore } from './store'
 import { CameraConfigPanel } from './components/CameraConfigPanel'
+import { PartsConfigPanel } from './components/PartsConfigPanel'
 import { RundownSidebar } from './components/RundownSidebar'
 import { ShotListPanel } from './components/ShotListPanel'
 import { LiveControls } from './components/LiveControls'
@@ -55,6 +56,22 @@ const styles = {
     color: '#555',
   } satisfies React.CSSProperties,
 
+  configStrip: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    padding: '2px 8px',
+    flexShrink: 0,
+  } satisfies React.CSSProperties,
+
+  configStripBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#666',
+    fontSize: '11px',
+    cursor: 'pointer',
+    padding: '2px 4px',
+  } satisfies React.CSSProperties,
+
   warningBanner: {
     background: '#e67e22',
     color: '#fff',
@@ -72,6 +89,7 @@ export default function App(): React.JSX.Element {
   const loadProjects = useAppStore((s) => s.loadProjects)
   const loadCameras = useAppStore((s) => s.loadCameras)
   const loadRundowns = useAppStore((s) => s.loadRundowns)
+  const loadParts = useAppStore((s) => s.loadParts)
   const loadLiveState = useAppStore((s) => s.loadLiveState)
   const activeProjectId = useAppStore((s) => s.activeProjectId)
   const activeRundownId = useAppStore((s) => s.activeRundownId)
@@ -119,6 +137,7 @@ export default function App(): React.JSX.Element {
   const [audioBaseUrl, setAudioBaseUrl] = useState<string | undefined>()
 
   const [showCameraConfig, setShowCameraConfig] = useState(false)
+  const [showPartsConfig, setShowPartsConfig] = useState(false)
   const [showResolveImport, setShowResolveImport] = useState(false)
   const [showObsPanel, setShowObsPanel] = useState(false)
   const [showOscPanel, setShowOscPanel] = useState(false)
@@ -230,8 +249,11 @@ export default function App(): React.JSX.Element {
       loadRundowns(activeProjectId).catch((err: unknown) => {
         console.error('[App] Failed to load rundowns:', err)
       })
+      loadParts(activeProjectId).catch((err: unknown) => {
+        console.error('[App] Failed to load parts:', err)
+      })
     }
-  }, [activeProjectId, loadCameras, loadRundowns])
+  }, [activeProjectId, loadCameras, loadRundowns, loadParts])
 
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null
   const activeRundown = rundowns.find((r) => r.id === activeRundownId) ?? null
@@ -521,6 +543,21 @@ export default function App(): React.JSX.Element {
               decoded waveform — which then had to be decoded from scratch.
             */}
             <div style={styles.center}>
+              {/*
+                Parts sit beside the Cameras panel conceptually, but the Cameras
+                trigger lives in the project menu inside ProjectSelector; until
+                a "Parts…" entry lands there, this strip is the way in, and it
+                shows for every Kind so the panel is where the operator left it.
+              */}
+              <div style={styles.configStrip}>
+                <button
+                  style={styles.configStripBtn}
+                  onClick={() => setShowPartsConfig(true)}
+                  title="Manage parts for this project"
+                >
+                  Parts…
+                </button>
+              </div>
               {activeRundownId !== null && <LiveControls key="live-controls" />}
               <div key="center-content" style={centerContentStyle}>
                 {centerContent}
@@ -534,6 +571,7 @@ export default function App(): React.JSX.Element {
       </div>
 
       {showCameraConfig && <CameraConfigPanel onClose={() => setShowCameraConfig(false)} />}
+      {showPartsConfig && <PartsConfigPanel onClose={() => setShowPartsConfig(false)} />}
       {showResolveImport && <ResolveImportDialog onClose={() => setShowResolveImport(false)} />}
       {showObsPanel && <OBSSettingsPanel onClose={() => setShowObsPanel(false)} />}
       {showOscPanel && (
