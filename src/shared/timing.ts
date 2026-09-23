@@ -121,7 +121,7 @@ export function computeTiming(
 
   function passesFilter(shot: Shot): boolean {
     if (!hasFilter) return true
-    const num = cameraNumberById.get(shot.cameraId)
+    const num = shot.cameraId === null ? undefined : cameraNumberById.get(shot.cameraId)
     return num !== undefined && cameraFilter!.includes(num)
   }
 

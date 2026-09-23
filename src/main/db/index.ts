@@ -5,6 +5,55 @@ import { app } from 'electron'
 let db: Database.Database | null = null
 
 /**
+ * Drops the NOT NULL constraint on `shots.camera_id`.
+ *
+ * A Call has a Part and no Camera, and both live in the `shots` table so that
+ * converting a Rundown between Kinds is an update rather than a copy. SQLite
+ * cannot drop a NOT NULL in place, so this is the one migration here that needs
+ * a table rebuild instead of the idempotent ALTER TABLE pattern used above.
+ *
+ * It is a no-op once the column is already nullable, so calling it on every
+ * open costs one pragma read.
+ */
+function makeShotCameraNullable(database: Database.Database): void {
+  const columns = database.pragma('table_info(shots)') as { name: string; notnull: number }[]
+  const cameraId = columns.find((c) => c.name === 'camera_id')
+  if (!cameraId || cameraId.notnull === 0) return
+
+  // Foreign key enforcement cannot be toggled inside a transaction, so the
+  // pragma brackets the whole rebuild rather than sitting within it.
+  database.pragma('foreign_keys = OFF')
+  try {
+    database.transaction(() => {
+      database.exec(`
+        CREATE TABLE shots_rebuild (
+          id              TEXT PRIMARY KEY,
+          rundown_id      TEXT NOT NULL REFERENCES rundowns(id) ON DELETE CASCADE,
+          camera_id       TEXT REFERENCES cameras(id),
+          part_id         TEXT REFERENCES parts(id),
+          duration_ms     INTEGER NOT NULL,
+          label           TEXT,
+          order_index     INTEGER NOT NULL,
+          transition_name TEXT,
+          transition_ms   INTEGER NOT NULL DEFAULT 0
+        );
+
+        INSERT INTO shots_rebuild
+          (id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms)
+        SELECT
+          id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms
+        FROM shots;
+
+        DROP TABLE shots;
+        ALTER TABLE shots_rebuild RENAME TO shots;
+      `)
+    })()
+  } finally {
+    database.pragma('foreign_keys = ON')
+  }
+}
+
+/**
  * Applies all schema migrations to the given database.
  * Uses CREATE TABLE IF NOT EXISTS so this is safe to call multiple times
  * (idempotent). Called automatically by getDatabase() on first open.
@@ -114,6 +163,49 @@ export function applyMigrations(database: Database.Database): void {
       ('fade', 'Fade');
   `)
 
+  // Voice-over Rundowns. `parts` must exist before shots.part_id references it.
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS parts (
+      id         TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      number     INTEGER NOT NULL,
+      name       TEXT NOT NULL,
+      color      TEXT NOT NULL,
+      folder     TEXT,
+      rundown_id TEXT REFERENCES rundowns(id) ON DELETE CASCADE,
+      UNIQUE(project_id, number)
+    );
+
+    CREATE TABLE IF NOT EXISTS lyrics (
+      id         TEXT PRIMARY KEY,
+      rundown_id TEXT NOT NULL REFERENCES rundowns(id) ON DELETE CASCADE,
+      start_ms   INTEGER NOT NULL,
+      end_ms     INTEGER NOT NULL,
+      text       TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS tts_clips (
+      hash        TEXT PRIMARY KEY,
+      text        TEXT NOT NULL,
+      voice       TEXT NOT NULL,
+      engine      TEXT NOT NULL,
+      duration_ms INTEGER NOT NULL
+    );
+  `)
+
+  try {
+    database.exec("ALTER TABLE rundowns ADD COLUMN kind TEXT NOT NULL DEFAULT 'camera'")
+  } catch (_) {
+    /* column exists */
+  }
+  try {
+    database.exec('ALTER TABLE shots ADD COLUMN part_id TEXT REFERENCES parts(id)')
+  } catch (_) {
+    /* column exists */
+  }
+
+  makeShotCameraNullable(database)
+
   // Must run after transition_mappings exists, or it always throws on a fresh DB.
   try {
     database.exec('ALTER TABLE transition_mappings ADD COLUMN const_length_ms INTEGER')
@@ -128,6 +220,8 @@ export function applyMigrations(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_cameras_project ON cameras(project_id);
     CREATE INDEX IF NOT EXISTS idx_rundowns_project ON rundowns(project_id);
     CREATE INDEX IF NOT EXISTS idx_markers_rundown ON markers(rundown_id);
+    CREATE INDEX IF NOT EXISTS idx_parts_project ON parts(project_id);
+    CREATE INDEX IF NOT EXISTS idx_lyrics_rundown ON lyrics(rundown_id, start_ms);
   `)
 }
 

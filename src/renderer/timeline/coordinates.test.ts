@@ -18,6 +18,7 @@ function shot(id: string, durationMs: number): Shot {
     id,
     rundownId: 'r1',
     cameraId: 'c1',
+    partId: null,
     durationMs,
     label: null,
     orderIndex: 0,

@@ -24,7 +24,8 @@ import type {
 interface ShotRow {
   id: string
   rundown_id: string
-  camera_id: string
+  camera_id: string | null
+  part_id: string | null
   duration_ms: number
   label: string | null
   order_index: number
@@ -41,6 +42,7 @@ function rowToShot(row: ShotRow): Shot {
     id: row.id,
     rundownId: row.rundown_id,
     cameraId: row.camera_id,
+    partId: row.part_id,
     durationMs: row.duration_ms,
     label: row.label,
     orderIndex: row.order_index,
@@ -56,7 +58,7 @@ function rowToShot(row: ShotRow): Shot {
 export function listShots(db: Database.Database, rundownId: string): Shot[] {
   const rows = db
     .prepare(
-      'SELECT id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE rundown_id = ? ORDER BY order_index ASC',
+      'SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE rundown_id = ? ORDER BY order_index ASC',
     )
     .all(rundownId) as ShotRow[]
   return rows.map(rowToShot)
@@ -82,6 +84,7 @@ export function createShot(db: Database.Database, input: CreateShotInput): Shot 
     id,
     rundownId: input.rundownId,
     cameraId: input.cameraId,
+    partId: null,
     durationMs: input.durationMs,
     label: input.label ?? null,
     orderIndex,
@@ -93,7 +96,7 @@ export function createShot(db: Database.Database, input: CreateShotInput): Shot 
 export function updateShot(db: Database.Database, input: UpdateShotInput): Shot {
   // Check existence first
   const existing = db
-    .prepare('SELECT id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?')
+    .prepare('SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?')
     .get(input.id) as ShotRow | undefined
 
   if (!existing) {
@@ -113,7 +116,7 @@ export function updateShot(db: Database.Database, input: UpdateShotInput): Shot 
   ).run(cameraId, durationMs, label, transitionName, transitionMs, input.id)
 
   const updated = db
-    .prepare('SELECT id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?')
+    .prepare('SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?')
     .get(input.id) as ShotRow
   return rowToShot(updated)
 }
@@ -172,7 +175,7 @@ export function reorderShots(db: Database.Database, ids: string[]): void {
 }
 
 export function splitShot(db: Database.Database, input: SplitShotInput): { first: Shot; second: Shot } {
-  const existing = db.prepare('SELECT id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?').get(input.shotId) as ShotRow | undefined
+  const existing = db.prepare('SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?').get(input.shotId) as ShotRow | undefined
   if (!existing) throw new Error(`Shot not found: ${input.shotId}`)
   if (input.atMs <= 0 || input.atMs >= existing.duration_ms) {
     throw new Error(`Invalid split position: ${input.atMs} (shot duration: ${existing.duration_ms})`)
@@ -193,8 +196,8 @@ export function splitShot(db: Database.Database, input: SplitShotInput): { first
   })
   doSplit()
 
-  const first = db.prepare('SELECT id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?').get(input.shotId) as ShotRow
-  const second = db.prepare('SELECT id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?').get(newId) as ShotRow
+  const first = db.prepare('SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?').get(input.shotId) as ShotRow
+  const second = db.prepare('SELECT id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms FROM shots WHERE id = ?').get(newId) as ShotRow
 
   return { first: rowToShot(first), second: rowToShot(second) }
 }

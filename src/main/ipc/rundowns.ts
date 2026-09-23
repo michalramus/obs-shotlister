@@ -9,7 +9,7 @@
 
 import Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
-import type { Rundown } from '../../shared/types'
+import type { Rundown, RundownKind } from '../../shared/types'
 
 // ---------------------------------------------------------------------------
 // Row shapes returned from better-sqlite3
@@ -22,6 +22,7 @@ interface RundownRow {
   created_at: number
   order_index: number
   folder: string | null
+  kind: RundownKind
 }
 
 // ---------------------------------------------------------------------------
@@ -36,6 +37,7 @@ function rowToRundown(row: RundownRow): Rundown {
     createdAt: row.created_at,
     orderIndex: row.order_index,
     folder: row.folder ?? null,
+    kind: row.kind,
   }
 }
 
@@ -45,7 +47,7 @@ function rowToRundown(row: RundownRow): Rundown {
 
 export function getRundown(db: Database.Database, id: string): Rundown | null {
   const row = db
-    .prepare('SELECT id, project_id, name, created_at, order_index, folder FROM rundowns WHERE id = ?')
+    .prepare('SELECT id, project_id, name, created_at, order_index, folder, kind FROM rundowns WHERE id = ?')
     .get(id) as RundownRow | undefined
   return row ? rowToRundown(row) : null
 }
@@ -53,7 +55,7 @@ export function getRundown(db: Database.Database, id: string): Rundown | null {
 export function listRundowns(db: Database.Database, projectId: string): Rundown[] {
   const rows = db
     .prepare(
-      'SELECT id, project_id, name, created_at, order_index, folder FROM rundowns WHERE project_id = ? ORDER BY order_index ASC, created_at ASC',
+      'SELECT id, project_id, name, created_at, order_index, folder, kind FROM rundowns WHERE project_id = ? ORDER BY order_index ASC, created_at ASC',
     )
     .all(projectId) as RundownRow[]
   return rows.map(rowToRundown)
@@ -81,7 +83,7 @@ export function createRundown(db: Database.Database, projectId: string, name: st
     orderIndex,
   )
 
-  return { id, projectId, name, createdAt, orderIndex, folder: null }
+  return { id, projectId, name, createdAt, orderIndex, folder: null, kind: 'camera' }
 }
 
 export function reorderRundowns(db: Database.Database, ids: string[]): void {
@@ -102,7 +104,7 @@ export function setRundownFolder(db: Database.Database, id: string, folder: stri
   }
 
   const row = db
-    .prepare('SELECT id, project_id, name, created_at, order_index, folder FROM rundowns WHERE id = ?')
+    .prepare('SELECT id, project_id, name, created_at, order_index, folder, kind FROM rundowns WHERE id = ?')
     .get(id) as RundownRow
   return rowToRundown(row)
 }
@@ -119,7 +121,7 @@ export function renameRundown(db: Database.Database, id: string, name: string): 
   }
 
   const row = db
-    .prepare('SELECT id, project_id, name, created_at, order_index, folder FROM rundowns WHERE id = ?')
+    .prepare('SELECT id, project_id, name, created_at, order_index, folder, kind FROM rundowns WHERE id = ?')
     .get(id) as RundownRow
   return rowToRundown(row)
 }

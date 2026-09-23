@@ -42,7 +42,9 @@ export function createOBSSwitcher(
   session: LiveSession,
 ): OBSSwitcher {
   function sceneFor(shot: Shot | null): string | null {
-    if (!shot) return null
+    // A Call has no Camera, so a Voice-over Rundown resolves no scene and the
+    // switcher has nothing to do.
+    if (!shot || !shot.cameraId) return null
     return getCameraById(db, shot.cameraId)?.obsScene ?? null
   }
 

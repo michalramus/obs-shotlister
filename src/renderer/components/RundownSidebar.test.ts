@@ -8,7 +8,7 @@ import {
 import type { Rundown } from '../../shared/types'
 
 function rundown(id: string, projectId: string, folder: string | null): Rundown {
-  return { id, projectId, name: id, createdAt: 0, orderIndex: 0, folder }
+  return { id, projectId, name: id, createdAt: 0, orderIndex: 0, folder, kind: 'camera' }
 }
 
 describe('foldersFromRundowns', () => {

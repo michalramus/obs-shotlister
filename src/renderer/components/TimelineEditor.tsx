@@ -1175,7 +1175,7 @@ export function TimelineEditor({
               </div>
             ) : (
               shots.map((shot, i) => {
-                const cam = cameraMap.get(shot.cameraId)
+                const cam = shot.cameraId === null ? undefined : cameraMap.get(shot.cameraId)
                 const bgColor = cam?.color ?? '#555'
                 const leftPx = shotOffsets[i]
                 const effectiveDuration = dragOverride[shot.id] ?? shot.durationMs
@@ -1685,7 +1685,7 @@ export function TimelineEditor({
       >
         {/* Shot blocks in overview */}
         {shots.map((shot, i) => {
-          const cam = cameraMap.get(shot.cameraId)
+          const cam = shot.cameraId === null ? undefined : cameraMap.get(shot.cameraId)
           const ow = overviewRef.current?.clientWidth ?? 300
           const left = (shotOffsets[i] / totalPx) * ow
           const width =

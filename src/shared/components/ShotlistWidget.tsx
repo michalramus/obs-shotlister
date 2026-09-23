@@ -413,7 +413,7 @@ export function ShotlistWidget({
   const visibleShots = shots.filter((s) => {
     if (s.hidden) return false
     if (hasFilter) {
-      const cam = cameraById.get(s.cameraId)
+      const cam = s.cameraId === null ? undefined : cameraById.get(s.cameraId)
       return cam !== undefined && cameraFilter!.includes(cam.number)
     }
     return true
@@ -421,7 +421,7 @@ export function ShotlistWidget({
 
   // Waiting: filter is active and the live shot is not for our camera
   const liveShot = liveIndex !== null ? shots[liveIndex] : null
-  const liveCam = liveShot ? cameraById.get(liveShot.cameraId) : undefined
+  const liveCam = liveShot?.cameraId ? cameraById.get(liveShot.cameraId) : undefined
   const isWaiting = hasFilter && liveCam !== undefined && !cameraFilter!.includes(liveCam.number)
 
   // Capture totalMs once when waiting begins; clear when no longer waiting.
@@ -527,7 +527,7 @@ export function ShotlistWidget({
             const isLive = timing.liveIndex === shotIndexInAll
             const isNext = timing.nextVisibleIndex === shotIndexInAll
 
-            const camera = cameraById.get(shot.cameraId)
+            const camera = shot.cameraId === null ? undefined : cameraById.get(shot.cameraId)
 
             let timeLabel = formatMs(shot.durationMs)
             let progressPct: number | null = null

@@ -7,6 +7,7 @@ function shot(id: string, opts: { hidden?: boolean; transitionMs?: number } = {}
     id,
     rundownId: 'r1',
     cameraId: 'c1',
+    partId: null,
     durationMs: 5000,
     label: null,
     orderIndex: 0,

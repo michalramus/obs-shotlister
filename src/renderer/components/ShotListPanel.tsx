@@ -731,7 +731,7 @@ export function ShotListPanel({
                   <ShotForm
                     cameras={cameras}
                     initial={{
-                      cameraId: shot.cameraId,
+                      cameraId: shot.cameraId ?? '',
                       durationMs: shot.durationMs,
                       label: shot.label ?? '',
                       transitionName: shot.transitionName,
