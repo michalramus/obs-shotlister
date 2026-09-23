@@ -16,6 +16,7 @@ import type { OBSClient } from './client'
 import type { LiveSession } from '../live/session'
 import { getCameraById } from '../ipc/projects'
 import { listShots } from '../ipc/shots'
+import { getRundown } from '../ipc/rundowns'
 import { resolveTransitionFull } from '../ipc/transitions'
 
 /**
@@ -41,6 +42,27 @@ export function createOBSSwitcher(
   client: OBSClient,
   session: LiveSession,
 ): OBSSwitcher {
+  /**
+   * Whether this Rundown drives OBS at all.
+   *
+   * Deliberately separate from `sceneFor`, which already returns null for an
+   * unassigned item: "this item has no Camera" and "this Rundown never switches"
+   * are different facts, and only the second is a guarantee. A Voice-over
+   * Rundown must not be able to disturb a live video feed even by accident — an
+   * item carrying a leftover `camera_id` from a conversion would otherwise cut
+   * program mid-song.
+   */
+  function switchesScenes(rundownId: string | null): boolean {
+    if (!rundownId) return false
+    try {
+      return getRundown(db, rundownId)?.kind !== 'voice'
+    } catch (err) {
+      // Unknown Kind means unknown consequences: stay off OBS.
+      console.error('[OBS] rundown kind lookup failed:', err)
+      return false
+    }
+  }
+
   function sceneFor(shot: Shot | null): string | null {
     // A Call has no Camera, so a Voice-over Rundown resolves no scene and the
     // switcher has nothing to do.
@@ -89,6 +111,7 @@ export function createOBSSwitcher(
       if (client.status !== 'connected') return
       const state = session.getState()
       if (!state.running) return
+      if (!switchesScenes(state.rundownId)) return
 
       const liveShot = session.getLiveShot()
       if (!liveShot) return
@@ -100,12 +123,15 @@ export function createOBSSwitcher(
 
     async cueNextShot() {
       if (client.status !== 'connected') return
-      if (!session.getState().running) return
+      const state = session.getState()
+      if (!state.running) return
+      if (!switchesScenes(state.rundownId)) return
       await cuePreview(session.getNextVisibleShot())
     },
 
     async cueRundownStart(rundownId) {
       if (client.status !== 'connected') return
+      if (!switchesScenes(rundownId)) return
       // No Live session yet, so the Rundown's own first Shot is what to cue.
       await cuePreview(listShots(db, rundownId)[0] ?? null)
     },
@@ -117,6 +143,7 @@ export function createOBSSwitcher(
       }
       const state = session.getState()
       if (!state.running) return
+      if (!switchesScenes(state.rundownId)) return
 
       const liveShot = session.getLiveShot()
       if (!liveShot) return
