@@ -19,21 +19,13 @@ import type Database from 'better-sqlite3'
 import type { Shot } from '../../shared/types'
 import type { AnnouncementPlan } from '../../shared/ipc-contract'
 import { type AnnouncementClip, scheduleAnnouncement } from '../../shared/announcement'
-import { clipHash, partPhrase } from '../../shared/render-plan'
+import { ENGINE_ID, clipHash, partPhrase } from '../../shared/render-plan'
 import { languageOfVoice, numberWords } from '../../shared/number-words'
 import { toMediaUrl } from '../../shared/media-url'
 import { getEffectiveVoiceSettings } from '../ipc/settings'
 import { getPart } from '../ipc/parts'
 
-/**
- * The synthesiser every clip in the cache was rendered with. Part of each clip's
- * content address, so this string must match what the renderer writes with or
- * every hash misses and nothing is ever spoken.
- */
-export const ENGINE_ID = 'piper'
-
-/** Clips are written one file per hash, flat, in the cache directory. */
-const CLIP_EXTENSION = '.wav'
+import { CLIP_EXTENSION } from '../tts/cache'
 
 export interface AnnouncementBuilder {
   /**

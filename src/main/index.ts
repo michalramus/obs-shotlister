@@ -81,6 +81,7 @@ import {
   getAudioDevices,
   saveAudioDevices,
 } from './ipc/settings'
+import { clipsDir } from './tts/cache'
 import { startOscServer, stopOscServer } from './osc/server'
 import {
   listTransitionMappings,
@@ -795,16 +796,6 @@ export function setSocketServer(io: SocketServer): void {
 }
 
 
-/**
- * Where rendered Announcement clips live.
- *
- * Under userData rather than in the app bundle: the cache is per-operator and
- * grows as Parts are named, and a packaged app's resources are read-only.
- */
-function ttsClipsDir(): string {
-  return join(app.getPath('userData'), 'tts')
-}
-
 app.whenReady().then(() => {
   // Serve local media files via media:// protocol (avoids cross-origin issues in dev mode)
   protocol.handle('media', async (request) => {
@@ -871,7 +862,9 @@ app.whenReady().then(() => {
     // output-device API — and the only side the operator can route to a
     // virtual cable. The main process just says what to play and when.
     onAnnouncement: (plan) => pushToWindow('live:announcement-push', plan),
-    clipsDir: ttsClipsDir(),
+    // Under userData rather than in the app bundle: the cache is per-operator
+    // and grows as Parts are named, and a packaged app's resources are read-only.
+    clipsDir: clipsDir(app.getPath('userData')),
   })
   obs = createOBSSwitcher(_db, obsClient, live)
   publish = createChangePublisher(_db, live, () => _io)

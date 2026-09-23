@@ -37,6 +37,16 @@ const HASH_FIELD_SEPARATOR = '\u0000'
 const HASH_LENGTH = 32
 
 /**
+ * The synthesiser every clip is rendered with.
+ *
+ * Part of each clip's content address, so it lives beside the hash rather than
+ * with the engine that spawns Piper: the announcer resolves clips without ever
+ * importing the renderer, and the two must agree on this string exactly or
+ * every lookup misses and nothing is ever spoken.
+ */
+export const ENGINE_ID = 'piper'
+
+/**
  * The content address of one clip.
  *
  * Every clip filename in the system derives from this, so it must stay stable
