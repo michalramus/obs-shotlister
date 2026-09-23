@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { Shot, Camera, Marker } from '../../shared/types'
+import type { Shot, Camera, Marker, Part } from '../../shared/types'
 import { toMediaUrl } from '../../shared/media-url'
 import {
   timelinePosMs,
@@ -17,6 +17,16 @@ import {
   mediaTimeSecFor,
   shouldCommit,
 } from '../timeline/playhead-clock'
+import {
+  lyricRange,
+  lyricBlocks,
+  lyricAtMs,
+  overlappingLyric,
+  isUnassigned,
+  droppedAnnouncementCallIds,
+} from '../timeline/lyrics'
+import { useAppStore } from '../store'
+import { PartButtonBar, PartPicker, AddPartDialog, partForKey } from './PartsConfigPanel'
 import type { DeleteShotMode } from '../../shared/ipc-contract'
 
 interface TimelineEditorProps {
@@ -48,11 +58,21 @@ interface TimelineEditorProps {
   mediaVideoRef: React.RefObject<HTMLVideoElement | null>
   selectedShotId: string | null
   onLabelEdit: (shotId: string) => void
+  /**
+   * Duration of each Part's rendered phrase clip, by Part id, so Edit mode can
+   * badge a Call too short to announce the one after it.
+   *
+   * Empty by default: the renderer has no clip durations of its own, and a badge
+   * on a guessed duration would be worse than no badge at all. Hand it the cache
+   * index once the render plumbing reaches the renderer.
+   */
+  phraseDurationMsByPartId?: Record<string, number>
 }
 
 const TRACK_HEIGHT = 50
 const RULER_HEIGHT = 20
 const TOOLBAR_HEIGHT = 36
+const LYRICS_ROW_HEIGHT = 34
 const MARKER_ROW_HEIGHT = 30
 const MEDIA_ROW_HEIGHT = 60
 const CAM_BUTTONS_HEIGHT = 48
@@ -127,6 +147,15 @@ interface MediaDragState {
   origOffset: number
 }
 
+/** A line being typed: its range is already fixed, its text is not. */
+interface LyricDraft {
+  /** The line being re-worded, or null while a new line is being authored. */
+  id: string | null
+  startMs: number
+  endMs: number
+  text: string
+}
+
 export function TimelineEditor({
   shots,
   cameras,
@@ -150,7 +179,25 @@ export function TimelineEditor({
   mediaVideoRef,
   selectedShotId,
   onLabelEdit,
+  phraseDurationMsByPartId = {},
 }: TimelineEditorProps): React.JSX.Element {
+  // Parts, Lyrics and the Rundown's Kind are read from the store rather than
+  // taken as props: everything above passes one shared `timelineProps` object to
+  // whichever timeline slot is on screen, and threading three more Voice-over
+  // concerns through it would widen that object for every caller. The item and
+  // Marker props stay as they are.
+  const lyrics = useAppStore((s) => s.lyrics)
+  const upsertLyric = useAppStore((s) => s.upsertLyric)
+  const removeLyric = useAppStore((s) => s.removeLyric)
+  const partsInScope = useAppStore((s) => s.partsInScope)
+  const editShot = useAppStore((s) => s.editShot)
+  const splitShot = useAppStore((s) => s.splitShot)
+  const activeRundownId = useAppStore((s) => s.activeRundownId)
+  const rundownKind = useAppStore(
+    (s) => s.rundowns.find((r) => r.id === s.activeRundownId)?.kind ?? 'camera',
+  )
+  const isVoice = rundownKind === 'voice'
+
   const [zoomPxPerSec, setZoomPxPerSec] = useState<number>(() => {
     const saved = localStorage.getItem('obs-queuer-timeline-zoom')
     return saved ? Math.max(5, Math.min(2000, parseFloat(saved))) : 80
@@ -174,6 +221,13 @@ export function TimelineEditor({
   const [waveformError, setWaveformError] = useState(false)
   const [mediaFileNotFound, setMediaFileNotFound] = useState(false)
   const [containerWidth, setContainerWidth] = useState(800)
+  const [lyricInMs, setLyricInMs] = useState<number | null>(null)
+  const [lyricDraft, setLyricDraft] = useState<LyricDraft | null>(null)
+  const [selectedLyricId, setSelectedLyricId] = useState<string | null>(null)
+  const [hoveredLyricId, setHoveredLyricId] = useState<string | null>(null)
+  const [lyricError, setLyricError] = useState<string | null>(null)
+  const [partPickerOpen, setPartPickerOpen] = useState(false)
+  const [addPartOpen, setAddPartOpen] = useState(false)
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const isPlayingRef = useRef(isPlaying)
@@ -206,6 +260,16 @@ export function TimelineEditor({
   const lastPlayheadCommitRef = useRef(0)
   const shotsRef = useRef(shots)
   const camerasRef = useRef(cameras)
+  // The keyboard effect is bound once and never re-bound, so the handlers it
+  // reaches for are republished every render through this ref rather than
+  // captured in its closure.
+  const keyActionsRef = useRef({
+    setLyricIn: (): void => {},
+    setLyricOut: (): void => {},
+    openAddPart: (): void => {},
+    /** True when the key named a Part and was spent assigning it. */
+    assignPartByKey: (_key: string): boolean => false,
+  })
 
   // Keep zoomRef in sync
   useEffect(() => {
@@ -697,6 +761,22 @@ export function TimelineEditor({
         e.preventDefault()
         zoomOut()
       }
+      // Lyrics are authored in both Kinds, so In and Out cannot use I and O:
+      // those two letters are Part assignment keys in a Voice-over Rundown.
+      if (e.key === '[' && !running) {
+        e.preventDefault()
+        keyActionsRef.current.setLyricIn()
+      }
+      if (e.key === ']' && !running) {
+        e.preventDefault()
+        keyActionsRef.current.setLyricOut()
+      }
+      if ((e.key === 'n' || e.key === 'N') && !running) {
+        keyActionsRef.current.openAddPart()
+      }
+      // In a Voice-over Rundown 1-9 and q w e r t y u i o p name Parts, which
+      // takes the digits away from the Cameras there and only there.
+      if (!running && keyActionsRef.current.assignPartByKey(e.key)) return
       const num = parseInt(e.key, 10)
       if (num >= 1 && num <= 9 && !running) {
         const cam = camerasRef.current.find((c) => c.number === num)
@@ -746,6 +826,152 @@ export function TimelineEditor({
       }
       accumulated = shotEnd
     }
+  }
+
+  /**
+   * Splits at the playhead and points what follows at a Part.
+   *
+   * Deliberately the same two moves the Camera buttons make — split, or retarget
+   * when the playhead is already on a boundary — with `partId` in place of
+   * `cameraId`. Everything else about a Call, resizing and reordering included,
+   * is the Shot code path untouched.
+   */
+  function assignPartAtPlayhead(part: Part): void {
+    let accumulated = 0
+    for (const shot of shotsRef.current) {
+      const shotEnd = accumulated + shot.durationMs
+      if (playheadMsRef.current >= accumulated && playheadMsRef.current < shotEnd) {
+        const atMs = playheadMsRef.current - accumulated
+        const assigned =
+          atMs <= 0
+            ? editShot({ id: shot.id, partId: part.id })
+            : splitShot(shot.id, Math.round(atMs), { newPartId: part.id })
+        assigned.catch((err: unknown) => console.error('[TimelineEditor] assign part:', err))
+        return
+      }
+      accumulated = shotEnd
+    }
+  }
+
+  /**
+   * Writes a line, reporting a refusal instead of swallowing it.
+   *
+   * The overlap check runs here too even though the store refuses overlaps: the
+   * local copy already knows which line is in the way, and naming it is more use
+   * to the operator than the round trip's "overlaps an existing line".
+   */
+  async function saveLyric(input: LyricDraft): Promise<boolean> {
+    if (activeRundownId === null) return false
+    const clash = overlappingLyric(lyrics, input, input.id)
+    if (clash !== null) {
+      setLyricError(`Overlaps “${clash.text}”`)
+      return false
+    }
+    try {
+      await upsertLyric({
+        ...(input.id !== null ? { id: input.id } : {}),
+        rundownId: activeRundownId,
+        startMs: input.startMs,
+        endMs: input.endMs,
+        text: input.text,
+      })
+      setLyricError(null)
+      return true
+    } catch (err: unknown) {
+      setLyricError(err instanceof Error ? err.message : String(err))
+      return false
+    }
+  }
+
+  /**
+   * Set In: moves the selected line's start, or opens a new line at the playhead.
+   *
+   * One key does both because the authoring loop is the same either way — put the
+   * playhead where the line begins and press In — and the operator should not
+   * have to know whether they are correcting or creating.
+   */
+  function setLyricIn(): void {
+    const ms = Math.round(playheadMsRef.current)
+    const selected = lyrics.find((l) => l.id === selectedLyricId)
+    if (selected !== undefined) {
+      const range = lyricRange(ms, selected.endMs)
+      if (range === null) {
+        setLyricError('That would leave the line no length')
+        return
+      }
+      void saveLyric({ id: selected.id, ...range, text: selected.text })
+      return
+    }
+    setLyricError(null)
+    setLyricInMs(ms)
+  }
+
+  /** Set Out: closes the selected line, or the line being authored. */
+  function setLyricOut(): void {
+    const ms = Math.round(playheadMsRef.current)
+    const selected = lyrics.find((l) => l.id === selectedLyricId)
+    if (selected !== undefined) {
+      const range = lyricRange(selected.startMs, ms)
+      if (range === null) {
+        setLyricError('That would leave the line no length')
+        return
+      }
+      void saveLyric({ id: selected.id, ...range, text: selected.text })
+      return
+    }
+    if (lyricInMs === null) {
+      setLyricError('Set an In point first')
+      return
+    }
+    const range = lyricRange(lyricInMs, ms)
+    if (range === null) {
+      setLyricError('Set the Out point away from the In point')
+      return
+    }
+    const clash = overlappingLyric(lyrics, range)
+    if (clash !== null) {
+      setLyricError(`Overlaps “${clash.text}”`)
+      return
+    }
+    setLyricError(null)
+    setLyricDraft({ id: null, ...range, text: '' })
+  }
+
+  /** Commits the typed line, keeping the draft on screen if it is refused. */
+  function commitLyricDraft(): void {
+    const draft = lyricDraft
+    if (draft === null) return
+    const text = draft.text.trim()
+    if (text === '') {
+      setLyricError('A line needs some text')
+      return
+    }
+    void saveLyric({ ...draft, text }).then((saved) => {
+      if (!saved) return
+      setLyricDraft(null)
+      setLyricInMs(null)
+      setSelectedLyricId(null)
+    })
+  }
+
+  function deleteLyric(id: string): void {
+    removeLyric(id).catch((err: unknown) => console.error('[TimelineEditor] deleteLyric:', err))
+    if (selectedLyricId === id) setSelectedLyricId(null)
+  }
+
+  keyActionsRef.current = {
+    setLyricIn,
+    setLyricOut,
+    openAddPart: () => {
+      if (isVoice) setAddPartOpen(true)
+    },
+    assignPartByKey: (key) => {
+      if (!isVoice) return false
+      const part = partForKey(key, partsInScope)
+      if (part === null) return false
+      assignPartAtPlayhead(part)
+      return true
+    },
   }
 
   function handleBoundaryMouseDown(e: React.MouseEvent, shotA: Shot, shotB: Shot): void {
@@ -923,6 +1149,58 @@ export function TimelineEditor({
 
   // Camera lookup map
   const cameraMap = new Map(cameras.map((c) => [c.id, c]))
+  const partMap = new Map(partsInScope.map((p) => [p.id, p]))
+
+  const UNASSIGNED_COLOR = '#3a3a3a'
+
+  /**
+   * How an item paints: a Call reads its Part exactly as a Shot reads its
+   * Camera, so the lane never has to know which Kind it is showing beyond this.
+   * An unassigned item is drawn as its own thing rather than in a default
+   * colour, because a Live session refuses to start on one and the operator
+   * should see that here rather than when they press start.
+   */
+  function itemTarget(shot: Shot): { color: string; label: string; title: string } {
+    if (isUnassigned(shot, rundownKind)) {
+      return {
+        color: UNASSIGNED_COLOR,
+        label: isVoice ? 'No part' : 'No camera',
+        title: isVoice
+          ? 'No Part assigned — a Live session will refuse to start'
+          : 'No Camera assigned — a Live session will refuse to start',
+      }
+    }
+    if (isVoice) {
+      const part = shot.partId === null ? undefined : partMap.get(shot.partId)
+      // A Part out of this Rundown's scope is still a real assignment (ADR 0006);
+      // only its colour and name are unavailable here.
+      return {
+        color: part?.color ?? '#666',
+        label: part?.name ?? 'Part',
+        title: `${part?.name ?? 'Part'} (${shot.durationMs}ms)`,
+      }
+    }
+    const cam = shot.cameraId === null ? undefined : cameraMap.get(shot.cameraId)
+    return {
+      color: cam?.color ?? '#555',
+      label: `CAM${cam ? cam.number : '?'}`,
+      title: cam ? `${cam.name} (${shot.durationMs}ms)` : shot.id,
+    }
+  }
+
+  const droppedCallIds = useMemo(
+    () =>
+      isVoice
+        ? droppedAnnouncementCallIds(shots, (partId) => phraseDurationMsByPartId[partId] ?? null)
+        : new Set<string>(),
+    [isVoice, shots, phraseDurationMsByPartId],
+  )
+
+  const lyricLane = lyricBlocks(lyrics, zoomPxPerSec)
+  // The whole point of the lane: which line is being sung right now. The playhead
+  // is committed to state at PLAYHEAD_COMMIT_INTERVAL_MS, so this lags by at most
+  // that — far below the length of a sung line.
+  const currentLyricId = lyricAtMs(lyrics, playheadMs)?.id ?? null
 
   // Shot left offsets, honouring any resize drag in progress
   const shotOffsets = shotStartOffsetsMs(shots, dragOverride).map((ms) => pxAtMs(ms, zoomPxPerSec))
@@ -952,7 +1230,7 @@ export function TimelineEditor({
         flexShrink: 0,
         display: 'flex',
         flexDirection: 'column',
-        height: `${TOOLBAR_HEIGHT + RULER_HEIGHT + TRACK_HEIGHT + MARKER_ROW_HEIGHT + MEDIA_ROW_HEIGHT + CAM_BUTTONS_HEIGHT + OVERVIEW_HEIGHT}px`,
+        height: `${TOOLBAR_HEIGHT + RULER_HEIGHT + TRACK_HEIGHT + LYRICS_ROW_HEIGHT + MARKER_ROW_HEIGHT + MEDIA_ROW_HEIGHT + CAM_BUTTONS_HEIGHT + OVERVIEW_HEIGHT}px`,
         overflow: 'hidden',
       }}
       onClick={() => setContextMenu(null)}
@@ -1024,6 +1302,38 @@ export function TimelineEditor({
         <span style={{ color: '#888', fontSize: '11px', minWidth: '52px', textAlign: 'center' }}>
           {zoomPxPerSec}px/s
         </span>
+        {/* Lyrics authoring: set In, play, set Out, type the line */}
+        <button
+          style={{
+            ...btnStyle,
+            width: 'auto',
+            padding: '0 6px',
+            opacity: running ? 0.4 : 1,
+            color: lyricInMs !== null ? '#5dade2' : '#ccc',
+          }}
+          disabled={running}
+          onClick={setLyricIn}
+          title="Lyric In point at the playhead ([)"
+        >
+          In [
+        </button>
+        <button
+          style={{ ...btnStyle, width: 'auto', padding: '0 6px', opacity: running ? 0.4 : 1 }}
+          disabled={running}
+          onClick={setLyricOut}
+          title="Lyric Out point at the playhead (])"
+        >
+          Out ]
+        </button>
+        {lyricError !== null && (
+          <span
+            style={{ color: '#e74c3c', fontSize: '11px', cursor: 'pointer' }}
+            title="Click to dismiss"
+            onClick={() => setLyricError(null)}
+          >
+            {lyricError}
+          </span>
+        )}
         <div style={{ flex: 1 }} />
         <button
           style={{
@@ -1071,7 +1381,7 @@ export function TimelineEditor({
               left: 0,
               top: 0,
               width: '2px',
-              height: RULER_HEIGHT + TRACK_HEIGHT + MARKER_ROW_HEIGHT,
+              height: RULER_HEIGHT + TRACK_HEIGHT + LYRICS_ROW_HEIGHT + MARKER_ROW_HEIGHT,
               background: '#e74c3c',
               pointerEvents: 'none',
             }}
@@ -1171,12 +1481,14 @@ export function TimelineEditor({
                   pointerEvents: 'none',
                 }}
               >
-                No shots — create a rundown
+                {isVoice ? 'No calls — create a rundown' : 'No shots — create a rundown'}
               </div>
             ) : (
               shots.map((shot, i) => {
-                const cam = shot.cameraId === null ? undefined : cameraMap.get(shot.cameraId)
-                const bgColor = cam?.color ?? '#555'
+                const target = itemTarget(shot)
+                const unassigned = isUnassigned(shot, rundownKind)
+                const tooShort = droppedCallIds.has(shot.id)
+                const bgColor = target.color
                 const leftPx = shotOffsets[i]
                 const effectiveDuration = dragOverride[shot.id] ?? shot.durationMs
                 const widthPx = pxAtMs(effectiveDuration, zoomPxPerSec)
@@ -1200,12 +1512,14 @@ export function TimelineEditor({
                         top: 0,
                         width: widthPx,
                         height: TRACK_HEIGHT,
-                        background: bgColor,
+                        background: unassigned
+                          ? `repeating-linear-gradient(45deg, ${UNASSIGNED_COLOR}, ${UNASSIGNED_COLOR} 6px, #2c2c2c 6px, #2c2c2c 12px)`
+                          : bgColor,
                         boxShadow: isLive ? 'inset 0 0 0 2px white' : undefined,
                         overflow: 'hidden',
                         cursor: 'pointer',
                         userSelect: 'none',
-                        border: '1px solid rgba(0,0,0,0.5)',
+                        border: unassigned ? '1px dashed #e67e22' : '1px solid rgba(0,0,0,0.5)',
                         boxSizing: 'border-box' as const,
                       }}
                       onClick={(e) => handleBlockClick(e, shot.id)}
@@ -1214,7 +1528,11 @@ export function TimelineEditor({
                         e.stopPropagation()
                         setContextMenu({ x: e.clientX, y: e.clientY, shotId: shot.id })
                       }}
-                      title={cam ? `${cam.name} (${shot.durationMs}ms)` : shot.id}
+                      title={
+                        tooShort
+                          ? `${target.title} — too short for its announcement; it will not be spoken`
+                          : target.title
+                      }
                     >
                       {widthPx > 20 && (
                         <div
@@ -1228,8 +1546,25 @@ export function TimelineEditor({
                             paddingLeft: '4px',
                           }}
                         >
-                          <strong style={{ fontSize: '11px', lineHeight: 1.2, color: 'white' }}>
-                            CAM{cam ? cam.number : '?'}
+                          <strong
+                            style={{
+                              fontSize: '11px',
+                              lineHeight: 1.2,
+                              color: unassigned ? '#e67e22' : 'white',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {tooShort && (
+                              <span
+                                title="Too short for its announcement — the Part name will not fit"
+                                style={{ marginRight: '3px' }}
+                              >
+                                ⚠
+                              </span>
+                            )}
+                            {target.label}
                           </strong>
                           {shot.label && widthPx > 60 && (
                             <span
@@ -1355,6 +1690,167 @@ export function TimelineEditor({
                   />
                 )
               })()}
+          </div>
+
+          {/* Row 3b: Lyrics track — the second and only other Track, in both Kinds */}
+          <div
+            style={{
+              height: LYRICS_ROW_HEIGHT,
+              width: totalPx,
+              background: '#141414',
+              position: 'relative',
+              borderTop: '1px solid #2a2a2a',
+              cursor: 'crosshair',
+              overflow: 'hidden',
+            }}
+            onClick={(e) => {
+              setSelectedLyricId(null)
+              handleTrackClick(e)
+            }}
+          >
+            {lyricLane.map((block) => {
+              const isSelected = selectedLyricId === block.id
+              const isHovered = hoveredLyricId === block.id
+              const isCurrent = currentLyricId === block.id
+              return (
+                <div
+                  key={block.id}
+                  style={{
+                    position: 'absolute',
+                    left: block.leftPx,
+                    top: 3,
+                    width: block.widthPx,
+                    height: LYRICS_ROW_HEIGHT - 6,
+                    background: isSelected ? '#2e5c8a' : isCurrent ? '#27435f' : '#243447',
+                    border: `1px solid ${isSelected || isCurrent ? '#5dade2' : '#31506e'}`,
+                    borderRadius: '2px',
+                    boxSizing: 'border-box',
+                    color: isCurrent ? '#fff' : '#d6e6f5',
+                    fontSize: '10px',
+                    lineHeight: `${LYRICS_ROW_HEIGHT - 8}px`,
+                    padding: '0 4px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                  }}
+                  title={`${block.text} — click to select, double-click to re-word`}
+                  onMouseEnter={() => setHoveredLyricId(block.id)}
+                  onMouseLeave={() => setHoveredLyricId(null)}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setLyricError(null)
+                    setSelectedLyricId(isSelected ? null : block.id)
+                  }}
+                  onDoubleClick={(e) => {
+                    e.stopPropagation()
+                    const existing = lyrics.find((l) => l.id === block.id)
+                    if (existing === undefined) return
+                    setSelectedLyricId(existing.id)
+                    setLyricDraft({
+                      id: existing.id,
+                      startMs: existing.startMs,
+                      endMs: existing.endMs,
+                      text: existing.text,
+                    })
+                  }}
+                >
+                  {block.text}
+                  {isHovered && (
+                    <button
+                      style={{
+                        position: 'absolute',
+                        right: 0,
+                        top: 0,
+                        background: 'rgba(0,0,0,0.5)',
+                        border: 'none',
+                        color: '#e74c3c',
+                        fontSize: '10px',
+                        lineHeight: 1,
+                        padding: '2px 4px',
+                        cursor: 'pointer',
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        deleteLyric(block.id)
+                      }}
+                      title="Delete line"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+
+            {/* Pending In point: the line has a start but no end yet */}
+            {lyricInMs !== null && lyricDraft === null && (
+              <div
+                style={{
+                  position: 'absolute',
+                  left: pxAtMs(lyricInMs, zoomPxPerSec),
+                  top: 0,
+                  width: '2px',
+                  height: LYRICS_ROW_HEIGHT,
+                  borderLeft: '2px dashed #5dade2',
+                  pointerEvents: 'none',
+                }}
+              />
+            )}
+
+            {/* Typing the line, once its in and out points are fixed */}
+            {lyricDraft !== null && (
+              <input
+                autoFocus
+                value={lyricDraft.text}
+                onChange={(e) => setLyricDraft({ ...lyricDraft, text: e.target.value })}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  e.stopPropagation()
+                  if (e.key === 'Enter') commitLyricDraft()
+                  if (e.key === 'Escape') {
+                    setLyricDraft(null)
+                    setLyricError(null)
+                  }
+                }}
+                placeholder="line of lyrics"
+                style={{
+                  position: 'absolute',
+                  left: pxAtMs(lyricDraft.startMs, zoomPxPerSec),
+                  top: 3,
+                  width: Math.max(
+                    120,
+                    pxAtMs(lyricDraft.endMs - lyricDraft.startMs, zoomPxPerSec),
+                  ),
+                  height: LYRICS_ROW_HEIGHT - 6,
+                  background: '#1b2a3a',
+                  border: '1px solid #5dade2',
+                  color: '#d6e6f5',
+                  fontSize: '10px',
+                  padding: '0 4px',
+                  boxSizing: 'border-box',
+                  zIndex: 20,
+                }}
+              />
+            )}
+
+            {lyrics.length === 0 && lyricDraft === null && (
+              <span
+                style={{
+                  position: 'absolute',
+                  left: '8px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: '#444',
+                  fontSize: '10px',
+                  fontFamily: 'monospace',
+                  pointerEvents: 'none',
+                }}
+              >
+                Lyrics — set In [ , play, set Out ] , type the line
+              </span>
+            )}
           </div>
 
           {/* Row 4: Marker track */}
@@ -1685,7 +2181,6 @@ export function TimelineEditor({
       >
         {/* Shot blocks in overview */}
         {shots.map((shot, i) => {
-          const cam = shot.cameraId === null ? undefined : cameraMap.get(shot.cameraId)
           const ow = overviewRef.current?.clientWidth ?? 300
           const left = (shotOffsets[i] / totalPx) * ow
           const width =
@@ -1699,7 +2194,7 @@ export function TimelineEditor({
                 top: 0,
                 width: Math.max(1, width),
                 height: OVERVIEW_HEIGHT,
-                background: cam?.color ?? '#555',
+                background: itemTarget(shot).color,
               }}
             />
           )
@@ -1771,7 +2266,7 @@ export function TimelineEditor({
           })()}
       </div>
 
-      {/* Row 7: Camera buttons */}
+      {/* Row 7: assignment buttons — Cameras, or Parts in a Voice-over Rundown */}
       <div
         style={{
           height: CAM_BUTTONS_HEIGHT,
@@ -1785,7 +2280,35 @@ export function TimelineEditor({
           overflowX: 'auto',
         }}
       >
-        {sortedCameras.map((cam) => (
+        {isVoice && (
+          <>
+            <PartButtonBar
+              parts={partsInScope}
+              onAssign={assignPartAtPlayhead}
+              activePartId={shots.find((s) => s.id === selectedShotId)?.partId ?? null}
+              disabled={running}
+              onAddNew={() => setAddPartOpen(true)}
+            />
+            <button
+              style={{
+                background: 'none',
+                border: '1px solid #555',
+                borderRadius: '3px',
+                color: '#ccc',
+                fontSize: '13px',
+                padding: '6px 14px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+              title="Find a part by name"
+              onClick={() => setPartPickerOpen(true)}
+            >
+              Find part…
+            </button>
+          </>
+        )}
+        {!isVoice &&
+          sortedCameras.map((cam) => (
           <button
             key={cam.id}
             style={{
@@ -1817,7 +2340,7 @@ export function TimelineEditor({
             + CAM{cam.number} {cam.name}
           </button>
         ))}
-        {sortedCameras.length === 0 && (
+        {!isVoice && sortedCameras.length === 0 && (
           <span style={{ color: '#444', fontSize: '11px' }}>No cameras configured</span>
         )}
       </div>
@@ -1874,9 +2397,50 @@ export function TimelineEditor({
           ))}
           <div style={{ borderTop: '1px solid #333', padding: '4px 0' }}>
             <div style={{ padding: '2px 12px', fontSize: '11px', color: '#888' }}>
-              Change camera:
+              {isVoice ? 'Change part:' : 'Change camera:'}
             </div>
-            {sortedCameras.map((cam) => (
+            {isVoice &&
+              partsInScope.map((part) => (
+                <div
+                  key={part.id}
+                  style={{
+                    padding: '6px 12px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    color: '#ddd',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                  onMouseEnter={(e) => {
+                    const el = e.currentTarget as HTMLDivElement
+                    el.style.background = '#3a3a3a'
+                  }}
+                  onMouseLeave={(e) => {
+                    const el = e.currentTarget as HTMLDivElement
+                    el.style.background = 'transparent'
+                  }}
+                  onClick={() => {
+                    editShot({ id: contextMenu.shotId, partId: part.id }).catch((err: unknown) =>
+                      console.error('[TimelineEditor] changeCallPart:', err),
+                    )
+                    setContextMenu(null)
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: part.color,
+                      display: 'inline-block',
+                    }}
+                  />
+                  {part.number} — {part.name}
+                </div>
+              ))}
+            {!isVoice &&
+              sortedCameras.map((cam) => (
               <div
                 key={cam.id}
                 style={{
@@ -1915,6 +2479,42 @@ export function TimelineEditor({
             ))}
           </div>
         </div>
+      )}
+
+      {/* Type-to-filter picker, for a Part list too long to read off the bar */}
+      {partPickerOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            left: '50%',
+            top: '20%',
+            transform: 'translateX(-50%)',
+            width: '280px',
+            background: '#2a2a2a',
+            border: '1px solid #444',
+            borderRadius: '4px',
+            padding: '10px',
+            zIndex: 1000,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+          }}
+        >
+          <PartPicker
+            parts={partsInScope}
+            onPick={(part: Part) => {
+              assignPartAtPlayhead(part)
+              setPartPickerOpen(false)
+            }}
+            onCancel={() => setPartPickerOpen(false)}
+          />
+        </div>
+      )}
+
+      {/* A Part named mid-authoring lands on this Rundown and is assigned at once */}
+      {addPartOpen && (
+        <AddPartDialog
+          onCreated={(part: Part) => assignPartAtPlayhead(part)}
+          onClose={() => setAddPartOpen(false)}
+        />
       )}
     </div>
   )
