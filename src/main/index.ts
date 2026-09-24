@@ -352,9 +352,13 @@ function registerIpcHandlers(): void {
   // Voice-over settings
   registerIpcHandler('voice:settings:get', () => getGlobalVoiceSettings(db))
 
-  registerIpcHandler('voice:settings:save', (payload: GlobalVoiceSettings) =>
-    saveGlobalVoiceSettings(db, payload),
-  )
+  registerIpcHandler('voice:settings:save', (payload: GlobalVoiceSettings) => {
+    saveGlobalVoiceSettings(db, payload)
+    // The Voice is part of every clip's content address, so a global change
+    // turns every Part in every Project stale at once — the same reason the
+    // per-Project save queues a render.
+    for (const project of listProjects(db)) render.scheduleAutoRender(project.id)
+  })
 
   registerIpcHandler('voice:project:get', ({ projectId }: { projectId: string }) =>
     getProjectVoiceSettings(db, projectId),
