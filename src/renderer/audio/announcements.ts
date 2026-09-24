@@ -79,14 +79,14 @@ export function createAnnouncementPlayer(getSinkId: () => string | null): Announ
       cancel()
       if (!plan) return
 
-      for (const cue of plan.cues) {
-        // A cue due now is played now rather than through a zero timer, so the
+      for (const clip of plan.clips) {
+        // A clip due now is played now rather than through a zero timer, so the
         // first syllable is not pushed into the next frame.
-        if (cue.atMs <= 0) {
-          speak(cue.url)
+        if (clip.atMs <= 0) {
+          speak(clip.url)
           continue
         }
-        timers.push(setTimeout(() => speak(cue.url), cue.atMs))
+        timers.push(setTimeout(() => speak(clip.url), clip.atMs))
       }
     },
 

@@ -483,7 +483,7 @@ describe('LiveSession announcements', () => {
       expect(plans).toEqual([
         {
           callId: 'call-1',
-          cues: [
+          clips: [
             { url: clipUrl('wokal za'), atMs: 2000 - PHRASE_MS },
             { url: numberUrl(10), atMs: 2000 },
             { url: numberUrl(5), atMs: 7000 },
@@ -509,7 +509,7 @@ describe('LiveSession announcements', () => {
 
       // Unrendered speech warns rather than blocks (ADR 0005): the show runs,
       // and the band still gets the numbers.
-      expect(plans[0]?.cues).toEqual([
+      expect(plans[0]?.clips).toEqual([
         { url: numberUrl(10), atMs: 2000 },
         { url: numberUrl(5), atMs: 7000 },
         { url: numberUrl(3), atMs: 9000 },
@@ -543,7 +543,7 @@ describe('LiveSession announcements', () => {
       // live Call (11s) plus the skipped Call's planned 12s.
       expect(plans[1]).toEqual({
         callId: 'call-2',
-        cues: [
+        clips: [
           { url: clipUrl('refren za'), atMs: 13000 - PHRASE_MS },
           { url: numberUrl(10), atMs: 13000 },
           { url: numberUrl(5), atMs: 18000 },

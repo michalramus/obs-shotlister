@@ -44,7 +44,7 @@ describe('scheduleAnnouncement — countdown', () => {
     const plan = scheduleAnnouncement(makeInput({ phrase: null, leadMs: 15000 }))
 
     expect(plan).not.toBeNull()
-    expect(plan!.cues).toEqual([
+    expect(plan!.clips).toEqual([
       { url: '10.opus', atMs: 5000 },
       { url: '5.opus', atMs: 10000 },
       { url: '3.opus', atMs: 12000 },
@@ -59,19 +59,19 @@ describe('scheduleAnnouncement — countdown', () => {
     expect(plan!.callId).toBe('call-42')
   })
 
-  it('returns cues sorted by atMs ascending whatever order the countdown is in', () => {
+  it('returns clips sorted by atMs ascending whatever order the countdown is in', () => {
     const plan = scheduleAnnouncement(
       makeInput({ phrase: null, countdown: [1, 10, 3, 5, 2], leadMs: 15000 }),
     )
 
-    expect(plan!.cues.map((c) => c.atMs)).toEqual([5000, 10000, 12000, 13000, 14000])
+    expect(plan!.clips.map((c) => c.atMs)).toEqual([5000, 10000, 12000, 13000, 14000])
   })
 
   it('starts from the largest number that still fits on a short Call', () => {
     // 6s of lead: "10" would have to start 4s before the previous Call went live.
     const plan = scheduleAnnouncement(makeInput({ phrase: null, leadMs: 6000 }))
 
-    expect(plan!.cues).toEqual([
+    expect(plan!.clips).toEqual([
       { url: '5.opus', atMs: 1000 },
       { url: '3.opus', atMs: 3000 },
       { url: '2.opus', atMs: 4000 },
@@ -82,8 +82,8 @@ describe('scheduleAnnouncement — countdown', () => {
   it('drops numbers that would start before 0 rather than clamping them to 0', () => {
     const plan = scheduleAnnouncement(makeInput({ phrase: null, leadMs: 6000 }))
 
-    expect(plan!.cues.map((c) => c.url)).not.toContain('10.opus')
-    expect(plan!.cues.filter((c) => c.atMs === 0)).toHaveLength(0)
+    expect(plan!.clips.map((c) => c.url)).not.toContain('10.opus')
+    expect(plan!.clips.filter((c) => c.atMs === 0)).toHaveLength(0)
   })
 
   it('schedules nothing at or after the Calls own start', () => {
@@ -97,7 +97,7 @@ describe('scheduleAnnouncement — countdown', () => {
       }),
     )
 
-    expect(plan!.cues).toEqual([{ url: '1.opus', atMs: 0 }])
+    expect(plan!.clips).toEqual([{ url: '1.opus', atMs: 0 }])
   })
 
   it('skips a countdown number that has no rendered clip', () => {
@@ -105,7 +105,7 @@ describe('scheduleAnnouncement — countdown', () => {
       makeInput({ phrase: null, numbers: makeNumbers([10, 3, 1]), leadMs: 15000 }),
     )
 
-    expect(plan!.cues).toEqual([
+    expect(plan!.clips).toEqual([
       { url: '10.opus', atMs: 5000 },
       { url: '3.opus', atMs: 12000 },
       { url: '1.opus', atMs: 14000 },
@@ -121,7 +121,7 @@ describe('scheduleAnnouncement — flush placement', () => {
   it('ends the phrase exactly where the first number begins', () => {
     const plan = scheduleAnnouncement(makeInput({ leadMs: 15000 }))
 
-    expect(plan!.cues).toEqual([
+    expect(plan!.clips).toEqual([
       { url: 'phrase.opus', atMs: 4200 }, // 5000 - 800
       { url: '10.opus', atMs: 5000 },
       { url: '5.opus', atMs: 10000 },
@@ -134,8 +134,8 @@ describe('scheduleAnnouncement — flush placement', () => {
   it('works backwards from the first number that actually fits', () => {
     const plan = scheduleAnnouncement(makeInput({ leadMs: 6000 }))
 
-    expect(plan!.cues[0]).toEqual({ url: 'phrase.opus', atMs: 200 }) // 1000 - 800
-    expect(plan!.cues[1]).toEqual({ url: '5.opus', atMs: 1000 })
+    expect(plan!.clips[0]).toEqual({ url: 'phrase.opus', atMs: 200 }) // 1000 - 800
+    expect(plan!.clips[1]).toEqual({ url: '5.opus', atMs: 1000 })
   })
 
   it('works backwards from the first number that has a clip', () => {
@@ -144,8 +144,8 @@ describe('scheduleAnnouncement — flush placement', () => {
       makeInput({ numbers: makeNumbers([5, 3, 2, 1]), leadMs: 15000 }),
     )
 
-    expect(plan!.cues[0]).toEqual({ url: 'phrase.opus', atMs: 9200 }) // 10000 - 800
-    expect(plan!.cues[1]).toEqual({ url: '5.opus', atMs: 10000 })
+    expect(plan!.clips[0]).toEqual({ url: 'phrase.opus', atMs: 9200 }) // 10000 - 800
+    expect(plan!.clips[1]).toEqual({ url: '5.opus', atMs: 10000 })
   })
 
   it('drops a number the phrase cannot fit in front of, rather than falling silent', () => {
@@ -155,7 +155,7 @@ describe('scheduleAnnouncement — flush placement', () => {
     // fits, not with silence.
     const plan = scheduleAnnouncement(makeInput({ leadMs: 5200 }))
 
-    expect(plan!.cues).toEqual([
+    expect(plan!.clips).toEqual([
       { url: 'phrase.opus', atMs: 1400 }, // 2200 - 800
       { url: '3.opus', atMs: 2200 },
       { url: '2.opus', atMs: 3200 },
@@ -168,7 +168,7 @@ describe('scheduleAnnouncement — flush placement', () => {
     // fit before it — so the phrase flushes against the Call's own start.
     const plan = scheduleAnnouncement(makeInput({ leadMs: 1500 }))
 
-    expect(plan!.cues).toEqual([{ url: 'phrase.opus', atMs: 700 }]) // 1500 - 800
+    expect(plan!.clips).toEqual([{ url: 'phrase.opus', atMs: 700 }]) // 1500 - 800
   })
 
   it('drops the Announcement only when the phrase is longer than the lead', () => {
@@ -179,14 +179,14 @@ describe('scheduleAnnouncement — flush placement', () => {
   it('keeps the Announcement when the phrase fits exactly at 0', () => {
     const plan = scheduleAnnouncement(makeInput({ leadMs: 5800 }))
 
-    expect(plan!.cues[0]).toEqual({ url: 'phrase.opus', atMs: 0 })
-    expect(plan!.cues[1]).toEqual({ url: '5.opus', atMs: 800 })
+    expect(plan!.clips[0]).toEqual({ url: 'phrase.opus', atMs: 0 })
+    expect(plan!.clips[1]).toEqual({ url: '5.opus', atMs: 800 })
   })
 
   it('falls back to the Calls own start when no number is spoken', () => {
     const plan = scheduleAnnouncement(makeInput({ countdown: [], leadMs: 15000 }))
 
-    expect(plan!.cues).toEqual([{ url: 'phrase.opus', atMs: 14200 }]) // 15000 - 800
+    expect(plan!.clips).toEqual([{ url: 'phrase.opus', atMs: 14200 }]) // 15000 - 800
   })
 })
 
@@ -198,7 +198,7 @@ describe('scheduleAnnouncement — immediate placement', () => {
   it('plays the phrase the moment the previous Call goes live', () => {
     const plan = scheduleAnnouncement(makeInput({ placement: 'immediate', leadMs: 15000 }))
 
-    expect(plan!.cues).toEqual([
+    expect(plan!.clips).toEqual([
       { url: 'phrase.opus', atMs: 0 },
       { url: '10.opus', atMs: 5000 },
       { url: '5.opus', atMs: 10000 },
@@ -212,7 +212,7 @@ describe('scheduleAnnouncement — immediate placement', () => {
     // "1" lands 400ms in, mid-phrase; immediate does not move for it.
     const plan = scheduleAnnouncement(makeInput({ placement: 'immediate', leadMs: 1400 }))
 
-    expect(plan!.cues).toEqual([
+    expect(plan!.clips).toEqual([
       { url: 'phrase.opus', atMs: 0 },
       { url: '1.opus', atMs: 400 },
     ])
@@ -227,7 +227,7 @@ describe('scheduleAnnouncement — immediate placement', () => {
   it('keeps the Announcement when the phrase finishes exactly as the Call starts', () => {
     const plan = scheduleAnnouncement(makeInput({ placement: 'immediate', leadMs: 800 }))
 
-    expect(plan!.cues).toEqual([{ url: 'phrase.opus', atMs: 0 }])
+    expect(plan!.clips).toEqual([{ url: 'phrase.opus', atMs: 0 }])
   })
 
   it('still speaks the phrase when the countdown is empty', () => {
@@ -235,7 +235,7 @@ describe('scheduleAnnouncement — immediate placement', () => {
       makeInput({ placement: 'immediate', countdown: [], leadMs: 15000 }),
     )
 
-    expect(plan!.cues).toEqual([{ url: 'phrase.opus', atMs: 0 }])
+    expect(plan!.clips).toEqual([{ url: 'phrase.opus', atMs: 0 }])
   })
 })
 
@@ -247,7 +247,7 @@ describe('scheduleAnnouncement — nothing to say', () => {
   it('schedules the numbers alone when the Part has no rendered phrase', () => {
     const plan = scheduleAnnouncement(makeInput({ phrase: null, leadMs: 4000 }))
 
-    expect(plan!.cues).toEqual([
+    expect(plan!.clips).toEqual([
       { url: '3.opus', atMs: 1000 },
       { url: '2.opus', atMs: 2000 },
       { url: '1.opus', atMs: 3000 },

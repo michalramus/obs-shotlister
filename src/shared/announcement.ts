@@ -14,7 +14,7 @@
  * a plan, and the renderer plays it (ADR 0002 — nothing here advances anything).
  */
 
-import type { AnnouncementCue, AnnouncementPlan, PhrasePlacement } from './ipc-contract'
+import type { ScheduledClip, AnnouncementPlan, PhrasePlacement } from './ipc-contract'
 
 /**
  * The countdown a Project gets before it overrides anything. Exported so the
@@ -49,7 +49,7 @@ export interface ScheduleInput {
  *
  * `null` covers both "there is no room for the phrase" — which Edit mode badges
  * so the operator finds out while editing — and "there is nothing left to play
- * at all", because a plan with no cues would only cut off the Announcement in
+ * at all", because a plan with no clips would only cut off the Announcement in
  * flight for no gain.
  */
 export function scheduleAnnouncement(input: ScheduleInput): AnnouncementPlan | null {
@@ -61,7 +61,7 @@ export function scheduleAnnouncement(input: ScheduleInput): AnnouncementPlan | n
   // dropped rather than clamped to 0 — two numbers stacked on the same instant
   // is worse information than one number fewer, so a short Call simply begins at
   // the largest number that still fits.
-  const numberCues: AnnouncementCue[] = []
+  const numberClips: ScheduledClip[] = []
   for (const n of countdown) {
     const clip = numbers.get(n)
     // A number with no rendered clip is silence, not a crash: the countdown
@@ -69,27 +69,27 @@ export function scheduleAnnouncement(input: ScheduleInput): AnnouncementPlan | n
     if (!clip) continue
     const atMs = leadMs - n * 1000
     if (atMs < 0 || atMs >= leadMs) continue
-    numberCues.push({ url: clip.url, atMs })
+    numberClips.push({ url: clip.url, atMs })
   }
 
   if (!phrase) {
     // Nothing to name, but the numbers still tell the band when.
-    return numberCues.length > 0 ? { callId, cues: sortByTime(numberCues) } : null
+    return numberClips.length > 0 ? { callId, clips: sortByTime(numberClips) } : null
   }
 
-  const placed = placePhrase(placement, phrase, numberCues, leadMs)
+  const placed = placePhrase(placement, phrase, numberClips, leadMs)
   // Too short for even the phrase: the whole Announcement goes, numbers
   // included. A countdown with no name in front of it tells the band when but
   // never what, which is worse than staying quiet. Edit mode badges this.
   if (!placed) return null
 
-  const cues = [...placed.numbers, { url: phrase.url, atMs: placed.phraseAtMs }]
+  const clips = [...placed.numbers, { url: phrase.url, atMs: placed.phraseAtMs }]
 
-  return { callId, cues: sortByTime(cues) }
+  return { callId, clips: sortByTime(clips) }
 }
 
-function sortByTime(cues: AnnouncementCue[]): AnnouncementCue[] {
-  return [...cues].sort((a, b) => a.atMs - b.atMs)
+function sortByTime(clips: ScheduledClip[]): ScheduledClip[] {
+  return [...clips].sort((a, b) => a.atMs - b.atMs)
 }
 
 /**
@@ -111,14 +111,14 @@ function sortByTime(cues: AnnouncementCue[]): AnnouncementCue[] {
 function placePhrase(
   placement: PhrasePlacement,
   phrase: AnnouncementClip,
-  numberCues: AnnouncementCue[],
+  numberClips: ScheduledClip[],
   leadMs: number,
-): { phraseAtMs: number; numbers: AnnouncementCue[] } | null {
+): { phraseAtMs: number; numbers: ScheduledClip[] } | null {
   if (placement === 'immediate') {
-    return phrase.durationMs <= leadMs ? { phraseAtMs: 0, numbers: numberCues } : null
+    return phrase.durationMs <= leadMs ? { phraseAtMs: 0, numbers: numberClips } : null
   }
 
-  const ascending = sortByTime(numberCues)
+  const ascending = sortByTime(numberClips)
   for (let i = 0; i < ascending.length; i++) {
     const phraseAtMs = ascending[i].atMs - phrase.durationMs
     if (phraseAtMs >= 0) return { phraseAtMs, numbers: ascending.slice(i) }

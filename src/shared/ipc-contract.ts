@@ -177,8 +177,14 @@ export interface ProjectRenderStatus {
 // Announcements
 // ---------------------------------------------------------------------------
 
-/** One clip to play, and how long after the plan was issued to play it. */
-export interface AnnouncementCue {
+/**
+ * One clip to play, and how long after the plan was issued to play it.
+ *
+ * Deliberately not called a Cue: a Cue is the fixed sound the Cue Tray plays,
+ * and the two now have separate output devices, so sharing the word would make
+ * the routing code read as though it were about the same sound.
+ */
+export interface ScheduledClip {
   url: string
   atMs: number
 }
@@ -190,7 +196,7 @@ export interface AnnouncementCue {
  */
 export interface AnnouncementPlan {
   callId: string
-  cues: AnnouncementCue[]
+  clips: ScheduledClip[]
 }
 
 // ---------------------------------------------------------------------------
@@ -582,31 +588,92 @@ export interface ElectronApi {
 // ---------------------------------------------------------------------------
 
 export const IPC_CHANNELS = [
-  'projects:list', 'projects:create', 'projects:rename', 'projects:delete', 'project:setActive',
-  'cameras:list', 'cameras:upsert', 'cameras:delete',
-  'rundowns:list', 'rundowns:create', 'rundowns:rename', 'rundowns:delete',
-  'rundowns:setActive', 'rundowns:reorder', 'rundowns:setFolder',
-  'rundowns:setKind', 'rundowns:unassignedCount', 'rundowns:renameFolder',
-  'parts:list', 'parts:listInScope', 'parts:upsert', 'parts:delete',
-  'parts:promote', 'parts:setColor',
-  'lyrics:list', 'lyrics:upsert', 'lyrics:delete',
-  'voice:settings:get', 'voice:settings:save', 'voice:project:get', 'voice:project:save',
-  'voice:effective', 'audio:devices:get', 'audio:devices:save',
-  'tts:status', 'tts:render', 'tts:phraseDurations',
-  'shots:list', 'shots:create', 'shots:update', 'shots:delete', 'shots:reorder', 'shots:split',
-  'live:get', 'live:start', 'live:stop', 'live:next', 'live:skip-next', 'live:restart',
-  'live:getPreviewFirst', 'live:savePreviewFirst',
-  'shots:import-csv:open-dialog', 'shots:import-csv:parse', 'shots:import-csv:confirm',
-  'obs:settings:get', 'obs:settings:save', 'obs:connect', 'obs:disconnect', 'obs:status',
-  'obs:getEnabled', 'obs:setEnabled', 'obs:getScenes', 'obs:getTransitions', 'obs:checkScenes',
-  'obs:validate', 'obs:transitions:list', 'obs:transitions:upsert', 'obs:transitions:delete',
-  'markers:list', 'markers:upsert', 'markers:delete',
-  'rundown:media:get', 'rundown:media:save', 'rundown:media:clear', 'rundown:media:open-dialog',
+  'projects:list',
+  'projects:create',
+  'projects:rename',
+  'projects:delete',
+  'project:setActive',
+  'cameras:list',
+  'cameras:upsert',
+  'cameras:delete',
+  'rundowns:list',
+  'rundowns:create',
+  'rundowns:rename',
+  'rundowns:delete',
+  'rundowns:setActive',
+  'rundowns:reorder',
+  'rundowns:setFolder',
+  'rundowns:setKind',
+  'rundowns:unassignedCount',
+  'rundowns:renameFolder',
+  'parts:list',
+  'parts:listInScope',
+  'parts:upsert',
+  'parts:delete',
+  'parts:promote',
+  'parts:setColor',
+  'lyrics:list',
+  'lyrics:upsert',
+  'lyrics:delete',
+  'voice:settings:get',
+  'voice:settings:save',
+  'voice:project:get',
+  'voice:project:save',
+  'voice:effective',
+  'audio:devices:get',
+  'audio:devices:save',
+  'tts:status',
+  'tts:render',
+  'tts:phraseDurations',
+  'shots:list',
+  'shots:create',
+  'shots:update',
+  'shots:delete',
+  'shots:reorder',
+  'shots:split',
+  'live:get',
+  'live:start',
+  'live:stop',
+  'live:next',
+  'live:skip-next',
+  'live:restart',
+  'live:getPreviewFirst',
+  'live:savePreviewFirst',
+  'shots:import-csv:open-dialog',
+  'shots:import-csv:parse',
+  'shots:import-csv:confirm',
+  'obs:settings:get',
+  'obs:settings:save',
+  'obs:connect',
+  'obs:disconnect',
+  'obs:status',
+  'obs:getEnabled',
+  'obs:setEnabled',
+  'obs:getScenes',
+  'obs:getTransitions',
+  'obs:checkScenes',
+  'obs:validate',
+  'obs:transitions:list',
+  'obs:transitions:upsert',
+  'obs:transitions:delete',
+  'markers:list',
+  'markers:upsert',
+  'markers:delete',
+  'rundown:media:get',
+  'rundown:media:save',
+  'rundown:media:clear',
+  'rundown:media:open-dialog',
   'media:file-exists',
-  'osc:settings:get', 'osc:settings:save',
-  'ui:setMode', 'assets:audioDir',
-  'export:project', 'export:rundown', 'export:database',
-  'import:project', 'import:rundown', 'import:database',
+  'osc:settings:get',
+  'osc:settings:save',
+  'ui:setMode',
+  'assets:audioDir',
+  'export:project',
+  'export:rundown',
+  'export:database',
+  'import:project',
+  'import:rundown',
+  'import:database',
 ] as const
 
 type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never
