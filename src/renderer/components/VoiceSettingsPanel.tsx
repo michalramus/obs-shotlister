@@ -7,6 +7,7 @@ import type {
   ProjectVoiceSettings,
   RenderState,
 } from '../../shared/ipc-contract'
+import { NUMBER_CLIP_MAX, NUMBER_CLIP_MIN } from '../../shared/number-words'
 
 // ---------------------------------------------------------------------------
 // Countdown parsing
@@ -18,8 +19,11 @@ import type {
 // ---------------------------------------------------------------------------
 
 /** The range rendered per Voice; a number outside it has no clip and no sound. */
-export const COUNTDOWN_MIN = 1
-export const COUNTDOWN_MAX = 60
+// Taken from the render planner rather than restated: these are exactly the
+// numbers a Voice has clips for, so a validator with its own bounds would
+// either reject a usable number or accept one nothing ever renders.
+export const COUNTDOWN_MIN = NUMBER_CLIP_MIN
+export const COUNTDOWN_MAX = NUMBER_CLIP_MAX
 
 export type CountdownParse = { ok: true; countdown: number[] } | { ok: false; error: string }
 
