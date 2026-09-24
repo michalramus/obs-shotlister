@@ -27,6 +27,7 @@ import {
 } from '../timeline/lyrics'
 import { useAppStore } from '../store'
 import { PartButtonBar, PartPicker, AddPartDialog, partForKey } from './PartsConfigPanel'
+import { targetNoun, targetOf, targetsById, targetsOf } from '../../shared/rundown-item'
 import type { DeleteShotMode } from '../../shared/ipc-contract'
 
 interface TimelineEditorProps {
@@ -280,7 +281,6 @@ export function TimelineEditor({
   useEffect(() => {
     localStorage.setItem('obs-queuer-timeline-zoom', String(zoomPxPerSec))
   }, [zoomPxPerSec])
-
 
   // Keep onAddMarkerRef in sync
   useEffect(() => {
@@ -785,7 +785,8 @@ export function TimelineEditor({
       if ((e.key === 'l' || e.key === 'L') && !running) {
         e.preventDefault()
         // Use selected shot, or fall back to shot under playhead
-        const shotId = selectedShotIdRef.current ?? shotIdAtMs(shotsRef.current, playheadMsRef.current)
+        const shotId =
+          selectedShotIdRef.current ?? shotIdAtMs(shotsRef.current, playheadMsRef.current)
         if (shotId) {
           // Stop playback so the label input can retain focus
           setIsPlaying((prev) => {
@@ -1024,7 +1025,9 @@ export function TimelineEditor({
   function handleMarkerTrackDblClick(e: React.MouseEvent<HTMLDivElement>): void {
     const rect = e.currentTarget.getBoundingClientRect()
     // Markers may sit past the last shot, so they are not clamped to totalMs.
-    const posMs = Math.round(timelinePosMs(e.clientX, rect.left, zoomPxPerSec, Number.MAX_SAFE_INTEGER))
+    const posMs = Math.round(
+      timelinePosMs(e.clientX, rect.left, zoomPxPerSec, Number.MAX_SAFE_INTEGER),
+    )
     onAddMarker(posMs)
   }
 
@@ -1147,9 +1150,7 @@ export function TimelineEditor({
     ticks.push({ px, major, label: major ? formatTime(ms) : undefined })
   }
 
-  // Camera lookup map
-  const cameraMap = new Map(cameras.map((c) => [c.id, c]))
-  const partMap = new Map(partsInScope.map((p) => [p.id, p]))
+  const targetById = targetsById(targetsOf(rundownKind, cameras, partsInScope))
 
   const UNASSIGNED_COLOR = '#3a3a3a'
 
@@ -1161,30 +1162,30 @@ export function TimelineEditor({
    * should see that here rather than when they press start.
    */
   function itemTarget(shot: Shot): { color: string; label: string; title: string } {
+    const noun = targetNoun(rundownKind)
     if (isUnassigned(shot, rundownKind)) {
       return {
         color: UNASSIGNED_COLOR,
-        label: isVoice ? 'No part' : 'No camera',
-        title: isVoice
-          ? 'No Part assigned — a Live session will refuse to start'
-          : 'No Camera assigned — a Live session will refuse to start',
+        label: `No ${noun.toLowerCase()}`,
+        title: `No ${noun} assigned — a Live session will refuse to start`,
       }
     }
-    if (isVoice) {
-      const part = shot.partId === null ? undefined : partMap.get(shot.partId)
-      // A Part out of this Rundown's scope is still a real assignment (ADR 0006);
-      // only its colour and name are unavailable here.
+
+    const target = targetOf(shot, rundownKind, targetById)
+    // Resolving to nothing here does not mean unassigned — that was ruled out
+    // above. It is a Part outside this Rundown's scope, which is still a real
+    // assignment (ADR 0006); only its name and colour are unavailable.
+    if (!target) {
       return {
-        color: part?.color ?? '#666',
-        label: part?.name ?? 'Part',
-        title: `${part?.name ?? 'Part'} (${shot.durationMs}ms)`,
+        color: '#666',
+        label: noun,
+        title: `${noun} from another scope (${shot.durationMs}ms)`,
       }
     }
-    const cam = shot.cameraId === null ? undefined : cameraMap.get(shot.cameraId)
     return {
-      color: cam?.color ?? '#555',
-      label: `CAM${cam ? cam.number : '?'}`,
-      title: cam ? `${cam.name} (${shot.durationMs}ms)` : shot.id,
+      color: target.color,
+      label: isVoice ? target.name : target.badge,
+      title: `${target.name} (${shot.durationMs}ms)`,
     }
   }
 
@@ -1667,15 +1668,19 @@ export function TimelineEditor({
                       extendDragRef.current = { startX: e.clientX, origDur: lastDur }
                       function onMM(ev: MouseEvent): void {
                         if (!extendDragRef.current) return
-                        const deltaMs =
-                          msAtPx(ev.clientX - extendDragRef.current.startX, zoomRef.current)
+                        const deltaMs = msAtPx(
+                          ev.clientX - extendDragRef.current.startX,
+                          zoomRef.current,
+                        )
                         const newDur = Math.max(1000, extendDragRef.current.origDur + deltaMs)
                         setDragOverride({ [lastShot.id]: newDur })
                       }
                       function onMU(ev: MouseEvent): void {
                         if (extendDragRef.current) {
-                          const deltaMs =
-                            msAtPx(ev.clientX - extendDragRef.current.startX, zoomRef.current)
+                          const deltaMs = msAtPx(
+                            ev.clientX - extendDragRef.current.startX,
+                            zoomRef.current,
+                          )
                           const newDur = Math.max(1000, extendDragRef.current.origDur + deltaMs)
                           onExtendLastShot(lastShot.id, newDur)
                           extendDragRef.current = null
@@ -1819,10 +1824,7 @@ export function TimelineEditor({
                   position: 'absolute',
                   left: pxAtMs(lyricDraft.startMs, zoomPxPerSec),
                   top: 3,
-                  width: Math.max(
-                    120,
-                    pxAtMs(lyricDraft.endMs - lyricDraft.startMs, zoomPxPerSec),
-                  ),
+                  width: Math.max(120, pxAtMs(lyricDraft.endMs - lyricDraft.startMs, zoomPxPerSec)),
                   height: LYRICS_ROW_HEIGHT - 6,
                   background: '#1b2a3a',
                   border: '1px solid #5dade2',
@@ -2309,37 +2311,37 @@ export function TimelineEditor({
         )}
         {!isVoice &&
           sortedCameras.map((cam) => (
-          <button
-            key={cam.id}
-            style={{
-              background: 'none',
-              border: '1px solid #555',
-              borderRadius: '3px',
-              color: '#ccc',
-              fontSize: '13px',
-              padding: '6px 14px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '5px',
-              whiteSpace: 'nowrap',
-            }}
-            title={`Split at playhead and assign CAM${cam.number} ${cam.name}`}
-            onClick={() => handleCamButtonClick(cam)}
-          >
-            <span
+            <button
+              key={cam.id}
               style={{
-                width: '12px',
-                height: '12px',
-                borderRadius: '50%',
-                background: cam.color,
-                display: 'inline-block',
-                flexShrink: 0,
+                background: 'none',
+                border: '1px solid #555',
+                borderRadius: '3px',
+                color: '#ccc',
+                fontSize: '13px',
+                padding: '6px 14px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                whiteSpace: 'nowrap',
               }}
-            />
-            + CAM{cam.number} {cam.name}
-          </button>
-        ))}
+              title={`Split at playhead and assign CAM${cam.number} ${cam.name}`}
+              onClick={() => handleCamButtonClick(cam)}
+            >
+              <span
+                style={{
+                  width: '12px',
+                  height: '12px',
+                  borderRadius: '50%',
+                  background: cam.color,
+                  display: 'inline-block',
+                  flexShrink: 0,
+                }}
+              />
+              + CAM{cam.number} {cam.name}
+            </button>
+          ))}
         {!isVoice && sortedCameras.length === 0 && (
           <span style={{ color: '#444', fontSize: '11px' }}>No cameras configured</span>
         )}
@@ -2361,20 +2363,18 @@ export function TimelineEditor({
           }}
           onMouseLeave={() => setContextMenu(null)}
         >
-          {(
-            [
-              {
-                mode: 'extend' as const,
-                label: 'Delete shot',
-                hint: 'previous shot absorbs the time',
-              },
-              {
-                mode: 'ripple' as const,
-                label: 'Delete and close gap',
-                hint: 'later shots move earlier',
-              },
-            ]
-          ).map(({ mode, label, hint }) => (
+          {[
+            {
+              mode: 'extend' as const,
+              label: 'Delete shot',
+              hint: 'previous shot absorbs the time',
+            },
+            {
+              mode: 'ripple' as const,
+              label: 'Delete and close gap',
+              hint: 'later shots move earlier',
+            },
+          ].map(({ mode, label, hint }) => (
             <div
               key={mode}
               style={{ padding: '8px 12px', cursor: 'pointer', fontSize: '13px', color: '#e74c3c' }}
@@ -2441,42 +2441,42 @@ export function TimelineEditor({
               ))}
             {!isVoice &&
               sortedCameras.map((cam) => (
-              <div
-                key={cam.id}
-                style={{
-                  padding: '6px 12px',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  color: '#ddd',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                }}
-                onMouseEnter={(e) => {
-                  const el = e.currentTarget as HTMLDivElement
-                  el.style.background = '#3a3a3a'
-                }}
-                onMouseLeave={(e) => {
-                  const el = e.currentTarget as HTMLDivElement
-                  el.style.background = 'transparent'
-                }}
-                onClick={() => {
-                  onChangeShotCamera(contextMenu.shotId, cam.id)
-                  setContextMenu(null)
-                }}
-              >
-                <span
+                <div
+                  key={cam.id}
                   style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    background: cam.color,
-                    display: 'inline-block',
+                    padding: '6px 12px',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                    color: '#ddd',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
                   }}
-                />
-                CAM{cam.number} — {cam.name}
-              </div>
-            ))}
+                  onMouseEnter={(e) => {
+                    const el = e.currentTarget as HTMLDivElement
+                    el.style.background = '#3a3a3a'
+                  }}
+                  onMouseLeave={(e) => {
+                    const el = e.currentTarget as HTMLDivElement
+                    el.style.background = 'transparent'
+                  }}
+                  onClick={() => {
+                    onChangeShotCamera(contextMenu.shotId, cam.id)
+                    setContextMenu(null)
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: cam.color,
+                      display: 'inline-block',
+                    }}
+                  />
+                  CAM{cam.number} — {cam.name}
+                </div>
+              ))}
           </div>
         </div>
       )}

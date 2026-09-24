@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { Shot, Camera, Part, RundownKind } from '../types'
+import { targetOf, targetsById, targetsOf } from '../rundown-item'
 import { formatMs, computeTiming, computeRemainingMs } from '../timing'
 
 // The countdown renders tenths of a second, so ticking faster than this only
@@ -468,22 +469,7 @@ export function ShotlistWidget({
   // and every musician wants the whole part list.
   const isVoice = kind === 'voice'
   const cameraById = new Map(cameras.map((c) => [c.id, c]))
-  const partById = new Map((parts ?? []).map((p) => [p.id, p]))
-
-  /**
-   * What an item displays as, whichever Kind it belongs to.
-   *
-   * Both targets survive a conversion, so the Rundown's Kind decides which one
-   * is read rather than whichever column happens to be filled.
-   */
-  function targetOf(shot: Shot): { badge: string; name: string; color: string } | undefined {
-    if (isVoice) {
-      const part = shot.partId === null ? undefined : partById.get(shot.partId)
-      return part && { badge: String(part.number), name: part.name, color: part.color }
-    }
-    const camera = shot.cameraId === null ? undefined : cameraById.get(shot.cameraId)
-    return camera && { badge: `CAM${camera.number}`, name: camera.name, color: camera.color }
-  }
+  const targetById = targetsById(targetsOf(kind, cameras, parts ?? []))
   // indexOf per row made rendering O(shots²) on every tick.
   const shotIndexById = new Map(shots.map((shot, i) => [shot.id, i]))
   const hasFilter = !isVoice && cameraFilter !== undefined && cameraFilter.length > 0
@@ -604,7 +590,7 @@ export function ShotlistWidget({
             const isLive = timing.liveIndex === shotIndexInAll
             const isNext = timing.nextVisibleIndex === shotIndexInAll
 
-            const target = targetOf(shot)
+            const target = targetOf(shot, kind, targetById)
 
             let timeLabel = formatMs(shot.durationMs)
             let progressPct: number | null = null

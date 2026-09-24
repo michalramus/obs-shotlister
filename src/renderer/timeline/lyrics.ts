@@ -9,7 +9,7 @@
  * here where a test can reach them.
  */
 
-import type { Lyric, RundownKind, Shot } from '../../shared/types'
+import type { Lyric, Shot } from '../../shared/types'
 import { pxAtMs } from './coordinates'
 
 /** An in/out pair on the timeline, before it is a Lyric. */
@@ -97,10 +97,9 @@ export function lyricBlocks(lyrics: Lyric[], zoomPxPerSec: number, minWidthPx = 
   }))
 }
 
-/** True when the item has no target for its Rundown's Kind. */
-export function isUnassigned(item: Shot, kind: RundownKind): boolean {
-  return kind === 'voice' ? item.partId === null : item.cameraId === null
-}
+// Re-exported so the timeline keeps one import for its lane helpers, but
+// defined once in shared/rundown-item — the Phone view needs the same answer.
+export { isUnassigned } from '../../shared/rundown-item'
 
 export interface DropPredicateInput {
   /** How long there is before the Call is due — the previous visible Call's duration. */
