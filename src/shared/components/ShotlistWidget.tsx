@@ -239,6 +239,10 @@ export function ShotlistWidget({
   audioVolume = 1,
   cueSinkId = null,
 }: ShotlistWidgetProps): React.JSX.Element {
+  // A Voice-over Rundown is shown unfiltered — there are no Cameras to filter
+  // by — and it speaks its own countdown rather than playing the fixed Cues.
+  const isVoice = kind === 'voice'
+
   const [now, setNow] = useState(() => Date.now())
   const audioPoolRef = useRef<Map<string, HTMLAudioElement>>(new Map())
   const lastTickRef = useRef(0)
@@ -288,6 +292,11 @@ export function ShotlistWidget({
   const playCue = useCallback(
     (filename: string): void => {
       if (!audioBaseUrl) return
+      // A Voice-over Rundown speaks its countdown instead. The fixed Cues are a
+      // Camera Rundown's countdown and would talk over the Announcement — and
+      // they count to the wrong thing anyway, since an Announcement counts down
+      // to the next Call rather than to the end of this one.
+      if (isVoice) return
       let audio = audioPoolRef.current.get(filename)
       if (!audio) {
         audio = new Audio(`${audioBaseUrl}/${filename}`)
@@ -300,7 +309,7 @@ export function ShotlistWidget({
       audio.currentTime = 0
       audio.play().catch((err: unknown) => console.error('[ShotlistWidget] audio error:', err))
     },
-    [audioBaseUrl, audioVolume, cueSinkId],
+    [audioBaseUrl, audioVolume, cueSinkId, isVoice],
   )
 
   // Ticker while running
@@ -465,9 +474,6 @@ export function ShotlistWidget({
 
   const timing = computeTiming(shots, cameras, liveIndex, startedAt, now, cameraFilter)
 
-  // A Voice-over Rundown is shown unfiltered: there are no Cameras to filter by,
-  // and every musician wants the whole part list.
-  const isVoice = kind === 'voice'
   const cameraById = new Map(cameras.map((c) => [c.id, c]))
   const targetById = targetsById(targetsOf(kind, cameras, parts ?? []))
   // indexOf per row made rendering O(shots²) on every tick.
