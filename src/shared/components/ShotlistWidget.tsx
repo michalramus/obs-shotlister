@@ -17,10 +17,13 @@ type RoutableAudio = HTMLAudioElement & { setSinkId?: (sinkId: string) => Promis
  * countdown — the operator would rather hear their Cues on the wrong speakers
  * than not at all.
  */
-function routeToSink(audio: HTMLAudioElement, sinkId: string): void {
+function routeToSink(audio: HTMLAudioElement, sinkId: string | null): void {
   const routable = audio as RoutableAudio
   if (typeof routable.setSinkId !== 'function') return
-  routable.setSinkId(sinkId).catch((err: unknown) => {
+  // '' is how the API says "system default". Passing it matters: the clips are
+  // pooled and keep whichever sink they were last given, so without this,
+  // choosing System default leaves them on the old device until a restart.
+  routable.setSinkId(sinkId ?? '').catch((err: unknown) => {
     console.error('[ShotlistWidget] cue output device unavailable:', err)
   })
 }
@@ -283,7 +286,6 @@ export function ShotlistWidget({
   // put the first one on the old device, which is the one beep the operator
   // changed the setting to move.
   useEffect(() => {
-    if (!cueSinkId) return
     for (const audio of audioPoolRef.current.values()) {
       routeToSink(audio, cueSinkId)
     }
@@ -304,7 +306,7 @@ export function ShotlistWidget({
       }
       // A clip created after the routing effect ran still needs pointing at the
       // chosen device; a no-op once it is already there.
-      if (cueSinkId) routeToSink(audio, cueSinkId)
+      routeToSink(audio, cueSinkId)
       audio.volume = audioVolume
       audio.currentTime = 0
       audio.play().catch((err: unknown) => console.error('[ShotlistWidget] audio error:', err))
