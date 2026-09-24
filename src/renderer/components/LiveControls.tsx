@@ -63,7 +63,14 @@ export function LiveControls(): React.JSX.Element {
   const setUiMode = useAppStore((s) => s.setUiMode)
 
   const [inTransition, setInTransition] = useState(false)
-  const [startError, setStartError] = useState<string | null>(null)
+  /**
+   * The last transport failure, shown in whichever bar is on screen.
+   *
+   * Every action routes through `handleError`, so a Next that fails mid-show
+   * has to be visible then — not held until the session ends and shown beside
+   * the Start button, reading as a start failure that never happened.
+   */
+  const [actionError, setActionError] = useState<string | null>(null)
   const transitionRafRef = useRef<number | null>(null)
   const [previewFirst, setPreviewFirst] = useState(() => {
     try {
@@ -120,7 +127,7 @@ export function LiveControls(): React.JSX.Element {
 
   function handleError(label: string, err: unknown): void {
     console.error(`[LiveControls] ${label}:`, err)
-    setStartError(err instanceof Error ? err.message : String(err))
+    setActionError(err instanceof Error ? err.message : String(err))
   }
 
   /**
@@ -135,7 +142,7 @@ export function LiveControls(): React.JSX.Element {
    */
   function startRundown(): void {
     if (!activeRundownId) return
-    setStartError(null)
+    setActionError(null)
 
     if (rundownKind === 'voice' && unrenderedCount > 0) {
       const parts = unrenderedCount === 1 ? '1 Part has' : `${unrenderedCount} Parts have`
@@ -161,6 +168,13 @@ export function LiveControls(): React.JSX.Element {
     return hasNextShot()
   }
 
+  const errorNotice =
+    actionError === null ? null : (
+      <span role="alert" style={{ color: '#ff8a80', fontSize: 12, maxWidth: 420, lineHeight: 1.3 }}>
+        {actionError}
+      </span>
+    )
+
   if (!running) {
     return (
       <div style={s.bar(uiMode)} data-testid="live-controls">
@@ -181,19 +195,7 @@ export function LiveControls(): React.JSX.Element {
             >
               ▶ Start
             </button>
-            {startError !== null && (
-              <span
-                role="alert"
-                style={{
-                  color: '#ff8a80',
-                  fontSize: 12,
-                  maxWidth: 420,
-                  lineHeight: 1.3,
-                }}
-              >
-                {startError}
-              </span>
-            )}
+            {errorNotice}
             <label
               style={{
                 display: 'flex',
@@ -245,6 +247,8 @@ export function LiveControls(): React.JSX.Element {
       >
         ■ Stop
       </button>
+
+      {errorNotice}
 
       <button
         style={s.btn('secondary')}
