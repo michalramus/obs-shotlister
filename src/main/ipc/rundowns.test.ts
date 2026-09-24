@@ -379,3 +379,50 @@ describe('unassignedItemCount', () => {
     expect(() => unassignedItemCount(db, 'nonexistent')).toThrow()
   })
 })
+
+describe('deleting a Rundown that owns Parts', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openMemoryDb()
+    insertProject(db, 'p1', 'P')
+    insertRundown(db, 'A', 'p1', 'Song A')
+    insertRundown(db, 'B', 'p1', 'Song B')
+    db.prepare(
+      "INSERT INTO parts (id, project_id, number, name, color, rundown_id) VALUES ('pt','p1',1,'gitara','#fff','A')",
+    ).run()
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('deletes the Rundown and its own Parts when nothing else uses them', () => {
+    db.prepare(
+      "INSERT INTO shots (id, rundown_id, part_id, duration_ms, order_index) VALUES ('s','A','pt',1000,0)",
+    ).run()
+
+    deleteRundown(db, 'A')
+    expect(db.prepare('SELECT COUNT(*) AS n FROM parts').get()).toEqual({ n: 0 })
+    expect(db.prepare('SELECT COUNT(*) AS n FROM rundowns').get()).toEqual({ n: 1 })
+  })
+
+  it('refuses, in words, when another Rundown uses a Part defined here', () => {
+    db.prepare(
+      "INSERT INTO shots (id, rundown_id, part_id, duration_ms, order_index) VALUES ('s','B','pt',1000,0)",
+    ).run()
+
+    // Without the check this is a bare "FOREIGN KEY constraint failed".
+    expect(() => deleteRundown(db, 'A')).toThrow(/1 Call in other Rundowns/)
+    expect(db.prepare('SELECT COUNT(*) AS n FROM rundowns').get()).toEqual({ n: 2 })
+  })
+
+  it('counts every offending Call', () => {
+    for (const id of ['s1', 's2']) {
+      db.prepare(
+        `INSERT INTO shots (id, rundown_id, part_id, duration_ms, order_index) VALUES ('${id}','B','pt',1000,0)`,
+      ).run()
+    }
+    expect(() => deleteRundown(db, 'A')).toThrow(/2 Calls/)
+  })
+})

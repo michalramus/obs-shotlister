@@ -178,7 +178,32 @@ export function unassignedItemCount(db: Database.Database, rundownId: string): n
   return row.count
 }
 
+/**
+ * Deletes a Rundown, refusing while a Part it owns is used somewhere else.
+ *
+ * A Rundown-scoped Part is cascaded away with its Rundown, but a Call's
+ * `part_id` is a hard foreign key with no cascade — so the delete is already
+ * refused by SQLite. It just says `FOREIGN KEY constraint failed`, which tells
+ * the operator nothing about which Rundown to look in or what to do. Counting
+ * first turns that into the same kind of refusal deleting a Part in use gives.
+ */
 export function deleteRundown(db: Database.Database, id: string): void {
+  const { count } = db
+    .prepare(
+      `SELECT COUNT(*) AS count FROM shots s
+         JOIN parts p ON p.id = s.part_id
+        WHERE p.rundown_id = ? AND s.rundown_id != ?`,
+    )
+    .get(id, id) as { count: number }
+
+  if (count > 0) {
+    const calls = count === 1 ? '1 Call' : `${count} Calls`
+    throw new Error(
+      `Cannot delete this Rundown: ${calls} in other Rundowns use a Part defined here. ` +
+        'Promote those Parts to Project or folder scope first.',
+    )
+  }
+
   const result = db.prepare('DELETE FROM rundowns WHERE id = ?').run(id)
 
   if (result.changes === 0) {
