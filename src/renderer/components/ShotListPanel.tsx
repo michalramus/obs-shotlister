@@ -19,8 +19,16 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { useAppStore } from '../store'
-import type { Shot, Camera } from '../../shared/types'
+import type { Shot } from '../../shared/types'
 import type { CreateShotInput, UpdateShotInput } from '../../shared/ipc-contract'
+import {
+  type ItemTarget,
+  targetIdOf,
+  targetNoun,
+  targetOf,
+  targetsById,
+  targetsOf,
+} from '../../shared/rundown-item'
 
 const s = {
   panel: {
@@ -244,16 +252,20 @@ function parseTransitionSecs(s: string): number {
 // ---------------------------------------------------------------------------
 
 interface ShotFormProps {
-  cameras: Camera[]
+  /** What this Rundown's Kind can assign: its Cameras, or its Parts. */
+  targets: ItemTarget[]
+  /** Only a Shot has an in-Transition; a Call is a Part and a duration. */
+  showTransition: boolean
+  targetLabel: 'Part' | 'Camera'
   initial?: {
-    cameraId: string
+    targetId: string
     durationMs: number
     label: string
     transitionName: string | null
     transitionMs: number
   }
   onConfirm: (values: {
-    cameraId: string
+    targetId: string
     durationMs: number
     label: string
     transitionName: string | null
@@ -262,8 +274,15 @@ interface ShotFormProps {
   onCancel: () => void
 }
 
-function ShotForm({ cameras, initial, onConfirm, onCancel }: ShotFormProps): React.JSX.Element {
-  const [cameraId, setCameraId] = useState(initial?.cameraId ?? cameras[0]?.id ?? '')
+function ShotForm({
+  targets,
+  showTransition,
+  targetLabel,
+  initial,
+  onConfirm,
+  onCancel,
+}: ShotFormProps): React.JSX.Element {
+  const [targetId, setTargetId] = useState(initial?.targetId ?? targets[0]?.id ?? '')
   const [duration, setDuration] = useState(initial ? msToMss(initial.durationMs) : '0:30')
   const [label, setLabel] = useState(initial?.label ?? '')
   const [transitionName, setTransitionName] = useState<string | null>(
@@ -285,9 +304,15 @@ function ShotForm({ cameras, initial, onConfirm, onCancel }: ShotFormProps): Rea
 
   function handleConfirm(): void {
     const durationMs = mssToMs(duration)
-    if (!cameraId || durationMs === null) return
-    const transitionMs = transitionName ? parseTransitionSecs(transitionSecs) : 0
-    onConfirm({ cameraId, durationMs, label, transitionName, transitionMs })
+    if (!targetId || durationMs === null) return
+    const transitionMs = showTransition && transitionName ? parseTransitionSecs(transitionSecs) : 0
+    onConfirm({
+      targetId,
+      durationMs,
+      label,
+      transitionName: showTransition ? transitionName : null,
+      transitionMs,
+    })
   }
 
   function handleKeyDown(e: React.KeyboardEvent): void {
@@ -299,13 +324,13 @@ function ShotForm({ cameras, initial, onConfirm, onCancel }: ShotFormProps): Rea
     <div style={s.formRow} onKeyDown={handleKeyDown} data-testid="shot-form">
       <select
         style={s.select}
-        value={cameraId}
-        onChange={(e) => setCameraId(e.target.value)}
-        aria-label="Camera"
+        value={targetId}
+        onChange={(e) => setTargetId(e.target.value)}
+        aria-label={targetLabel}
       >
-        {cameras.map((c) => (
-          <option key={c.id} value={c.id}>
-            CAM{c.number} — {c.name}
+        {targets.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.badge} — {t.name}
           </option>
         ))}
       </select>
@@ -326,24 +351,26 @@ function ShotForm({ cameras, initial, onConfirm, onCancel }: ShotFormProps): Rea
         aria-label="Label"
       />
 
-      <select
-        style={s.select}
-        value={transitionName ?? ''}
-        onChange={(e) => setTransitionName(e.target.value === '' ? null : e.target.value)}
-        aria-label="Transition"
-      >
-        <option value="">— cut —</option>
-        {logicalTransitions.map((t) => (
-          <option key={t} value={t}>
-            {t}
-          </option>
-        ))}
-        {transitionName && !logicalTransitions.includes(transitionName) && (
-          <option value={transitionName}>{transitionName}</option>
-        )}
-      </select>
+      {showTransition && (
+        <select
+          style={s.select}
+          value={transitionName ?? ''}
+          onChange={(e) => setTransitionName(e.target.value === '' ? null : e.target.value)}
+          aria-label="Transition"
+        >
+          <option value="">— cut —</option>
+          {logicalTransitions.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+          {transitionName && !logicalTransitions.includes(transitionName) && (
+            <option value={transitionName}>{transitionName}</option>
+          )}
+        </select>
+      )}
 
-      {transitionName && (
+      {showTransition && transitionName && (
         <input
           style={{ ...s.input, width: '56px' }}
           value={transitionSecs}
@@ -370,7 +397,7 @@ function ShotForm({ cameras, initial, onConfirm, onCancel }: ShotFormProps): Rea
 
 interface SortableShotRowProps {
   shot: Shot
-  cameras: Camera[]
+  target: ItemTarget | undefined
   isLocked: boolean
   isLive: boolean
   isSelected: boolean
@@ -387,7 +414,7 @@ interface SortableShotRowProps {
 
 function SortableShotRow({
   shot,
-  cameras,
+  target,
   isLocked,
   isLive,
   isSelected,
@@ -417,8 +444,7 @@ function SortableShotRow({
     disabled: isLocked,
   })
 
-  const camera = cameras.find((c) => c.id === shot.cameraId)
-  const liveBg = isLive ? (camera?.color ? camera.color + '22' : '#ffffff22') : undefined
+  const liveBg = isLive ? (target?.color ? target.color + '22' : '#ffffff22') : undefined
 
   const style: React.CSSProperties = {
     ...s.row,
@@ -450,9 +476,9 @@ function SortableShotRow({
           </span>
         )}
 
-        {camera && <span style={s.cameraBadge(camera.color)}>CAM{camera.number}</span>}
+        {target && <span style={s.cameraBadge(target.color)}>{target.badge}</span>}
         <span style={s.name}>
-          {camera?.name ?? '—'}
+          {target?.name ?? '—'}
           {!isLabelEditing && shot.label ? ` "${shot.label}"` : ''}
         </span>
         <span style={s.duration}>{msToMss(shot.durationMs)}</span>
@@ -538,6 +564,10 @@ export function ShotListPanel({
 }: ShotListPanelProps): React.JSX.Element {
   const shots = useAppStore((s) => s.shots)
   const cameras = useAppStore((s) => s.cameras)
+  const partsInScope = useAppStore((s) => s.partsInScope)
+  const rundownKind = useAppStore(
+    (s) => s.rundowns.find((r) => r.id === s.activeRundownId)?.kind ?? 'camera',
+  )
   const running = useAppStore((s) => s.running)
   const activeRundownId = useAppStore((s) => s.activeRundownId)
   const liveIndex = useAppStore((s) => s.liveIndex)
@@ -545,6 +575,12 @@ export function ShotListPanel({
   const editShot = useAppStore((s) => s.editShot)
   const removeShot = useAppStore((s) => s.removeShot)
   const reorderShots = useAppStore((s) => s.reorderShots)
+
+  // A Voice-over Rundown assigns Parts, not Cameras, and a Call carries no
+  // in-Transition — so the same list offers whichever this Kind actually has.
+  const isVoice = rundownKind === 'voice'
+  const targets = targetsOf(rundownKind, cameras, partsInScope)
+  const targetById = targetsById(targets)
 
   const [showAddForm, setShowAddForm] = useState(false)
   const [editingShot, setEditingShot] = useState<Shot | null>(null)
@@ -577,7 +613,7 @@ export function ShotListPanel({
   const sensors = useSensors(useSensor(PointerSensor))
 
   async function handleAdd(values: {
-    cameraId: string
+    targetId: string
     durationMs: number
     label: string
     transitionName: string | null
@@ -586,7 +622,7 @@ export function ShotListPanel({
     if (!activeRundownId) return
     const input: CreateShotInput = {
       rundownId: activeRundownId,
-      cameraId: values.cameraId,
+      ...(isVoice ? { partId: values.targetId } : { cameraId: values.targetId }),
       durationMs: values.durationMs,
       label: values.label || null,
       transitionName: values.transitionName,
@@ -601,7 +637,7 @@ export function ShotListPanel({
   }
 
   async function handleEdit(values: {
-    cameraId: string
+    targetId: string
     durationMs: number
     label: string
     transitionName: string | null
@@ -610,7 +646,7 @@ export function ShotListPanel({
     if (!editingShot) return
     const input: UpdateShotInput = {
       id: editingShot.id,
-      cameraId: values.cameraId,
+      ...(isVoice ? { partId: values.targetId } : { cameraId: values.targetId }),
       durationMs: values.durationMs,
       label: values.label || null,
       transitionName: values.transitionName,
@@ -706,9 +742,11 @@ export function ShotListPanel({
         )}
       </div>
 
-      {showAddForm && !running && cameras.length > 0 && (
+      {showAddForm && !running && targets.length > 0 && (
         <ShotForm
-          cameras={cameras}
+          targets={targets}
+          showTransition={!isVoice}
+          targetLabel={targetNoun(rundownKind)}
           onConfirm={(v) => void handleAdd(v)}
           onCancel={() => setShowAddForm(false)}
         />
@@ -729,9 +767,11 @@ export function ShotListPanel({
               editingShot?.id === shot.id && !running ? (
                 <li key={shot.id} style={{ listStyle: 'none' }}>
                   <ShotForm
-                    cameras={cameras}
+                    targets={targets}
+                    showTransition={!isVoice}
+                    targetLabel={targetNoun(rundownKind)}
                     initial={{
-                      cameraId: shot.cameraId ?? '',
+                      targetId: targetIdOf(shot, rundownKind) ?? '',
                       durationMs: shot.durationMs,
                       label: shot.label ?? '',
                       transitionName: shot.transitionName,
@@ -745,7 +785,7 @@ export function ShotListPanel({
                 <SortableShotRow
                   key={shot.id}
                   shot={shot}
-                  cameras={cameras}
+                  target={targetOf(shot, rundownKind, targetById)}
                   isLocked={running}
                   isLive={liveIndex === shots.indexOf(shot)}
                   isSelected={shot.id === selectedShotId}
@@ -778,7 +818,7 @@ export function ShotListPanel({
             ? (() => {
                 const activeShot = shots.find((s) => s.id === activeId)
                 if (!activeShot) return null
-                const camera = cameras.find((c) => c.id === activeShot.cameraId)
+                const target = targetOf(activeShot, rundownKind, targetById)
                 return (
                   <ul style={{ listStyle: 'none', margin: 0, padding: 0, opacity: 0.9 }}>
                     <li
@@ -790,11 +830,9 @@ export function ShotListPanel({
                       }}
                     >
                       <span style={s.dragHandle}>⠿</span>
-                      {camera && (
-                        <span style={s.cameraBadge(camera.color)}>CAM{camera.number}</span>
-                      )}
+                      {target && <span style={s.cameraBadge(target.color)}>{target.badge}</span>}
                       <span style={s.name}>
-                        {camera?.name ?? '—'}
+                        {target?.name ?? '—'}
                         {activeShot.label ? ` "${activeShot.label}"` : ''}
                       </span>
                       <span style={s.duration}>{msToMss(activeShot.durationMs)}</span>
