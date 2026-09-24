@@ -833,17 +833,30 @@ export function TimelineEditor({
       // Naming a Part mid-authoring, without leaving the timeline. Claimed
       // only in a Voice-over Rundown — `openAddPart` is a no-op otherwise — so
       // a Camera Rundown keeps N free.
-      if (e.key.toLowerCase() === ADD_PART_KEY && !running && isVoiceRef.current) {
+      // Modified keys belong to the OS and the browser. The Part keymap claims
+      // q w e r t y u i o p, so without this Cmd+Q, Cmd+W, Cmd+R, Cmd+T and
+      // Cmd+P each split the Call under the playhead on their way to quitting,
+      // closing, reloading or printing.
+      const plainKey = !e.ctrlKey && !e.metaKey && !e.altKey
+
+      if (plainKey && e.key.toLowerCase() === ADD_PART_KEY && !running && isVoiceRef.current) {
         e.preventDefault()
         keyActionsRef.current.openAddPart()
       }
-      // In a Voice-over Rundown 1-9 and q w e r t y u i o p name Parts, which
-      // takes the digits away from the Cameras there and only there.
-      if (!running && keyActionsRef.current.assignPartByKey(e.key)) return
-      const num = parseInt(e.key, 10)
-      if (num >= 1 && num <= 9 && !running) {
-        const cam = camerasRef.current.find((c) => c.number === num)
-        if (cam) handleCamButtonClick(cam)
+
+      if (plainKey && !running) {
+        if (isVoiceRef.current) {
+          // A Voice-over Rundown has no Cameras to fall back to. An unmapped
+          // key — 5 with three Parts in scope, or anything at all right after a
+          // conversion — is inert rather than stamping a Camera on a Call.
+          keyActionsRef.current.assignPartByKey(e.key)
+        } else {
+          const num = parseInt(e.key, 10)
+          if (num >= 1 && num <= 9) {
+            const cam = camerasRef.current.find((c) => c.number === num)
+            if (cam) handleCamButtonClick(cam)
+          }
+        }
       }
       if ((e.key === 'l' || e.key === 'L') && !running) {
         e.preventDefault()
@@ -905,11 +918,14 @@ export function TimelineEditor({
     for (const shot of shotsRef.current) {
       const shotEnd = accumulated + shot.durationMs
       if (playheadMsRef.current >= accumulated && playheadMsRef.current < shotEnd) {
-        const atMs = playheadMsRef.current - accumulated
+        // Rounded before the comparison: a playhead a fraction of a millisecond
+        // into a Call would otherwise take the split branch and then round to
+        // 0, which splitShot rejects outright.
+        const atMs = Math.round(playheadMsRef.current - accumulated)
         const assigned =
           atMs <= 0
             ? editShot({ id: shot.id, partId: part.id })
-            : splitShot(shot.id, Math.round(atMs), { newPartId: part.id })
+            : splitShot(shot.id, atMs, { newPartId: part.id })
         assigned.catch((err: unknown) => console.error('[TimelineEditor] assign part:', err))
         return
       }
