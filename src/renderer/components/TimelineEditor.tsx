@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { Shot, Camera, Marker, Part } from '../../shared/types'
+import type { Shot, Camera, Marker, Part, Lyric } from '../../shared/types'
 import { toMediaUrl } from '../../shared/media-url'
 import {
   timelinePosMs,
@@ -21,6 +21,7 @@ import {
   lyricRange,
   lyricBlocks,
   lyricAtMs,
+  resizeLyric,
   overlappingLyric,
   isUnassigned,
   droppedAnnouncementCallIds,
@@ -163,6 +164,42 @@ interface LyricDraft {
   text: string
 }
 
+/**
+ * A grab strip on one edge of a Lyric.
+ *
+ * Wider than it looks: a 3px target is unhittable at this zoom, so the strip
+ * is 7px and straddles the border, with only the inner sliver painted.
+ */
+function LyricEdgeHandle({
+  side,
+  onDown,
+}: {
+  side: 'start' | 'end'
+  onDown: (e: React.MouseEvent) => void
+}): React.JSX.Element {
+  return (
+    <div
+      role="presentation"
+      onMouseDown={onDown}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      title={side === 'start' ? 'Drag the in point' : 'Drag the out point'}
+      style={{
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        [side === 'start' ? 'left' : 'right']: -3,
+        width: 7,
+        cursor: 'ew-resize',
+        background:
+          side === 'start'
+            ? 'linear-gradient(to right, transparent 0 2px, #5dade2 2px 5px, transparent 5px)'
+            : 'linear-gradient(to left, transparent 0 2px, #5dade2 2px 5px, transparent 5px)',
+      }}
+    />
+  )
+}
+
 export function TimelineEditor({
   shots,
   cameras,
@@ -233,6 +270,12 @@ export function TimelineEditor({
   const [selectedLyricId, setSelectedLyricId] = useState<string | null>(null)
   const [hoveredLyricId, setHoveredLyricId] = useState<string | null>(null)
   const [lyricError, setLyricError] = useState<string | null>(null)
+  /** The edge being dragged, shown before it is saved. */
+  const [lyricDragOverride, setLyricDragOverride] = useState<{
+    id: string
+    startMs: number
+    endMs: number
+  } | null>(null)
   const [partPickerOpen, setPartPickerOpen] = useState(false)
   const [addPartOpen, setAddPartOpen] = useState(false)
 
@@ -269,6 +312,8 @@ export function TimelineEditor({
   const camerasRef = useRef(cameras)
   // The key handler is bound once; N must stay free in a Camera Rundown.
   const isVoiceRef = useRef(false)
+  // The drag handlers live on window and outlive the render that made them.
+  const lyricsRef = useRef<Lyric[]>([])
   // The keyboard effect is bound once and never re-bound, so the handlers it
   // reaches for are republished every render through this ref rather than
   // captured in its closure.
@@ -322,6 +367,9 @@ export function TimelineEditor({
   useEffect(() => {
     isVoiceRef.current = isVoice
   }, [isVoice])
+  useEffect(() => {
+    lyricsRef.current = lyrics
+  }, [lyrics])
 
   // Sync media currentTime to playhead while stopped
   useEffect(() => {
@@ -970,6 +1018,49 @@ export function TimelineEditor({
     })
   }
 
+  /**
+   * Drags one edge of a Lyric.
+   *
+   * The lane element is the coordinate frame, not the block: the pointer
+   * routinely leaves the block it is resizing, and measuring against the block
+   * would make the line chase the cursor.
+   */
+  function beginLyricResize(e: React.MouseEvent, id: string, edge: 'start' | 'end'): void {
+    e.stopPropagation()
+    e.preventDefault()
+    const lane = (e.currentTarget as HTMLElement).closest('[data-lyrics-lane]')
+    if (!(lane instanceof HTMLElement)) return
+    const laneLeft = lane.getBoundingClientRect().left
+
+    setSelectedLyricId(id)
+    setLyricError(null)
+
+    let latest: { startMs: number; endMs: number } | null = null
+
+    const onMove = (ev: MouseEvent): void => {
+      const ms = timelinePosMs(ev.clientX, laneLeft, zoomPxPerSec, Number.MAX_SAFE_INTEGER)
+      const next = resizeLyric(lyricsRef.current, id, edge, ms)
+      if (next === null) return
+      latest = next
+      // Shown immediately, saved once: a write per mousemove would be a
+      // transaction per pixel, and the store rejects overlaps anyway.
+      setLyricDragOverride({ id, ...next })
+    }
+
+    const onUp = (): void => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      setLyricDragOverride(null)
+      if (latest === null) return
+      const existing = lyricsRef.current.find((l) => l.id === id)
+      if (existing === undefined) return
+      void saveLyric({ id, ...latest, text: existing.text })
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
   function deleteLyric(id: string): void {
     removeLyric(id).catch((err: unknown) => console.error('[TimelineEditor] deleteLyric:', err))
     if (selectedLyricId === id) setSelectedLyricId(null)
@@ -1212,7 +1303,16 @@ export function TimelineEditor({
     [isVoice, shots, phraseDurationMsByPartId],
   )
 
-  const lyricLane = lyricBlocks(lyrics, zoomPxPerSec)
+  // The dragged line is drawn where the pointer is, not where it is stored.
+  const lyricsForLane =
+    lyricDragOverride === null
+      ? lyrics
+      : lyrics.map((l) =>
+          l.id === lyricDragOverride.id
+            ? { ...l, startMs: lyricDragOverride.startMs, endMs: lyricDragOverride.endMs }
+            : l,
+        )
+  const lyricLane = lyricBlocks(lyricsForLane, zoomPxPerSec)
   // The whole point of the lane: which line is being sung right now. The playhead
   // is committed to state at PLAYHEAD_COMMIT_INTERVAL_MS, so this lags by at most
   // that — far below the length of a sung line.
@@ -1714,6 +1814,7 @@ export function TimelineEditor({
 
           {/* Row 3b: Lyrics track — the second and only other Track, in both Kinds */}
           <div
+            data-lyrics-lane=""
             style={{
               height: LYRICS_ROW_HEIGHT,
               width: totalPx,
@@ -1747,11 +1848,17 @@ export function TimelineEditor({
                     boxSizing: 'border-box',
                     color: isCurrent ? '#fff' : '#d6e6f5',
                     fontSize: '10px',
-                    lineHeight: `${LYRICS_ROW_HEIGHT - 8}px`,
-                    padding: '0 4px',
+                    // Two lines rather than one: a sung line rarely fits the
+                    // width its own timing gives it, and an ellipsis hides the
+                    // half of the lyric the operator is trying to read.
+                    lineHeight: '11px',
+                    display: '-webkit-box',
+                    WebkitBoxOrient: 'vertical',
+                    WebkitLineClamp: 2,
+                    wordBreak: 'break-word',
+                    whiteSpace: 'normal',
+                    padding: '2px 6px',
                     overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
                     cursor: 'pointer',
                     userSelect: 'none',
                   }}
@@ -1777,6 +1884,18 @@ export function TimelineEditor({
                   }}
                 >
                   {block.text}
+                  {(isHovered || isSelected) && !running && (
+                    <>
+                      <LyricEdgeHandle
+                        side="start"
+                        onDown={(e) => beginLyricResize(e, block.id, 'start')}
+                      />
+                      <LyricEdgeHandle
+                        side="end"
+                        onDown={(e) => beginLyricResize(e, block.id, 'end')}
+                      />
+                    </>
+                  )}
                   {isHovered && (
                     <button
                       style={{
