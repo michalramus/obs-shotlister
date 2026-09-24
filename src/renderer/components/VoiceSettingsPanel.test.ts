@@ -7,7 +7,7 @@ import {
   effectiveSetting,
   formatCountdown,
   parseCountdownInput,
-  summarizeRenderStatus,
+  summarizeRenderStates,
 } from './VoiceSettingsPanel'
 import type { PartRenderState, RenderState } from '../../shared/ipc-contract'
 
@@ -111,27 +111,27 @@ describe('effectiveSetting', () => {
   })
 })
 
-describe('summarizeRenderStatus', () => {
+describe('summarizeRenderStates', () => {
   it('reports an empty project', () => {
-    const summary = summarizeRenderStatus([])
+    const summary = summarizeRenderStates([])
     expect(summary).toMatchObject({ total: 0, unrendered: 0 })
     expect(summary.headline).toBe('No parts in this project yet.')
   })
 
   it('reports everything rendered', () => {
-    const summary = summarizeRenderStatus([part('gitara', 'rendered'), part('refren', 'rendered')])
+    const summary = summarizeRenderStates([part('gitara', 'rendered'), part('refren', 'rendered')])
     expect(summary).toMatchObject({ total: 2, rendered: 2, stale: 0, missing: 0, unrendered: 0 })
     expect(summary.headline).toBe('All 2 parts are rendered.')
   })
 
   it('says "part is" for a single rendered part', () => {
-    expect(summarizeRenderStatus([part('gitara', 'rendered')]).headline).toBe(
+    expect(summarizeRenderStates([part('gitara', 'rendered')]).headline).toBe(
       'All 1 part is rendered.',
     )
   })
 
   it('counts stale and missing apart, because they mean different things', () => {
-    const summary = summarizeRenderStatus([
+    const summary = summarizeRenderStates([
       part('gitara', 'rendered'),
       part('wokal 1', 'stale'),
       part('wokal 2', 'missing'),
@@ -142,7 +142,7 @@ describe('summarizeRenderStatus', () => {
   })
 
   it('counts stale towards unrendered', () => {
-    expect(summarizeRenderStatus([part('gitara', 'stale')]).unrendered).toBe(1)
+    expect(summarizeRenderStates([part('gitara', 'stale')]).unrendered).toBe(1)
   })
 })
 

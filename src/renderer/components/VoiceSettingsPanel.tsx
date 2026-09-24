@@ -111,7 +111,7 @@ export interface RenderSummary {
   headline: string
 }
 
-export function summarizeRenderStatus(parts: PartRenderState[]): RenderSummary {
+export function summarizeRenderStates(parts: PartRenderState[]): RenderSummary {
   const rendered = parts.filter((p) => p.state === 'rendered').length
   const stale = parts.filter((p) => p.state === 'stale').length
   const missing = parts.filter((p) => p.state === 'missing').length
@@ -535,18 +535,18 @@ function OutputDevicesSection(): React.JSX.Element {
   )
 }
 
-interface RenderStatusSectionProps {
+interface RenderStateSectionProps {
   projectId: string
 }
 
-function RenderStatusSection({ projectId }: RenderStatusSectionProps): React.JSX.Element {
-  const renderStatus = useAppStore((st) => st.renderStatus)
+function RenderStateSection({ projectId }: RenderStateSectionProps): React.JSX.Element {
+  const renderSummary = useAppStore((st) => st.renderSummary)
   const renderMissing = useAppStore((st) => st.renderMissing)
   const [error, setError] = useState<string | null>(null)
 
-  const parts = renderStatus?.parts ?? []
-  const summary = summarizeRenderStatus(parts)
-  const rendering = renderStatus?.rendering === true
+  const parts = renderSummary?.parts ?? []
+  const summary = summarizeRenderStates(parts)
+  const rendering = renderSummary?.rendering === true
 
   function handleRenderMissing(): void {
     setError(null)
@@ -614,7 +614,7 @@ export function VoiceSettingsPanel({ onClose }: VoiceSettingsPanelProps): React.
   const loadVoiceSettings = useAppStore((st) => st.loadVoiceSettings)
   const saveVoiceSettings = useAppStore((st) => st.saveVoiceSettings)
   const saveProjectVoiceSettings = useAppStore((st) => st.saveProjectVoiceSettings)
-  const loadRenderStatus = useAppStore((st) => st.loadRenderStatus)
+  const loadRenderSummary = useAppStore((st) => st.loadRenderSummary)
   const loadAudioDevices = useAppStore((st) => st.loadAudioDevices)
 
   const [error, setError] = useState<string | null>(null)
@@ -637,11 +637,11 @@ export function VoiceSettingsPanel({ onClose }: VoiceSettingsPanelProps): React.
       setError(err instanceof Error ? err.message : 'Could not load audio devices.'),
     )
     if (activeProjectId !== null) {
-      loadRenderStatus(activeProjectId).catch((err: unknown) =>
+      loadRenderSummary(activeProjectId).catch((err: unknown) =>
         setError(err instanceof Error ? err.message : 'Could not load render status.'),
       )
     }
-  }, [activeProjectId, loadVoiceSettings, loadAudioDevices, loadRenderStatus])
+  }, [activeProjectId, loadVoiceSettings, loadAudioDevices, loadRenderSummary])
 
   useEffect(() => {
     if (voiceSettings === null) return
@@ -943,7 +943,7 @@ export function VoiceSettingsPanel({ onClose }: VoiceSettingsPanelProps): React.
         </div>
 
         {/* Render status */}
-        {activeProjectId !== null && <RenderStatusSection projectId={activeProjectId} />}
+        {activeProjectId !== null && <RenderStateSection projectId={activeProjectId} />}
 
         {/* Output devices */}
         <OutputDevicesSection />

@@ -50,7 +50,7 @@ export function LiveControls(): React.JSX.Element {
   const startedAt = useAppStore((s) => s.startedAt)
   const activeRundownId = useAppStore((s) => s.activeRundownId)
   const liveStart = useAppStore((s) => s.liveStart)
-  const unrenderedCount = useAppStore((s) => s.renderStatus?.unrenderedCount ?? 0)
+  const unrenderedCount = useAppStore((s) => s.renderSummary?.unrenderedCount ?? 0)
   const rundownKind = useAppStore(
     (s) => s.rundowns.find((r) => r.id === s.activeRundownId)?.kind ?? 'camera',
   )
