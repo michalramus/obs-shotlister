@@ -26,6 +26,10 @@ import { getGlobalVoiceSettings } from '../ipc/settings'
 import { ensureClipsDir, listCachedHashes, sweep } from './cache'
 import { renderAll } from './engine'
 
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 export interface RenderService {
   /** What the warning strip and the Parts panel read. Never synthesises. */
   status: (projectId: string) => Promise<ProjectRenderStatus>
@@ -67,6 +71,12 @@ export function createRenderService(
 ): RenderService {
   let rendering = false
   let autoRenderTimer: ReturnType<typeof setTimeout> | null = null
+  /**
+   * Set once the engine has proved it cannot run at all. Only an explicit
+   * render clears it: the operator has to have done something about the
+   * binary, and asking is the signal that they think they have.
+   */
+  let engineBroken = false
 
   async function statusFor(projectId: string): Promise<ProjectRenderStatus> {
     // Read the cache from the filesystem rather than from `tts_clips`, so a
@@ -81,6 +91,8 @@ export function createRenderService(
     }
     if (rendering) return statusFor(projectId)
 
+    // An explicit ask is the operator saying they have dealt with it.
+    engineBroken = false
     rendering = true
     try {
       onStatus?.(await statusFor(projectId))
@@ -100,6 +112,15 @@ export function createRenderService(
       // reading as missing rather than as rendered against nothing.
       recordPartRenders(db, projectId)
 
+      if (result.engineFailure) {
+        // One line, not sixty-one: the batch stopped because the engine cannot
+        // run, so every remaining clip would have reported the same thing.
+        // Latched so auto-render stops retrying a binary that cannot work —
+        // the operator saw this repeat on every debounce.
+        engineBroken = true
+        console.error('[tts] rendering stopped —', result.engineFailure)
+        throw new Error(result.engineFailure)
+      }
       for (const failure of result.failed) {
         console.error('[tts] failed to render', failure.item.text, failure.message)
       }
@@ -118,6 +139,8 @@ export function createRenderService(
 
     scheduleAutoRender(projectId) {
       if (!getGlobalVoiceSettings(db).autoRender) return
+      // Retrying an engine that cannot be executed only refills the log.
+      if (engineBroken) return
 
       if (autoRenderTimer) clearTimeout(autoRenderTimer)
       autoRenderTimer = setTimeout(() => {
@@ -126,7 +149,7 @@ export function createRenderService(
         // may have started during the debounce, and nothing synthesises then.
         if (isLive()) return
         renderMissing(projectId).catch((err: unknown) =>
-          console.error('[tts] auto-render failed:', err),
+          console.error('[tts] auto-render failed:', messageOf(err)),
         )
       }, AUTO_RENDER_DEBOUNCE_MS)
       // Never hold the app open waiting to synthesise.

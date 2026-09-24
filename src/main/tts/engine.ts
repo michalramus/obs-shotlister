@@ -162,6 +162,52 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/**
+ * Marks a failure as "the engine cannot run at all", as opposed to "this one
+ * clip did not render".
+ *
+ * The difference matters to a batch: one bad clip is worth skipping past, but
+ * an engine that cannot be executed will fail identically for all sixty-one,
+ * and logging that sixty-one times buries the one line that explains it.
+ */
+class EngineUnusableError extends Error {
+  readonly engineUnusable = true
+}
+
+export function isEngineUnusable(error: unknown): boolean {
+  return error instanceof EngineUnusableError
+}
+
+/**
+ * Turns a spawn failure into something an operator can act on.
+ *
+ * Node reports a macOS architecture mismatch as `Unknown system error -86`,
+ * which says nothing. -86 is EBADARCH: the binary is built for another CPU —
+ * which is exactly what upstream's mislabelled `aarch64` Piper does on an
+ * Apple Silicon machine with no Rosetta.
+ */
+export function spawnFailureMessage(error: NodeJS.ErrnoException, binary: string): string {
+  if (error.errno === -86 || error.code === 'EBADARCH') {
+    return (
+      'the bundled Piper is built for the wrong CPU architecture and cannot run.\n' +
+      `  ${binary}\n` +
+      '  Build one for this machine — see .github/workflows/build-piper-macos-arm64.yml —\n' +
+      '  or install Rosetta 2 with: softwareupdate --install-rosetta'
+    )
+  }
+  if (error.code === 'ENOENT') {
+    return `Piper is not installed at ${binary}. Run: yarn fetch:piper`
+  }
+  if (error.code === 'EACCES') {
+    return `Piper at ${binary} is not executable.`
+  }
+  return `piper could not be started: ${error.message}`
+}
+
+function engineUnusable(error: NodeJS.ErrnoException): EngineUnusableError {
+  return new EngineUnusableError(spawnFailureMessage(error, piperBinaryPath()))
+}
+
 async function assertReadable(path: string, what: string): Promise<void> {
   try {
     await access(path)
@@ -222,7 +268,7 @@ function runPiper(args: string[], text: string, opts: SynthesiseOptions): Promis
     child.stdin.on('error', () => undefined)
     child.stdin.end(`${text}\n`)
 
-    child.on('error', (error) => finish(new Error(`piper could not be started: ${error.message}`)))
+    child.on('error', (error) => finish(engineUnusable(error)))
     child.on('close', (code) => {
       if (killedFor) return finish(new Error(`piper ${killedFor}`))
       if (code === 0) return finish(null)
@@ -321,6 +367,11 @@ export interface RenderAllResult {
   failed: RenderFailure[]
   /** True when the caller cancelled before every item was attempted. */
   aborted: boolean
+  /**
+   * Set when the batch stopped because the engine itself cannot run, rather
+   * than because individual clips failed. The remaining items were not tried.
+   */
+  engineFailure?: string
 }
 
 /**
@@ -342,6 +393,7 @@ export async function renderAll(
   const rendered: SynthesisedClip[] = []
   const failed: RenderFailure[] = []
   let aborted = false
+  let engineFailure: string | undefined
 
   const report = (progress: RenderProgress): void => {
     // A listener that throws is the caller's bug, not a reason to abandon the
@@ -359,14 +411,23 @@ export async function renderAll(
       break
     }
     let error: string | undefined
+    let fatal = false
     try {
       rendered.push(await synthesise(item, opts))
     } catch (caught) {
       error = messageOf(caught)
+      fatal = isEngineUnusable(caught)
       failed.push({ item, message: error })
     }
     report({ completed: rendered.length + failed.length, total: items.length, item, error })
+
+    // Nothing else in this batch can succeed, and repeating the same message
+    // for every remaining clip hides it rather than emphasising it.
+    if (fatal) {
+      engineFailure = error
+      break
+    }
   }
 
-  return { rendered, failed, aborted }
+  return { rendered, failed, aborted, engineFailure }
 }

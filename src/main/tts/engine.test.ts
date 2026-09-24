@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { wavDurationMs } from './engine'
+import { spawnFailureMessage, wavDurationMs } from './engine'
 
 interface Chunk {
   id: string
@@ -143,5 +143,42 @@ describe('wavDurationMs', () => {
   it('rejects a clip with no audio in it', () => {
     const wav = riff([fmtChunk({}), chunk({ id: 'data', body: Buffer.alloc(0) })])
     expect(() => wavDurationMs(wav)).toThrow(/no audio/)
+  })
+})
+
+describe('spawnFailureMessage', () => {
+  const binary = '/app/resources/piper/piper'
+
+  it('explains the architecture mismatch Node reports as errno -86', () => {
+    // macOS EBADARCH. Node surfaces it as "Unknown system error -86", which
+    // tells an operator nothing at all.
+    const message = spawnFailureMessage({ errno: -86 } as NodeJS.ErrnoException, binary)
+
+    expect(message).toContain('wrong CPU architecture')
+    expect(message).toContain(binary)
+    expect(message).toContain('softwareupdate --install-rosetta')
+  })
+
+  it('recognises EBADARCH by code as well as by errno', () => {
+    const message = spawnFailureMessage({ code: 'EBADARCH' } as NodeJS.ErrnoException, binary)
+    expect(message).toContain('wrong CPU architecture')
+  })
+
+  it('points a missing engine at the fetch script', () => {
+    const message = spawnFailureMessage({ code: 'ENOENT' } as NodeJS.ErrnoException, binary)
+    expect(message).toContain('yarn fetch:piper')
+  })
+
+  it('names a non-executable engine', () => {
+    const message = spawnFailureMessage({ code: 'EACCES' } as NodeJS.ErrnoException, binary)
+    expect(message).toContain('not executable')
+  })
+
+  it('falls back to the underlying message for anything else', () => {
+    const message = spawnFailureMessage(
+      Object.assign(new Error('boom'), { code: 'EPERM' }) as NodeJS.ErrnoException,
+      binary,
+    )
+    expect(message).toContain('boom')
   })
 })
