@@ -163,11 +163,14 @@ export function createRenderService(
       const orphans = orphanedClips(db, cached)
       if (orphans.length === 0) return 0
 
-      const removed = await sweep(userDataDir, orphans, (hash, error) =>
-        console.error('[tts] could not sweep', hash, error),
+      // Only what actually went: a clip that could not be deleted still exists
+      // and still answers a cache lookup, so forgetting its row would make the
+      // index disagree with the disk.
+      const swept = await sweep(userDataDir, orphans, (hash, error) =>
+        console.error('[tts] could not sweep', hash, messageOf(error)),
       )
-      forgetClips(db, orphans)
-      return removed
+      forgetClips(db, swept)
+      return swept.length
     },
   }
 }

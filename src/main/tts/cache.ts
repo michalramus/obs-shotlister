@@ -89,16 +89,25 @@ export async function sweep(
   userDataDir: string,
   hashes: readonly string[],
   onError?: (hash: string, error: unknown) => void,
-): Promise<number> {
-  let deleted = 0
+): Promise<string[]> {
+  const gone: string[] = []
   for (const hash of hashes) {
     try {
       await unlink(clipPath(userDataDir, hash))
-      deleted += 1
+      gone.push(hash)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+      // Already absent counts as swept: the caller's job after this is to drop
+      // the rows describing clips that are no longer on disk, and a file that
+      // was never there qualifies.
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        gone.push(hash)
+        continue
+      }
+      // Anything else — a locked or read-only file — leaves the clip in place,
+      // so its row has to stay too or the cache index would claim a file is
+      // gone while it still occupies disk and still answers a lookup.
       onError?.(hash, error)
     }
   }
-  return deleted
+  return gone
 }
