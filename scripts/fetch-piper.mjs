@@ -55,21 +55,38 @@ const PIPER_RELEASE = '2023.11.14-2'
 const PIPER_RELEASE_BASE = `https://github.com/rhasspy/piper/releases/download/${PIPER_RELEASE}`
 
 /**
- * Upstream's macOS builds are both x86_64 — the asset named `aarch64` contains
- * an x86_64 Mach-O too, so an Apple Silicon machine runs Piper under Rosetta 2.
- * That is upstream's packaging, not a mistake here; the asset names are kept as
- * published so re-pinning stays a one-line change.
+ * Where our own macOS arm64 build is published.
+ *
+ * Upstream never shipped one. Its release workflow builds a matrix of
+ * `[x64, aarch64]` on `macos-latest` but never passes CMAKE_OSX_ARCHITECTURES,
+ * so in November 2023 — when `macos-latest` was still Intel — both jobs
+ * produced x86_64 and only the filenames differed. `piper_macos_aarch64.tar.gz`
+ * contains x86_64 Mach-O binaries, which a machine without Rosetta cannot run
+ * at all. `.github/workflows/build-piper-macos-arm64.yml` builds the real thing
+ * on an arm64 runner; publish its tarball here and paste the checksum below.
  */
+const OWN_BUILD_BASE =
+  'https://github.com/michalramus/obs-shotlister/releases/download/piper-macos-arm64-2023.11.14-2'
+
 const TARGETS = {
   'darwin-arm64': {
+    // Deliberately not upstream's mislabelled asset: see OWN_BUILD_BASE above.
+    url: `${OWN_BUILD_BASE}/piper_macos_aarch64.tar.gz`,
     asset: 'piper_macos_aarch64.tar.gz',
-    sha256: '6b1eb03b3735946cb35216e063e7eebcc33a6bbf5dd96ec0217959bf1cdcb0cc',
+    // FILL ME IN from the workflow's job summary once the build has run and the
+    // tarball is published. Left unset on purpose: a placeholder that looked
+    // like a checksum would be worse than a build that refuses to start.
+    sha256: null,
     binary: 'piper',
+    // Every Mach-O in the unpacked tree must report this. Upstream shipped a
+    // mislabelled tarball for two years because nothing ever checked.
+    machoArch: 'arm64',
   },
   'darwin-x64': {
     asset: 'piper_macos_x64.tar.gz',
     sha256: 'ced85c0a3df13945b1e623b878a48fdc2854d5c485b4b67f62857cf551deaf8b',
     binary: 'piper',
+    machoArch: 'x86_64',
   },
   'linux-x64': {
     asset: 'piper_linux_x86_64.tar.gz',
@@ -219,9 +236,17 @@ async function fetchTarget(target, scratch) {
     }
   }
 
+  if (!spec.sha256) {
+    throw new Error(
+      `${target} has no pinned checksum yet.\n` +
+        '  Run the "Build Piper (macOS arm64)" workflow, publish its tarball, then paste\n' +
+        '  the sha256 from the job summary into TARGETS in this file.',
+    )
+  }
+
   console.log(`[piper] ${target}: downloading ${spec.asset}`)
   const archive = join(scratch, spec.asset)
-  await downloadVerified(`${PIPER_RELEASE_BASE}/${spec.asset}`, archive, spec.sha256)
+  await downloadVerified(spec.url ?? `${PIPER_RELEASE_BASE}/${spec.asset}`, archive, spec.sha256)
 
   const staging = join(scratch, `unpack-${target}`)
   await mkdir(staging, { recursive: true })
@@ -233,6 +258,7 @@ async function fetchTarget(target, scratch) {
       `${spec.asset} did not contain piper/${spec.binary} — the pinned release's layout changed`,
     )
   }
+  await assertMachoArch(unpacked, spec)
   await writeFile(join(unpacked, STAMP), stamp)
 
   // Replace the whole directory in one move, so an interrupted run never leaves
@@ -241,6 +267,39 @@ async function fetchTarget(target, scratch) {
   await rm(destination, { recursive: true, force: true })
   await rename(unpacked, destination)
   console.log(`[piper] ${target}: installed ${PIPER_RELEASE}`)
+}
+
+/**
+ * Refuses a macOS tarball whose binaries are for the wrong architecture.
+ *
+ * A checksum only proves the bytes are the ones we pinned; it says nothing
+ * about what is inside them. Upstream published an `aarch64` tarball full of
+ * x86_64 binaries for two years, and the only reason anyone noticed was a
+ * machine without Rosetta refusing to run it — on a show night that is far too
+ * late. Checked at fetch time, where it costs one `lipo` call.
+ *
+ * Only runs on a macOS host, since `lipo` is part of the Xcode tools; on other
+ * hosts a cross-fetch is left unverified rather than failed.
+ */
+async function assertMachoArch(unpacked, spec) {
+  if (!spec.machoArch || process.platform !== 'darwin') return
+
+  const binary = join(unpacked, spec.binary)
+  let archs
+  try {
+    archs = execFileSync('lipo', ['-archs', binary], { encoding: 'utf-8' }).trim()
+  } catch (err) {
+    console.warn(`[piper] could not read the architecture of ${spec.binary}: ${err.message}`)
+    return
+  }
+
+  if (!archs.split(/\s+/).includes(spec.machoArch)) {
+    throw new Error(
+      `${spec.asset} contains ${archs} binaries, expected ${spec.machoArch}.\n` +
+        '  This is exactly the upstream mislabelling this check exists to catch.',
+    )
+  }
+  console.log(`[piper] ${spec.binary}: ${archs}`)
 }
 
 async function fetchVoiceFile(url, destination, expected, label, scratch) {

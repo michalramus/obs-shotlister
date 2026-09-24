@@ -1,0 +1,137 @@
+name: Build Piper (macOS arm64)
+
+# Upstream never shipped an arm64 Piper for macOS. Its release workflow builds a
+# matrix of `[x64, aarch64]` on `macos-latest` but never passes
+# CMAKE_OSX_ARCHITECTURES, so in November 2023 — when `macos-latest` was still
+# Intel — both jobs produced x86_64 and only the filenames differed. The asset
+# named `piper_macos_aarch64.tar.gz` therefore contains x86_64 Mach-O binaries.
+#
+# That is not merely slow on Apple Silicon: a machine without Rosetta cannot run
+# it at all, and a show machine is exactly where nobody wants to discover that.
+# So we build our own, natively, on an arm64 runner.
+#
+# Run this by hand, then publish the tarball and paste its checksum into the
+# `darwin-arm64` entry of scripts/fetch-piper.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      piper_ref:
+        description: 'rhasspy/piper ref to build'
+        required: true
+        default: '2023.11.14-2'
+      release_tag:
+        description: 'Tag in THIS repo to attach the tarball to (blank = artifact only)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  # piper's CMakeLists pulls piper-phonemize from `refs/heads/master.zip`, which
+  # is a moving target and would make two builds of the same piper tag differ.
+  # It is built separately at a pinned commit and handed over via
+  # PIPER_PHONEMIZE_DIR, which piper's CMakeLists already honours.
+  PIPER_PHONEMIZE_SHA: ba3cc06c5248215928821f1393b2b854a936991a
+
+jobs:
+  build:
+    # An actual Apple Silicon runner. piper-phonemize selects onnxruntime from
+    # CMAKE_SYSTEM_PROCESSOR, so building natively is what makes it fetch
+    # onnxruntime-osx-arm64 rather than the x86_64 build.
+    runs-on: macos-14
+
+    steps:
+      - name: Check the runner really is arm64
+        run: |
+          arch="$(uname -m)"
+          echo "runner arch: $arch"
+          [ "$arch" = "arm64" ] || { echo "::error::expected an arm64 runner, got $arch"; exit 1; }
+
+      - name: Check out piper-phonemize (pinned)
+        uses: actions/checkout@v4
+        with:
+          repository: rhasspy/piper-phonemize
+          ref: ${{ env.PIPER_PHONEMIZE_SHA }}
+          path: piper-phonemize
+
+      - name: Build piper-phonemize
+        run: |
+          cmake -B build -S piper-phonemize \
+            -DCMAKE_INSTALL_PREFIX="$PWD/pp-install" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --config Release
+          cmake --install build
+
+      - name: Check out piper
+        uses: actions/checkout@v4
+        with:
+          repository: rhasspy/piper
+          ref: ${{ inputs.piper_ref }}
+          path: piper
+
+      - name: Build piper
+        run: |
+          cmake -B piper-build -S piper \
+            -DCMAKE_INSTALL_PREFIX="$PWD/_install/piper" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPIPER_PHONEMIZE_DIR="$PWD/pp-install"
+          cmake --build piper-build --config Release
+          cmake --install piper-build
+
+      - name: Refuse to publish anything that is not arm64
+        # The whole reason this workflow exists. Upstream shipped a mislabelled
+        # tarball for two years because nothing checked.
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            case "$(file -b "$f")" in
+              *Mach-O*) ;;
+              *) continue ;;
+            esac
+            archs="$(lipo -archs "$f" 2>/dev/null || echo unknown)"
+            echo "$f -> $archs"
+            case "$archs" in
+              *arm64*) ;;
+              *) echo "::error::$f is $archs, not arm64"; fail=1 ;;
+            esac
+          done < <(find _install/piper -type f)
+          exit $fail
+
+      - name: Check it actually runs
+        run: |
+          ./_install/piper/piper --help 2>&1 | head -5
+
+      - name: Package
+        id: package
+        run: |
+          cd _install
+          tar -czf piper_macos_aarch64.tar.gz piper/
+          sum="$(shasum -a 256 piper_macos_aarch64.tar.gz | cut -d' ' -f1)"
+          echo "sha256=$sum" >> "$GITHUB_OUTPUT"
+          echo "### Piper macOS arm64" >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo "Built from piper \`${{ inputs.piper_ref }}\`, piper-phonemize \`$PIPER_PHONEMIZE_SHA\`." >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Paste into the `darwin-arm64` entry of `scripts/fetch-piper.mjs`:' >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "sha256: '$sum'," >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: piper_macos_aarch64
+          path: _install/piper_macos_aarch64.tar.gz
+          if-no-files-found: error
+
+      - name: Attach to a release
+        if: inputs.release_tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ inputs.release_tag }}" \
+            _install/piper_macos_aarch64.tar.gz --clobber
