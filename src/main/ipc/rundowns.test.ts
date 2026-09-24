@@ -25,10 +25,20 @@ function openMemoryDb(): Database.Database {
 }
 
 function insertProject(db: Database.Database, id: string, name: string): void {
-  db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(id, name, Date.now())
+  db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+    id,
+    name,
+    Date.now(),
+  )
 }
 
-function insertRundown(db: Database.Database, id: string, projectId: string, name: string, createdAt = 1000): void {
+function insertRundown(
+  db: Database.Database,
+  id: string,
+  projectId: string,
+  name: string,
+  createdAt = 1000,
+): void {
   db.prepare('INSERT INTO rundowns (id, project_id, name, created_at) VALUES (?, ?, ?, ?)').run(
     id,
     projectId,
@@ -197,13 +207,9 @@ describe('deleteRundown', () => {
   })
 
   it('cascades deletion to shots', () => {
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'cam-1',
-      'p1',
-      1,
-      'Wide',
-      '#e74c3c',
-    )
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('cam-1', 'p1', 1, 'Wide', '#e74c3c')
     db.prepare(
       'INSERT INTO shots (id, rundown_id, camera_id, duration_ms, order_index) VALUES (?, ?, ?, ?, ?)',
     ).run('shot-1', 'rd-1', 'cam-1', 5000, 0)
@@ -243,27 +249,15 @@ describe('setRundownKind', () => {
     db = openMemoryDb()
     insertProject(db, 'p1', 'Project A')
     insertRundown(db, 'rd-1', 'p1', 'Song A')
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'cam-1',
-      'p1',
-      1,
-      'Wide',
-      '#e74c3c',
-    )
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'cam-2',
-      'p1',
-      2,
-      'Tight',
-      '#3498db',
-    )
-    db.prepare('INSERT INTO parts (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'part-1',
-      'p1',
-      1,
-      'gitara',
-      '#2ecc71',
-    )
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('cam-1', 'p1', 1, 'Wide', '#e74c3c')
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('cam-2', 'p1', 2, 'Tight', '#3498db')
+    db.prepare(
+      'INSERT INTO parts (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('part-1', 'p1', 1, 'gitara', '#2ecc71')
     db.prepare(
       'INSERT INTO shots (id, rundown_id, camera_id, duration_ms, label, order_index, transition_name, transition_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     ).run('shot-1', 'rd-1', 'cam-1', 5000, 'intro', 0, 'fade', 500)
@@ -329,20 +323,12 @@ describe('unassignedItemCount', () => {
     db = openMemoryDb()
     insertProject(db, 'p1', 'Project A')
     insertRundown(db, 'rd-1', 'p1', 'Song A')
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'cam-1',
-      'p1',
-      1,
-      'Wide',
-      '#e74c3c',
-    )
-    db.prepare('INSERT INTO parts (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'part-1',
-      'p1',
-      1,
-      'gitara',
-      '#2ecc71',
-    )
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('cam-1', 'p1', 1, 'Wide', '#e74c3c')
+    db.prepare(
+      'INSERT INTO parts (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('part-1', 'p1', 1, 'gitara', '#2ecc71')
     db.prepare(
       'INSERT INTO shots (id, rundown_id, camera_id, duration_ms, order_index) VALUES (?, ?, ?, ?, ?)',
     ).run('shot-1', 'rd-1', 'cam-1', 5000, 0)

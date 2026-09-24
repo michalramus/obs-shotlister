@@ -47,7 +47,9 @@ function rowToRundown(row: RundownRow): Rundown {
 
 export function getRundown(db: Database.Database, id: string): Rundown | null {
   const row = db
-    .prepare('SELECT id, project_id, name, created_at, order_index, folder, kind FROM rundowns WHERE id = ?')
+    .prepare(
+      'SELECT id, project_id, name, created_at, order_index, folder, kind FROM rundowns WHERE id = ?',
+    )
     .get(id) as RundownRow | undefined
   return row ? rowToRundown(row) : null
 }
@@ -70,18 +72,16 @@ export function createRundown(db: Database.Database, projectId: string, name: st
   const createdAt = Date.now()
 
   const orderIndexRow = db
-    .prepare('SELECT COALESCE(MAX(order_index), -1) + 1 AS next_index FROM rundowns WHERE project_id = ?')
+    .prepare(
+      'SELECT COALESCE(MAX(order_index), -1) + 1 AS next_index FROM rundowns WHERE project_id = ?',
+    )
     .get(projectId) as { next_index: number }
   const orderIndex = orderIndexRow.next_index
 
   // Foreign key enforcement will throw if projectId is invalid
-  db.prepare('INSERT INTO rundowns (id, project_id, name, created_at, order_index) VALUES (?, ?, ?, ?, ?)').run(
-    id,
-    projectId,
-    name,
-    createdAt,
-    orderIndex,
-  )
+  db.prepare(
+    'INSERT INTO rundowns (id, project_id, name, created_at, order_index) VALUES (?, ?, ?, ?, ?)',
+  ).run(id, projectId, name, createdAt, orderIndex)
 
   return { id, projectId, name, createdAt, orderIndex, folder: null, kind: 'camera' }
 }
@@ -96,7 +96,11 @@ export function reorderRundowns(db: Database.Database, ids: string[]): void {
   transaction()
 }
 
-export function setRundownFolder(db: Database.Database, id: string, folder: string | null): Rundown {
+export function setRundownFolder(
+  db: Database.Database,
+  id: string,
+  folder: string | null,
+): Rundown {
   const result = db.prepare('UPDATE rundowns SET folder = ? WHERE id = ?').run(folder, id)
 
   if (result.changes === 0) {
@@ -104,7 +108,9 @@ export function setRundownFolder(db: Database.Database, id: string, folder: stri
   }
 
   const row = db
-    .prepare('SELECT id, project_id, name, created_at, order_index, folder, kind FROM rundowns WHERE id = ?')
+    .prepare(
+      'SELECT id, project_id, name, created_at, order_index, folder, kind FROM rundowns WHERE id = ?',
+    )
     .get(id) as RundownRow
   return rowToRundown(row)
 }
@@ -121,7 +127,9 @@ export function renameRundown(db: Database.Database, id: string, name: string): 
   }
 
   const row = db
-    .prepare('SELECT id, project_id, name, created_at, order_index, folder, kind FROM rundowns WHERE id = ?')
+    .prepare(
+      'SELECT id, project_id, name, created_at, order_index, folder, kind FROM rundowns WHERE id = ?',
+    )
     .get(id) as RundownRow
   return rowToRundown(row)
 }
@@ -143,7 +151,9 @@ export function setRundownKind(db: Database.Database, id: string, kind: RundownK
   }
 
   const row = db
-    .prepare('SELECT id, project_id, name, created_at, order_index, folder, kind FROM rundowns WHERE id = ?')
+    .prepare(
+      'SELECT id, project_id, name, created_at, order_index, folder, kind FROM rundowns WHERE id = ?',
+    )
     .get(id) as RundownRow
   return rowToRundown(row)
 }
@@ -174,4 +184,37 @@ export function deleteRundown(db: Database.Database, id: string): void {
   if (result.changes === 0) {
     throw new Error(`Rundown not found: ${id}`)
   }
+}
+
+/**
+ * Renames a folder across the Project.
+ *
+ * A folder is a TEXT column on both `rundowns` and `parts`, not an entity, so
+ * there is no single row to rename. Both tables therefore have to move in the
+ * same transaction (ADR 0006) — a partial rename would strand a folder's Parts
+ * out of scope of the very Rundowns they were written for.
+ *
+ * Renaming onto an existing folder name merges the two, which is the expected
+ * reading of a folder that is only ever a label.
+ */
+export function renameFolder(
+  db: Database.Database,
+  projectId: string,
+  from: string,
+  to: string,
+): void {
+  if (!from.trim() || !to.trim()) {
+    throw new Error('Folder name must not be empty')
+  }
+
+  const renameRundowns = db.prepare(
+    'UPDATE rundowns SET folder = ? WHERE project_id = ? AND folder = ?',
+  )
+  const renameParts = db.prepare('UPDATE parts SET folder = ? WHERE project_id = ? AND folder = ?')
+
+  const apply = db.transaction(() => {
+    renameRundowns.run(to, projectId, from)
+    renameParts.run(to, projectId, from)
+  })
+  apply()
 }

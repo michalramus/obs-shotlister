@@ -116,9 +116,9 @@ export function getPart(db: Database.Database, id: string): Part | null {
  * stops being offered for new ones.
  */
 export function listPartsInScope(db: Database.Database, rundownId: string): Part[] {
-  const rundown = db.prepare('SELECT project_id, folder FROM rundowns WHERE id = ?').get(rundownId) as
-    | { project_id: string; folder: string | null }
-    | undefined
+  const rundown = db
+    .prepare('SELECT project_id, folder FROM rundowns WHERE id = ?')
+    .get(rundownId) as { project_id: string; folder: string | null } | undefined
 
   if (!rundown) {
     throw new Error(`Rundown not found: ${rundownId}`)
@@ -165,7 +165,9 @@ export function upsertPart(db: Database.Database, input: PartUpsertInput): Part 
       throw new Error(`Part not found: ${input.id}`)
     }
 
-    const scope = input.scope ? scopeToColumns(input.scope) : { folder: existing.folder, rundownId: existing.rundown_id }
+    const scope = input.scope
+      ? scopeToColumns(input.scope)
+      : { folder: existing.folder, rundownId: existing.rundown_id }
 
     db.prepare(
       'UPDATE parts SET project_id = ?, number = ?, name = ?, color = ?, folder = ?, rundown_id = ? WHERE id = ?',
@@ -277,30 +279,4 @@ export function setPartsColor(db: Database.Database, ids: string[], color: strin
   return ids
     .map((id) => rowToPart(getPartRow(db, id) as PartRow))
     .sort((a, b) => a.number - b.number)
-}
-
-/**
- * Renames a folder across the Project.
- *
- * A folder is a TEXT column on both `rundowns` and `parts`, not an entity, so
- * there is no single row to rename. Both tables therefore have to move in the
- * same transaction (ADR 0006) — a partial rename would strand a folder's Parts
- * out of scope of the very Rundowns they were written for.
- *
- * Renaming onto an existing folder name merges the two, which is the expected
- * reading of a folder that is only ever a label.
- */
-export function renameFolder(db: Database.Database, projectId: string, from: string, to: string): void {
-  if (!from.trim() || !to.trim()) {
-    throw new Error('Folder name must not be empty')
-  }
-
-  const renameRundowns = db.prepare('UPDATE rundowns SET folder = ? WHERE project_id = ? AND folder = ?')
-  const renameParts = db.prepare('UPDATE parts SET folder = ? WHERE project_id = ? AND folder = ?')
-
-  const apply = db.transaction(() => {
-    renameRundowns.run(to, projectId, from)
-    renameParts.run(to, projectId, from)
-  })
-  apply()
 }

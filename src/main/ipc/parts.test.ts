@@ -9,8 +9,8 @@ import {
   deletePart,
   promotePart,
   setPartsColor,
-  renameFolder,
 } from './parts'
+import { renameFolder } from './rundowns'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -25,7 +25,11 @@ function openMemoryDb(): Database.Database {
 }
 
 function insertProject(db: Database.Database, id: string, name: string): void {
-  db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(id, name, Date.now())
+  db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+    id,
+    name,
+    Date.now(),
+  )
 }
 
 function insertRundown(
@@ -317,13 +321,9 @@ describe('upsertPart', () => {
 
   it('leaves the part_renders row alone on rename, so the part reads stale and not missing', () => {
     insertPart(db, 'pt-1', 'p1', 1, 'gitara')
-    db.prepare('INSERT INTO tts_clips (hash, text, voice, engine, duration_ms) VALUES (?, ?, ?, ?, ?)').run(
-      'h1',
-      'gitara za',
-      'pl',
-      'piper',
-      800,
-    )
+    db.prepare(
+      'INSERT INTO tts_clips (hash, text, voice, engine, duration_ms) VALUES (?, ?, ?, ?, ?)',
+    ).run('h1', 'gitara za', 'pl', 'piper', 800)
     db.prepare('INSERT INTO part_renders (part_id, voice, engine, hash) VALUES (?, ?, ?, ?)').run(
       'pt-1',
       'pl',
@@ -377,7 +377,9 @@ describe('deletePart', () => {
       insertCall(db, `call-${i}`, 'rd-1', 'pt-1', i)
     }
 
-    expect(() => deletePart(db, 'pt-1')).toThrow('Cannot delete Part "gitara": 4 Calls reference it')
+    expect(() => deletePart(db, 'pt-1')).toThrow(
+      'Cannot delete Part "gitara": 4 Calls reference it',
+    )
     expect(listParts(db, 'p1')).toHaveLength(1)
   })
 
@@ -385,7 +387,9 @@ describe('deletePart', () => {
     insertPart(db, 'pt-1', 'p1', 1, 'gitara')
     insertCall(db, 'call-0', 'rd-1', 'pt-1')
 
-    expect(() => deletePart(db, 'pt-1')).toThrow('Cannot delete Part "gitara": 1 Call references it')
+    expect(() => deletePart(db, 'pt-1')).toThrow(
+      'Cannot delete Part "gitara": 1 Call references it',
+    )
   })
 
   it('ignores calls pointing at other parts', () => {
@@ -446,7 +450,9 @@ describe('promotePart', () => {
 
     promotePart(db, 'pt-1', { kind: 'project' })
 
-    const call = db.prepare('SELECT part_id FROM shots WHERE id = ?').get('call-0') as { part_id: string }
+    const call = db.prepare('SELECT part_id FROM shots WHERE id = ?').get('call-0') as {
+      part_id: string
+    }
     expect(call.part_id).toBe('pt-1')
   })
 
@@ -545,7 +551,9 @@ describe('renameFolder', () => {
 
     renameFolder(db, 'p1', 'Old', 'New')
 
-    const rundown = db.prepare('SELECT folder FROM rundowns WHERE id = ?').get('rd-1') as { folder: string }
+    const rundown = db.prepare('SELECT folder FROM rundowns WHERE id = ?').get('rd-1') as {
+      folder: string
+    }
     expect(rundown.folder).toBe('New')
     expect(listParts(db, 'p1')[0].folder).toBe('New')
   })
@@ -569,7 +577,9 @@ describe('renameFolder', () => {
 
     expect(listParts(db, 'p1')[0].folder).toBe('Other')
     expect(listParts(db, 'p2')[0].folder).toBe('Old')
-    const rundown = db.prepare('SELECT folder FROM rundowns WHERE id = ?').get('rd-2') as { folder: string }
+    const rundown = db.prepare('SELECT folder FROM rundowns WHERE id = ?').get('rd-2') as {
+      folder: string
+    }
     expect(rundown.folder).toBe('Old')
   })
 

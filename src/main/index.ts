@@ -43,6 +43,7 @@ import {
   setRundownFolder,
   setRundownKind,
   unassignedItemCount,
+  renameFolder,
 } from './ipc/rundowns'
 import {
   listParts,
@@ -51,7 +52,6 @@ import {
   deletePart,
   promotePart,
   setPartsColor,
-  renameFolder,
 } from './ipc/parts'
 import { listLyrics, upsertLyric, deleteLyric } from './ipc/lyrics'
 import { listShots, createShot, updateShot, deleteShot, reorderShots, splitShot } from './ipc/shots'
