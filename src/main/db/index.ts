@@ -54,6 +54,39 @@ function makeShotCameraNullable(database: Database.Database): void {
 }
 
 /**
+ * Renames `tts_clips` to `speech_clips`.
+ *
+ * The glossary lists "TTS" among the words to avoid for an Announcement, and
+ * the table holds the clips an Announcement is assembled from. Renamed in place
+ * rather than left as a second name for one thing, because the schema is read
+ * by people as often as by code.
+ *
+ * A no-op on a fresh database, where `speech_clips` is created directly.
+ */
+function renameSpeechClipsTable(database: Database.Database): void {
+  const legacy = database
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='tts_clips'")
+    .get()
+  if (!legacy) return
+
+  const current = database
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='speech_clips'")
+    .get()
+  if (current) {
+    // Only reachable if something created speech_clips out of order. Copy
+    // rather than drop: a clip row carries a duration that cannot be recovered
+    // without re-synthesising it.
+    database.exec(`
+      INSERT OR IGNORE INTO speech_clips (hash, text, voice, engine, duration_ms)
+        SELECT hash, text, voice, engine, duration_ms FROM tts_clips;
+      DROP TABLE tts_clips;
+    `)
+    return
+  }
+  database.exec('ALTER TABLE tts_clips RENAME TO speech_clips')
+}
+
+/**
  * Applies all schema migrations to the given database.
  * Uses CREATE TABLE IF NOT EXISTS so this is safe to call multiple times
  * (idempotent). Called automatically by getDatabase() on first open.
@@ -64,6 +97,10 @@ function makeShotCameraNullable(database: Database.Database): void {
 export function applyMigrations(database: Database.Database): void {
   // Enable foreign key enforcement for the connection receiving migrations.
   database.pragma('foreign_keys = ON')
+
+  // Before anything below creates speech_clips, or the rename would find both
+  // tables present and have to merge them instead of simply renaming.
+  renameSpeechClipsTable(database)
 
   database.exec(`
     CREATE TABLE IF NOT EXISTS projects (
@@ -187,7 +224,7 @@ export function applyMigrations(database: Database.Database): void {
     -- One row per synthesised clip. Content-addressed on (text, Voice, engine),
     -- with the duration stored alongside because flush placement schedules the
     -- phrase backwards from the first number and needs to know how long it runs.
-    CREATE TABLE IF NOT EXISTS tts_clips (
+    CREATE TABLE IF NOT EXISTS speech_clips (
       hash        TEXT PRIMARY KEY,
       text        TEXT NOT NULL,
       voice       TEXT NOT NULL,

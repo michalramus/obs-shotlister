@@ -419,3 +419,65 @@ describe('upgrading a pre-Voice-over database', () => {
     expect(index).toBeDefined()
   })
 })
+
+describe('renaming tts_clips to speech_clips', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openMemoryDb()
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  function tableNames(): string[] {
+    const rows = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%clips'")
+      .all() as { name: string }[]
+    return rows.map((r) => r.name).sort()
+  }
+
+  it('creates speech_clips and no tts_clips on a fresh database', () => {
+    applyMigrations(db)
+    expect(tableNames()).toEqual(['speech_clips'])
+  })
+
+  it('carries existing clips across from a database that still has tts_clips', () => {
+    db.exec(`
+      CREATE TABLE tts_clips (
+        hash TEXT PRIMARY KEY, text TEXT NOT NULL, voice TEXT NOT NULL,
+        engine TEXT NOT NULL, duration_ms INTEGER NOT NULL
+      );
+      INSERT INTO tts_clips VALUES ('h1', 'gitara za', 'pl_PL-gosia-medium', 'piper', 820);
+    `)
+    applyMigrations(db)
+
+    expect(tableNames()).toEqual(['speech_clips'])
+    expect(db.prepare('SELECT * FROM speech_clips').all()).toEqual([
+      {
+        hash: 'h1',
+        text: 'gitara za',
+        voice: 'pl_PL-gosia-medium',
+        engine: 'piper',
+        duration_ms: 820,
+      },
+    ])
+  })
+
+  it('is safe to replay', () => {
+    db.exec(`
+      CREATE TABLE tts_clips (
+        hash TEXT PRIMARY KEY, text TEXT NOT NULL, voice TEXT NOT NULL,
+        engine TEXT NOT NULL, duration_ms INTEGER NOT NULL
+      );
+      INSERT INTO tts_clips VALUES ('h1', 'a', 'v', 'piper', 100);
+    `)
+    applyMigrations(db)
+    applyMigrations(db)
+    applyMigrations(db)
+
+    expect(tableNames()).toEqual(['speech_clips'])
+    expect(db.prepare('SELECT COUNT(*) AS n FROM speech_clips').get()).toEqual({ n: 1 })
+  })
+})
