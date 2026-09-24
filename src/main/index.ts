@@ -2,8 +2,8 @@ import { app, BrowserWindow, dialog, protocol } from 'electron'
 import { join } from 'path'
 import { readFileSync, existsSync, createReadStream, promises as fsPromises } from 'fs'
 import { extname } from 'path'
-import { Readable } from 'stream'
 import { fromMediaUrl } from '../shared/media-url'
+import { toWebStream } from './media-stream'
 import { startServer } from './server'
 import { registerIpcHandler, pushToWindow } from './ipc/register'
 import type {
@@ -232,21 +232,15 @@ function registerIpcHandlers(): void {
     renameProject(db, payload.id, payload.name),
   )
 
-  registerIpcHandler('projects:delete', (payload: { id: string }) =>
-    deleteProject(db, payload.id),
-  )
+  registerIpcHandler('projects:delete', (payload: { id: string }) => deleteProject(db, payload.id))
 
   registerIpcHandler('cameras:list', (payload: { projectId: string }) =>
     listCameras(db, payload.projectId),
   )
 
-  registerIpcHandler('cameras:upsert', (payload: CameraUpsertInput) =>
-    upsertCamera(db, payload),
-  )
+  registerIpcHandler('cameras:upsert', (payload: CameraUpsertInput) => upsertCamera(db, payload))
 
-  registerIpcHandler('cameras:delete', (payload: { id: string }) =>
-    deleteCamera(db, payload.id),
-  )
+  registerIpcHandler('cameras:delete', (payload: { id: string }) => deleteCamera(db, payload.id))
 
   // Rundowns
   registerIpcHandler('rundowns:list', (payload: { projectId: string }) =>
@@ -274,9 +268,9 @@ function registerIpcHandlers(): void {
     live.setActiveRundown(payload.rundownId)
     publish.rundownChanged()
     if (payload.rundownId) {
-      obs.cueRundownStart(payload.rundownId).catch((e: unknown) =>
-        console.error('[OBS] cueRundownStart:', e),
-      )
+      obs
+        .cueRundownStart(payload.rundownId)
+        .catch((e: unknown) => console.error('[OBS] cueRundownStart:', e))
     }
   })
 
@@ -604,9 +598,11 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler(
     'obs:transitions:upsert',
-    (
-      payload: { logicalName: string; obsTransitionName: string; constLengthMs?: number | null },
-    ) => {
+    (payload: {
+      logicalName: string
+      obsTransitionName: string
+      constLengthMs?: number | null
+    }) => {
       try {
         upsertTransitionMapping(
           db,
@@ -706,17 +702,14 @@ function registerIpcHandlers(): void {
 
   // OSC
   registerIpcHandler('osc:settings:get', () => getOscSettings(db))
-  registerIpcHandler(
-    'osc:settings:save',
-    (payload: { enabled: boolean; port: number }) => {
-      saveOscSettings(db, payload.enabled, payload.port)
-      if (payload.enabled) {
-        startOscServer(payload.port, { next: handleOscNext, skip: handleOscSkip })
-      } else {
-        stopOscServer()
-      }
-    },
-  )
+  registerIpcHandler('osc:settings:save', (payload: { enabled: boolean; port: number }) => {
+    saveOscSettings(db, payload.enabled, payload.port)
+    if (payload.enabled) {
+      startOscServer(payload.port, { next: handleOscNext, skip: handleOscSkip })
+    } else {
+      stopOscServer()
+    }
+  })
 
   // Preview-first preference (persisted to DB so OSC can read it)
   registerIpcHandler('live:getPreviewFirst', () => getPreviewFirst(db))
@@ -805,7 +798,6 @@ function registerIpcHandlers(): void {
   })
 }
 
-
 // ---------------------------------------------------------------------------
 // Socket.io broadcast helpers
 // ---------------------------------------------------------------------------
@@ -818,7 +810,6 @@ let _db: ReturnType<typeof getDatabase> | null = null
 export function setSocketServer(io: SocketServer): void {
   _io = io
 }
-
 
 app.whenReady().then(() => {
   // Serve local media files via media:// protocol (avoids cross-origin issues in dev mode)
@@ -850,7 +841,7 @@ app.whenReady().then(() => {
     const rangeHeader = request.headers.get('range')
 
     if (!rangeHeader) {
-      return new Response(Readable.toWeb(createReadStream(filePath)) as ReadableStream, {
+      return new Response(toWebStream(createReadStream(filePath)), {
         headers: {
           'Content-Length': fileSize.toString(),
           'Content-Type': contentType,
@@ -866,18 +857,15 @@ app.whenReady().then(() => {
     const end = match[2] ? parseInt(match[2], 10) : fileSize - 1
     const chunkSize = end - start + 1
 
-    return new Response(
-      Readable.toWeb(createReadStream(filePath, { start, end })) as ReadableStream,
-      {
-        status: 206,
-        headers: {
-          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': chunkSize.toString(),
-          'Content-Type': contentType,
-        },
+    return new Response(toWebStream(createReadStream(filePath, { start, end })), {
+      status: 206,
+      headers: {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize.toString(),
+        'Content-Type': contentType,
       },
-    )
+    })
   })
 
   _db = getDatabase()
@@ -902,9 +890,7 @@ app.whenReady().then(() => {
   // App start is one of the only two moments the cache may be touched (ADR
   // 0005). Deliberately not awaited: a slow sweep must not hold up the window,
   // and a failed one is a disk-space problem, never a reason not to start.
-  render
-    .sweepOrphans()
-    .catch((err: unknown) => console.error('[tts] sweep on start failed:', err))
+  render.sweepOrphans().catch((err: unknown) => console.error('[tts] sweep on start failed:', err))
   registerIpcHandlers()
   const audioDir = app.isPackaged
     ? join(process.resourcesPath, 'audio')
