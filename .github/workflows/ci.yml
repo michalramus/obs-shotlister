@@ -23,3 +23,8 @@ jobs:
       - run: yarn lint
 
       - run: yarn test
+
+      # Typecheck and bundle. The renderer and the main process have different
+      # module resolution, so a shared module that reaches for a Node builtin
+      # passes both lint and tests and only fails here.
+      - run: yarn build
