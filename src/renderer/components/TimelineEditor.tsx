@@ -26,7 +26,13 @@ import {
   droppedAnnouncementCallIds,
 } from '../timeline/lyrics'
 import { useAppStore } from '../store'
-import { PartButtonBar, PartPicker, AddPartDialog, partForKey } from './PartsConfigPanel'
+import {
+  ADD_PART_KEY,
+  AddPartDialog,
+  PartButtonBar,
+  PartPicker,
+  partForKey,
+} from './PartsConfigPanel'
 import { targetNoun, targetOf, targetsById, targetsOf } from '../../shared/rundown-item'
 import type { DeleteShotMode } from '../../shared/ipc-contract'
 
@@ -261,6 +267,8 @@ export function TimelineEditor({
   const lastPlayheadCommitRef = useRef(0)
   const shotsRef = useRef(shots)
   const camerasRef = useRef(cameras)
+  // The key handler is bound once; N must stay free in a Camera Rundown.
+  const isVoiceRef = useRef(false)
   // The keyboard effect is bound once and never re-bound, so the handlers it
   // reaches for are republished every render through this ref rather than
   // captured in its closure.
@@ -311,6 +319,9 @@ export function TimelineEditor({
   useEffect(() => {
     camerasRef.current = cameras
   }, [cameras])
+  useEffect(() => {
+    isVoiceRef.current = isVoice
+  }, [isVoice])
 
   // Sync media currentTime to playhead while stopped
   useEffect(() => {
@@ -771,7 +782,11 @@ export function TimelineEditor({
         e.preventDefault()
         keyActionsRef.current.setLyricOut()
       }
-      if ((e.key === 'n' || e.key === 'N') && !running) {
+      // Naming a Part mid-authoring, without leaving the timeline. Claimed
+      // only in a Voice-over Rundown — `openAddPart` is a no-op otherwise — so
+      // a Camera Rundown keeps N free.
+      if (e.key.toLowerCase() === ADD_PART_KEY && !running && isVoiceRef.current) {
+        e.preventDefault()
         keyActionsRef.current.openAddPart()
       }
       // In a Voice-over Rundown 1-9 and q w e r t y u i o p name Parts, which

@@ -18,6 +18,14 @@ import { visibleFolderNames } from './RundownSidebar'
 // the in-scope list in `number` order instead, so they are always contiguous.
 // ---------------------------------------------------------------------------
 
+/**
+ * Opens the one-field dialog that names a new Part mid-authoring.
+ *
+ * Kept off the assignment keymap on purpose: N is not one of the nineteen
+ * Part keys, so claiming it costs no Part its shortcut.
+ */
+export const ADD_PART_KEY = 'n'
+
 export const PART_KEYS: readonly string[] = [
   '1',
   '2',
@@ -79,9 +87,7 @@ export function filterParts(parts: Part[], query: string): Part[] {
   const q = query.trim().toLowerCase()
   const ordered = partsByNumber(parts)
   if (q === '') return ordered
-  return ordered.filter(
-    (p) => p.name.toLowerCase().includes(q) || String(p.number).startsWith(q),
-  )
+  return ordered.filter((p) => p.name.toLowerCase().includes(q) || String(p.number).startsWith(q))
 }
 
 /** The scope a Part is currently defined at. */
@@ -516,7 +522,12 @@ function DeletePartDialog({ part, onCancel, onConfirm }: DeletePartDialogProps):
   }
 
   return (
-    <div style={s.confirmOverlay} role="dialog" aria-modal="true" aria-labelledby="delete-part-title">
+    <div
+      style={s.confirmOverlay}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="delete-part-title"
+    >
       <div style={s.confirmDialog}>
         <h3 id="delete-part-title" style={s.confirmTitle}>
           Delete part?
@@ -585,11 +596,7 @@ function PartRow({
 
   // Commit changes on blur from any field, exactly as the Camera panel does.
   const handleBlur = async (): Promise<void> => {
-    if (
-      draft.number === part.number &&
-      draft.name === part.name &&
-      draft.color === part.color
-    ) {
+    if (draft.number === part.number && draft.name === part.name && draft.color === part.color) {
       return
     }
     setSaving(true)
@@ -1091,10 +1098,18 @@ export function PartButtonBar({
           </button>
         )
       })}
-      {ordered.length === 0 && <span style={{ color: '#444', fontSize: '11px' }}>No parts in scope</span>}
+      {ordered.length === 0 && (
+        <span style={{ color: '#444', fontSize: '11px' }}>No parts in scope</span>
+      )}
       {onAddNew !== undefined && (
-        <button style={s.partBtn} onClick={onAddNew} disabled={disabled} title="Add new description">
+        <button
+          style={s.partBtn}
+          onClick={onAddNew}
+          disabled={disabled}
+          title={`Add new description (${ADD_PART_KEY.toUpperCase()})`}
+        >
           + Add new description
+          <span style={s.keyCap}>{ADD_PART_KEY.toUpperCase()}</span>
         </button>
       )}
     </div>
