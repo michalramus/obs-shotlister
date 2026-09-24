@@ -8,6 +8,8 @@ import {
   isUnassigned,
   announcementWouldBeDropped,
   droppedAnnouncementCallIds,
+  resizeLyric,
+  MIN_LYRIC_MS,
 } from './lyrics'
 import type { Lyric, Shot } from '../../shared/types'
 
@@ -180,5 +182,67 @@ describe('droppedAnnouncementCallIds', () => {
   it('ignores an unassigned item, which has no phrase to speak', () => {
     const items = [item('a', 100, { partId: 'short' }), item('b', 5000)]
     expect(droppedAnnouncementCallIds(items, phrase).size).toBe(0)
+  })
+})
+
+describe('resizeLyric', () => {
+  const lyrics: Lyric[] = [
+    { id: 'a', rundownId: 'r1', startMs: 0, endMs: 2000, text: 'first' },
+    { id: 'b', rundownId: 'r1', startMs: 3000, endMs: 5000, text: 'second' },
+    { id: 'c', rundownId: 'r1', startMs: 6000, endMs: 8000, text: 'third' },
+  ]
+
+  it('moves the start edge freely inside the gap before it', () => {
+    expect(resizeLyric(lyrics, 'b', 'start', 2500)).toEqual({ startMs: 2500, endMs: 5000 })
+  })
+
+  it('moves the end edge freely inside the gap after it', () => {
+    expect(resizeLyric(lyrics, 'b', 'end', 5500)).toEqual({ startMs: 3000, endMs: 5500 })
+  })
+
+  it('stops the start edge at the previous line rather than overlapping it', () => {
+    expect(resizeLyric(lyrics, 'b', 'start', 500)).toEqual({ startMs: 2000, endMs: 5000 })
+  })
+
+  it('stops the end edge at the next line rather than overlapping it', () => {
+    expect(resizeLyric(lyrics, 'b', 'end', 9999)).toEqual({ startMs: 3000, endMs: 6000 })
+  })
+
+  it('keeps the line at least MIN_LYRIC_MS long from either edge', () => {
+    expect(resizeLyric(lyrics, 'b', 'start', 4999)).toEqual({
+      startMs: 5000 - MIN_LYRIC_MS,
+      endMs: 5000,
+    })
+    expect(resizeLyric(lyrics, 'b', 'end', 0)).toEqual({
+      startMs: 3000,
+      endMs: 3000 + MIN_LYRIC_MS,
+    })
+  })
+
+  it('never lets the start edge go below zero', () => {
+    expect(resizeLyric(lyrics, 'a', 'start', -5000)).toEqual({ startMs: 0, endMs: 2000 })
+  })
+
+  it('lets the last line extend without limit', () => {
+    expect(resizeLyric(lyrics, 'c', 'end', 20000)).toEqual({ startMs: 6000, endMs: 20000 })
+  })
+
+  it('returns null for a line that is not there', () => {
+    expect(resizeLyric(lyrics, 'nope', 'start', 100)).toBeNull()
+  })
+
+  it('refuses when neighbours leave no room at all', () => {
+    const packed: Lyric[] = [
+      { id: 'x', rundownId: 'r1', startMs: 0, endMs: 1000, text: 'x' },
+      { id: 'y', rundownId: 'r1', startMs: 1000, endMs: 1100, text: 'y' },
+      { id: 'z', rundownId: 'r1', startMs: 1100, endMs: 2000, text: 'z' },
+    ]
+    // y is already shorter than the minimum and walled in on both sides.
+    expect(resizeLyric(packed, 'y', 'start', 900)).toBeNull()
+    expect(resizeLyric(packed, 'y', 'end', 1500)).toBeNull()
+  })
+
+  it('rounds to whole milliseconds, since a drag is sub-pixel', () => {
+    expect(resizeLyric(lyrics, 'b', 'start', 2500.7)).toEqual({ startMs: 2501, endMs: 5000 })
   })
 })

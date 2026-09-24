@@ -101,6 +101,55 @@ export function lyricBlocks(lyrics: Lyric[], zoomPxPerSec: number, minWidthPx = 
 // defined once in shared/rundown-item — the Phone view needs the same answer.
 export { isUnassigned } from '../../shared/rundown-item'
 
+/** The shortest a line may be dragged to. Below this it stops being clickable. */
+export const MIN_LYRIC_MS = 200
+
+/**
+ * Where a dragged edge may actually land.
+ *
+ * Lines are disjoint, and the store refuses an overlap outright — so a drag
+ * that would cross a neighbour is stopped at that neighbour rather than
+ * attempted and rejected. Dragging is continuous: bouncing off a rejection
+ * every few pixels would make the lane feel broken.
+ *
+ * Returns null when there is no room to move at all, which the caller reads as
+ * "leave the line alone".
+ */
+export function resizeLyric(
+  lyrics: Lyric[],
+  id: string,
+  edge: 'start' | 'end',
+  ms: number,
+): TimeRange | null {
+  const target = lyrics.find((l) => l.id === id)
+  if (target === undefined) return null
+
+  const others = lyrics.filter((l) => l.id !== id)
+
+  if (edge === 'start') {
+    // The nearest line that ends at or before this one starts is the floor.
+    const previousEnd = others
+      .filter((l) => l.endMs <= target.startMs)
+      .reduce((max, l) => Math.max(max, l.endMs), 0)
+    const lowest = previousEnd
+    const highest = target.endMs - MIN_LYRIC_MS
+    if (highest < lowest) return null
+    return { startMs: clampMs(ms, lowest, highest), endMs: target.endMs }
+  }
+
+  const nextStart = others
+    .filter((l) => l.startMs >= target.endMs)
+    .reduce((min, l) => Math.min(min, l.startMs), Number.MAX_SAFE_INTEGER)
+  const lowest = target.startMs + MIN_LYRIC_MS
+  const highest = nextStart
+  if (highest < lowest) return null
+  return { startMs: target.startMs, endMs: clampMs(ms, lowest, highest) }
+}
+
+function clampMs(value: number, min: number, max: number): number {
+  return Math.round(Math.min(Math.max(value, min), max))
+}
+
 export interface DropPredicateInput {
   /** How long there is before the Call is due — the previous visible Call's duration. */
   leadMs: number
