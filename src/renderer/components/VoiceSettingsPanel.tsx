@@ -320,6 +320,9 @@ const s = {
     color: '#e74c3c',
     fontSize: '13px',
     margin: '4px 0 0',
+    // A render failure explains itself over several lines — which binary, and
+    // what to do about it. Collapsing them runs the fix into the diagnosis.
+    whiteSpace: 'pre-line' as const,
   } satisfies React.CSSProperties,
 
   smallBtn: {
