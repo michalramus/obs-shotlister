@@ -22,6 +22,19 @@ import type { ScheduledClip, AnnouncementPlan, PhrasePlacement } from './ipc-con
  */
 export const DEFAULT_COUNTDOWN: number[] = [10, 5, 3, 2, 1]
 
+/**
+ * Bounds on the Announcement path delay.
+ *
+ * Five seconds is far beyond any Mumble buffer and already longer than the gap
+ * between most countdown numbers, so anything larger would only mute the
+ * Announcement it was meant to fix. Negative covers a path that runs ahead.
+ *
+ * Defined here, where the delay is applied, so the settings layer and the field
+ * that validates operator input cannot drift from what the scheduler honours.
+ */
+export const TRANSMISSION_DELAY_MIN_MS = -5000
+export const TRANSMISSION_DELAY_MAX_MS = 5000
+
 /** A rendered clip: where the renderer loads it from and how long it runs. */
 export interface AnnouncementClip {
   url: string
@@ -39,6 +52,18 @@ export interface ScheduleInput {
   numbers: Map<number, AnnouncementClip>
   countdown: number[]
   placement: PhrasePlacement
+  /**
+   * How long the audio path takes to reach the band, in milliseconds.
+   *
+   * Announcements are piped into Mumble, which buffers: the band hears a clip
+   * some way after it is played. Every time here is a *play* time, so the whole
+   * utterance is shifted this much earlier to make the band hear it on the beat
+   * it was scheduled for. Positive is the normal case; negative plays later,
+   * for a path that somehow runs ahead.
+   *
+   * Defaults to 0, which is the behaviour of a local speaker.
+   */
+  transmissionDelayMs?: number
 }
 
 /**
@@ -54,9 +79,14 @@ export interface ScheduleInput {
  */
 export function scheduleAnnouncement(input: ScheduleInput): AnnouncementPlan | null {
   const { callId, leadMs, phrase, numbers, countdown, placement } = input
+  const delayMs = input.transmissionDelayMs ?? 0
 
   // Number n lands n seconds before the Call starts: the musician hears the word
   // as that mark passes, so the clip *starts* there rather than ending there.
+  // Subtracting the path's delay is what makes "hears" rather than "plays" the
+  // thing being placed — over Mumble the two are several hundred milliseconds
+  // apart, which is most of the gap between the last two numbers.
+  //
   // Numbers that would have to start before the previous Call went live are
   // dropped rather than clamped to 0 — two numbers stacked on the same instant
   // is worse information than one number fewer, so a short Call simply begins at
@@ -67,7 +97,7 @@ export function scheduleAnnouncement(input: ScheduleInput): AnnouncementPlan | n
     // A number with no rendered clip is silence, not a crash: the countdown
     // continues without it and the flush anchor moves to whatever is spoken.
     if (!clip) continue
-    const atMs = leadMs - n * 1000
+    const atMs = leadMs - n * 1000 - delayMs
     if (atMs < 0 || atMs >= leadMs) continue
     numberClips.push({ url: clip.url, atMs })
   }
@@ -77,7 +107,7 @@ export function scheduleAnnouncement(input: ScheduleInput): AnnouncementPlan | n
     return numberClips.length > 0 ? { callId, clips: sortByTime(numberClips) } : null
   }
 
-  const placed = placePhrase(placement, phrase, numberClips, leadMs)
+  const placed = placePhrase(placement, phrase, numberClips, leadMs, delayMs)
   // Too short for even the phrase: the whole Announcement goes, numbers
   // included. A countdown with no name in front of it tells the band when but
   // never what, which is worse than staying quiet. Edit mode badges this.
@@ -113,9 +143,12 @@ function placePhrase(
   phrase: AnnouncementClip,
   numberClips: ScheduledClip[],
   leadMs: number,
+  delayMs: number,
 ): { phraseAtMs: number; numbers: ScheduledClip[] } | null {
   if (placement === 'immediate') {
-    return phrase.durationMs <= leadMs ? { phraseAtMs: 0, numbers: numberClips } : null
+    // Nothing can be played before now, so the delay cannot be compensated
+    // here — it eats into the time the band has to hear the name instead.
+    return phrase.durationMs + delayMs <= leadMs ? { phraseAtMs: 0, numbers: numberClips } : null
   }
 
   const ascending = sortByTime(numberClips)
@@ -127,6 +160,6 @@ function placePhrase(
   // No number left to anchor against — an empty countdown, or every one of them
   // dropped. Flush against the Call's own start, which is the next thing that
   // happens and keeps the name as late, and so as actionable, as possible.
-  const phraseAtMs = leadMs - phrase.durationMs
+  const phraseAtMs = leadMs - phrase.durationMs - delayMs
   return phraseAtMs >= 0 ? { phraseAtMs, numbers: [] } : null
 }

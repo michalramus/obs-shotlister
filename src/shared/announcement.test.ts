@@ -271,3 +271,72 @@ describe('scheduleAnnouncement — nothing to say', () => {
     expect(scheduleAnnouncement(makeInput({ placement: 'immediate', leadMs: 0 }))).toBeNull()
   })
 })
+
+describe('scheduleAnnouncement — transmission delay', () => {
+  it('plays everything earlier so the band hears it on the beat', () => {
+    // 300ms of Mumble buffering: every clip fires 300ms sooner, so what the
+    // band hears is identical to the zero-delay schedule.
+    const plan = scheduleAnnouncement(makeInput({ leadMs: 15000, transmissionDelayMs: 300 }))
+
+    expect(plan!.clips).toEqual([
+      { url: 'phrase.opus', atMs: 3900 }, // 4700 - 800
+      { url: '10.opus', atMs: 4700 }, // 5000 - 300
+      { url: '5.opus', atMs: 9700 },
+      { url: '3.opus', atMs: 11700 },
+      { url: '2.opus', atMs: 12700 },
+      { url: '1.opus', atMs: 13700 },
+    ])
+  })
+
+  it('leaves the schedule alone when the path adds nothing', () => {
+    const withZero = scheduleAnnouncement(makeInput({ leadMs: 15000, transmissionDelayMs: 0 }))
+    const withNone = scheduleAnnouncement(makeInput({ leadMs: 15000 }))
+    expect(withZero).toEqual(withNone)
+  })
+
+  it('accepts a negative delay, for a path that runs ahead', () => {
+    const plan = scheduleAnnouncement(makeInput({ leadMs: 15000, transmissionDelayMs: -200 }))
+    expect(plan!.clips).toContainEqual({ url: '10.opus', atMs: 5200 })
+  })
+
+  it('drops a number the delay pushes before the previous Call', () => {
+    // 10 would play at 11000 - 10000 - 1500 = -500, so the countdown starts at 5.
+    const plan = scheduleAnnouncement(makeInput({ leadMs: 11000, transmissionDelayMs: 1500 }))
+
+    const urls = plan!.clips.map((c) => c.url)
+    expect(urls).not.toContain('10.opus')
+    expect(urls).toContain('5.opus')
+    expect(plan!.clips).toContainEqual({ url: '5.opus', atMs: 4500 })
+  })
+
+  it('drops the Announcement when the delay leaves no room for the phrase', () => {
+    // A 1s lead with 800ms of path delay leaves 200ms for an 800ms phrase.
+    expect(scheduleAnnouncement(makeInput({ leadMs: 1000, transmissionDelayMs: 800 }))).toBeNull()
+  })
+
+  it('counts the delay against the phrase under immediate placement', () => {
+    // Nothing can play before now, so the delay cannot be compensated — it eats
+    // the time the band has to hear the name. 800ms phrase + 400ms path needs
+    // 1200ms of lead.
+    const tooTight = scheduleAnnouncement(
+      makeInput({ leadMs: 1100, transmissionDelayMs: 400, placement: 'immediate' }),
+    )
+    expect(tooTight).toBeNull()
+
+    const fits = scheduleAnnouncement(
+      makeInput({ leadMs: 1200, transmissionDelayMs: 400, placement: 'immediate' }),
+    )
+    expect(fits!.clips).toContainEqual({ url: 'phrase.opus', atMs: 0 })
+  })
+
+  it('keeps the phrase flush against the first number it is heard before', () => {
+    // The gap between phrase end and first number must stay zero whatever the
+    // delay: both shift together, which is the whole point of flush.
+    for (const transmissionDelayMs of [0, 250, 900]) {
+      const clips = scheduleAnnouncement(makeInput({ leadMs: 15000, transmissionDelayMs }))!.clips
+      const phrase = clips.find((c) => c.url === 'phrase.opus')!
+      const first = clips.find((c) => c.url === '10.opus')!
+      expect(phrase.atMs + 800).toBe(first.atMs)
+    }
+  })
+})
