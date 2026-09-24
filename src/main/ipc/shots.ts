@@ -117,10 +117,14 @@ export function updateShot(db: Database.Database, input: UpdateShotInput): Shot 
     throw new Error(`Shot not found: ${input.id}`)
   }
 
-  const cameraId = input.cameraId ?? existing.camera_id
+  // Absent keeps the current value; an explicit null clears it. `??` collapsed
+  // the two, so a caller written against the nullable contract could never
+  // unassign an item.
+  //
   // Assigning a Part never clears the Camera, and vice versa: both targets are
   // retained so converting a Rundown away from its Kind and back is exact.
-  const partId = input.partId ?? existing.part_id
+  const cameraId = input.cameraId !== undefined ? input.cameraId : existing.camera_id
+  const partId = input.partId !== undefined ? input.partId : existing.part_id
   const durationMs = input.durationMs ?? existing.duration_ms
   // label can be explicitly set to null to clear it
   const label = 'label' in input ? (input.label ?? null) : existing.label

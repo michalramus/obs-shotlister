@@ -482,6 +482,16 @@ describe('Calls keep their Part through edits', () => {
     expect(updateShot(db, { id: call.id, partId: 'pt2' }).partId).toBe('pt2')
   })
 
+  it('clears an assignment when the target is explicitly null', () => {
+    const call = createShot(db, { rundownId, partId: 'pt1', durationMs: 5000 })
+    expect(updateShot(db, { id: call.id, partId: null }).partId).toBeNull()
+  })
+
+  it('keeps an assignment the caller simply did not mention', () => {
+    const call = createShot(db, { rundownId, partId: 'pt1', durationMs: 5000 })
+    expect(updateShot(db, { id: call.id, durationMs: 7000 }).partId).toBe('pt1')
+  })
+
   it('keeps the Camera assignment when a Part is assigned, so conversion stays exact', () => {
     db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?,?,?,?,?)').run(
       'c1',
