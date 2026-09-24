@@ -74,6 +74,12 @@ the countdown numbers, played from clips rendered ahead of the show. Never a Cue
 a fixed sound the Cue Tray plays.
 _Avoid_: cue, prompt, callout, TTS
 
+**Path delay**:
+How long the Announcement output route takes to reach the band — Mumble buffers, so a clip
+is heard well after it is played. Announcements are scheduled this much earlier so the band
+hears them on the beat. A property of the machine's audio route, not of the show.
+_Avoid_: latency, lag, offset, lead
+
 **Voice**:
 The synthetic speaker an Announcement is rendered with. Set once for the app and
 overridable per Project, because the language follows the material and not the machine.

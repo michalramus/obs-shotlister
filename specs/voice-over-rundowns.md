@@ -76,6 +76,13 @@ Hidden and Skipped Calls extend the countdown exactly as they do for the Cue Tra
 - Collisions: an Announcement starting while another is in flight cuts the old one off.
   Never queued.
 - Skip stops any in-flight Announcement immediately.
+- **Path delay**: Mumble buffers, so the band hears a clip well after it plays. A global
+  delay setting shifts the whole utterance that much earlier, so what the band *hears*
+  lands where it was scheduled. Global rather than per-Project, like the output device it
+  compensates for: it describes the machine's route to the band, not the show. Numbers the
+  shift pushes before the previous Call are dropped, exactly as a short Call already drops
+  them. Under *immediate* placement nothing can play before now, so the delay eats into the
+  time the band has to hear the name instead.
 
 ## Rendering
 
