@@ -8,7 +8,9 @@ import {
   formatCountdown,
   parseCountdownInput,
   summarizeRenderStates,
+  parseDelayInput,
 } from './VoiceSettingsPanel'
+import { TRANSMISSION_DELAY_MAX_MS, TRANSMISSION_DELAY_MIN_MS } from '../../shared/announcement'
 import type { PartRenderState, RenderState } from '../../shared/ipc-contract'
 
 function part(name: string, state: RenderState): PartRenderState {
@@ -182,5 +184,40 @@ describe('deviceOptions', () => {
   it('does not duplicate a selected device that is present', () => {
     const options = deviceOptions([{ deviceId: 'a', label: 'Speakers' }], 'a')
     expect(options.map((o) => o.deviceId)).toEqual(['', 'a'])
+  })
+})
+
+describe('parseDelayInput', () => {
+  it('reads a plain number of milliseconds', () => {
+    expect(parseDelayInput('350')).toEqual({ ok: true, delayMs: 350 })
+  })
+
+  it('treats an empty field as no delay', () => {
+    expect(parseDelayInput('')).toEqual({ ok: true, delayMs: 0 })
+    expect(parseDelayInput('   ')).toEqual({ ok: true, delayMs: 0 })
+  })
+
+  it('accepts a negative delay, for a path that runs ahead', () => {
+    expect(parseDelayInput('-120')).toEqual({ ok: true, delayMs: -120 })
+  })
+
+  it('rounds a fractional millisecond rather than rejecting it', () => {
+    expect(parseDelayInput('350.4')).toEqual({ ok: true, delayMs: 350 })
+  })
+
+  it('rejects anything that is not a number', () => {
+    const result = parseDelayInput('soon')
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.error).toContain('not a number')
+  })
+
+  it('rejects a delay long enough to mute every Announcement', () => {
+    expect(parseDelayInput(String(TRANSMISSION_DELAY_MAX_MS + 1)).ok).toBe(false)
+    expect(parseDelayInput(String(TRANSMISSION_DELAY_MIN_MS - 1)).ok).toBe(false)
+  })
+
+  it('accepts the bounds themselves', () => {
+    expect(parseDelayInput(String(TRANSMISSION_DELAY_MAX_MS)).ok).toBe(true)
+    expect(parseDelayInput(String(TRANSMISSION_DELAY_MIN_MS)).ok).toBe(true)
   })
 })

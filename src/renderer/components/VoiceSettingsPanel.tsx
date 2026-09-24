@@ -8,6 +8,7 @@ import type {
   RenderState,
 } from '../../shared/ipc-contract'
 import { NUMBER_CLIP_MAX, NUMBER_CLIP_MIN } from '../../shared/number-words'
+import { TRANSMISSION_DELAY_MAX_MS, TRANSMISSION_DELAY_MIN_MS } from '../../shared/announcement'
 
 // ---------------------------------------------------------------------------
 // Countdown parsing
@@ -34,6 +35,31 @@ export type CountdownParse = { ok: true; countdown: number[] } | { ok: false; er
  * countdown is a show-night surprise, and the operator has no other way to see
  * that "10, 5, 3, 2, 0" became "10, 5, 3, 2".
  */
+export type DelayParse = { ok: true; delayMs: number } | { ok: false; error: string }
+
+/**
+ * Reads a path delay the operator typed.
+ *
+ * Rejects rather than repairs, like the countdown field: a silently corrected
+ * delay would mis-time every Announcement without ever saying so.
+ */
+export function parseDelayInput(raw: string): DelayParse {
+  const trimmed = raw.trim()
+  if (trimmed === '') return { ok: true, delayMs: 0 }
+
+  const ms = Number(trimmed)
+  if (!Number.isFinite(ms)) {
+    return { ok: false, error: `"${trimmed}" is not a number of milliseconds.` }
+  }
+  if (ms < TRANSMISSION_DELAY_MIN_MS || ms > TRANSMISSION_DELAY_MAX_MS) {
+    return {
+      ok: false,
+      error: `Keep it between ${TRANSMISSION_DELAY_MIN_MS} and ${TRANSMISSION_DELAY_MAX_MS} ms.`,
+    }
+  }
+  return { ok: true, delayMs: Math.round(ms) }
+}
+
 export function parseCountdownInput(raw: string): CountdownParse {
   const trimmed = raw.trim()
   if (trimmed === '') {
@@ -443,6 +469,74 @@ function OutputDeviceSelect({
   )
 }
 
+/**
+ * How long the Announcement path takes to reach the band.
+ *
+ * Lives with the output devices rather than with the Voice settings because it
+ * describes the same thing they do — this machine's route to Mumble — and not
+ * the show being run over it.
+ */
+function TransmissionDelayField({
+  onError,
+}: {
+  onError: (message: string | null) => void
+}): React.JSX.Element {
+  const voiceSettings = useAppStore((st) => st.voiceSettings)
+  const saveVoiceSettings = useAppStore((st) => st.saveVoiceSettings)
+
+  const stored = voiceSettings?.transmissionDelayMs ?? 0
+  const [draft, setDraft] = useState(String(stored))
+  const [problem, setProblem] = useState<string | null>(null)
+
+  // Follow the stored value when it changes underneath us, but never while the
+  // operator is mid-edit with something invalid in the box.
+  useEffect(() => {
+    if (problem === null) setDraft(String(stored))
+  }, [stored, problem])
+
+  function commit(): void {
+    const parsed = parseDelayInput(draft)
+    if (!parsed.ok) {
+      setProblem(parsed.error)
+      return
+    }
+    setProblem(null)
+    onError(null)
+    if (voiceSettings === null || parsed.delayMs === stored) return
+    saveVoiceSettings({ ...voiceSettings, transmissionDelayMs: parsed.delayMs }).catch(
+      (err: unknown) => onError(err instanceof Error ? err.message : 'Could not save the delay.'),
+    )
+  }
+
+  return (
+    <div style={{ marginTop: '8px' }}>
+      <label style={s.label} htmlFor="voice-transmission-delay">
+        Announcement delay (ms)
+      </label>
+      <input
+        id="voice-transmission-delay"
+        style={s.input}
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value)
+          setProblem(null)
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit()
+        }}
+        inputMode="numeric"
+        placeholder="0"
+      />
+      <p style={s.hint}>
+        How long Mumble takes to reach the band. The whole announcement plays this much earlier, so
+        they hear it on the beat. Measure it once and leave it.
+      </p>
+      {problem !== null && <p style={s.errorText}>{problem}</p>}
+    </div>
+  )
+}
+
 function OutputDevicesSection(): React.JSX.Element {
   const audioDevices = useAppStore((st) => st.audioDevices)
   const saveAudioDevices = useAppStore((st) => st.saveAudioDevices)
@@ -518,6 +612,8 @@ function OutputDevicesSection(): React.JSX.Element {
         selectedId={audioDevices.announcementSinkId}
         onChange={(sinkId) => save({ announcementSinkId: sinkId })}
       />
+
+      <TransmissionDelayField onError={setError} />
 
       {labelsHidden && (
         <p style={s.hint}>
