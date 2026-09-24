@@ -100,6 +100,7 @@ export function createAnnouncementBuilder(
           numbers,
           countdown: settings.countdown,
           placement: settings.placement,
+          transmissionDelayMs: settings.transmissionDelayMs,
         })
       } catch (err) {
         // A show keeps running even when speech does not: a broken lookup must

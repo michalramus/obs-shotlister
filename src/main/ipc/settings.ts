@@ -1,5 +1,9 @@
 import Database from 'better-sqlite3'
-import { DEFAULT_COUNTDOWN } from '../../shared/announcement'
+import {
+  DEFAULT_COUNTDOWN,
+  TRANSMISSION_DELAY_MAX_MS,
+  TRANSMISSION_DELAY_MIN_MS,
+} from '../../shared/announcement'
 import { NUMBER_CLIP_MAX, NUMBER_CLIP_MIN } from '../../shared/number-words'
 import type {
   AudioDeviceSettings,
@@ -99,6 +103,13 @@ export function savePreviewFirst(db: Database.Database, value: boolean): void {
 export const DEFAULT_VOICE = 'pl_PL-gosia-medium'
 export const DEFAULT_CONNECTOR = 'za'
 
+// Re-exported so the settings tests read one name, but owned by the scheduler
+// that actually honours them.
+export {
+  TRANSMISSION_DELAY_MIN_MS as MIN_TRANSMISSION_DELAY_MS,
+  TRANSMISSION_DELAY_MAX_MS as MAX_TRANSMISSION_DELAY_MS,
+} from '../../shared/announcement'
+
 function readSetting(db: Database.Database, key: string): string | undefined {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as
     | { value: string }
@@ -127,6 +138,18 @@ function parseCountdown(raw: string | undefined): number[] | null {
   return numbers.length > 0 ? numbers : null
 }
 
+/**
+ * A stored path delay, or zero. Like the countdown, a corrupt value reads as
+ * unset rather than throwing: a bad setting must not stop a show from starting.
+ * Bounded because a delay longer than a Call would simply mute every
+ * Announcement, which is never what the operator meant to type.
+ */
+function parseDelay(raw: string | undefined): number {
+  const ms = Number(raw)
+  if (!Number.isFinite(ms)) return 0
+  return Math.min(Math.max(Math.round(ms), TRANSMISSION_DELAY_MIN_MS), TRANSMISSION_DELAY_MAX_MS)
+}
+
 function parsePlacement(raw: string | undefined): PhrasePlacement | null {
   return raw === 'flush' || raw === 'immediate' ? raw : null
 }
@@ -141,6 +164,7 @@ export function getGlobalVoiceSettings(db: Database.Database): GlobalVoiceSettin
     // Manual by default: a slow machine must not start synthesising while the
     // operator is still editing.
     autoRender: readSetting(db, 'voice_auto_render') === 'true',
+    transmissionDelayMs: parseDelay(readSetting(db, 'voice_transmission_delay')),
   }
 }
 
@@ -149,6 +173,7 @@ export function saveGlobalVoiceSettings(db: Database.Database, value: GlobalVoic
   writeSetting(db, 'voice_countdown', value.countdown.join(','))
   writeSetting(db, 'voice_placement', value.placement)
   writeSetting(db, 'voice_auto_render', value.autoRender ? 'true' : 'false')
+  writeSetting(db, 'voice_transmission_delay', String(Math.round(value.transmissionDelayMs)))
 }
 
 export function getProjectVoiceSettings(
@@ -200,6 +225,8 @@ export function getEffectiveVoiceSettings(
     countdown: project.countdown ?? global.countdown,
     placement: project.placement ?? global.placement,
     connector: project.connector,
+    // Not overridable: it is a property of this machine's audio path.
+    transmissionDelayMs: global.transmissionDelayMs,
   }
 }
 

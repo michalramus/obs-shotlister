@@ -119,6 +119,15 @@ export interface GlobalVoiceSettings {
   placement: PhrasePlacement
   /** Re-render on change (debounced) rather than only when asked. */
   autoRender: boolean
+  /**
+   * How long the Announcement output path takes to reach the band, in
+   * milliseconds — Mumble buffers, so the band hears a clip well after it
+   * plays. The whole utterance is scheduled this much earlier to compensate.
+   *
+   * Global rather than per-Project, like the output device it compensates for:
+   * it describes this machine's audio path, not the show being run on it.
+   */
+  transmissionDelayMs: number
 }
 
 export interface ProjectVoiceSettings {
@@ -133,6 +142,7 @@ export interface EffectiveVoiceSettings {
   countdown: number[]
   placement: PhrasePlacement
   connector: string
+  transmissionDelayMs: number
 }
 
 /**

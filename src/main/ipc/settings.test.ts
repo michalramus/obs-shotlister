@@ -11,6 +11,8 @@ import {
   saveAudioDevices,
   DEFAULT_VOICE,
   DEFAULT_CONNECTOR,
+  MAX_TRANSMISSION_DELAY_MS,
+  MIN_TRANSMISSION_DELAY_MS,
 } from './settings'
 
 function openMemoryDb(): Database.Database {
@@ -37,6 +39,7 @@ describe('voice settings', () => {
       countdown: [10, 5, 3, 2, 1],
       placement: 'flush',
       autoRender: false,
+      transmissionDelayMs: 0,
     })
   })
 
@@ -46,12 +49,14 @@ describe('voice settings', () => {
       countdown: [8, 4, 1],
       placement: 'immediate',
       autoRender: true,
+      transmissionDelayMs: 0,
     })
     expect(getGlobalVoiceSettings(db)).toEqual({
       voice: 'en_US-amy-medium',
       countdown: [8, 4, 1],
       placement: 'immediate',
       autoRender: true,
+      transmissionDelayMs: 0,
     })
   })
 
@@ -86,6 +91,7 @@ describe('voice settings', () => {
       countdown: [10, 5, 1],
       placement: 'flush',
       autoRender: false,
+      transmissionDelayMs: 0,
     })
     saveProjectVoiceSettings(db, 'p1', {
       voice: null,
@@ -98,6 +104,7 @@ describe('voice settings', () => {
       countdown: [10, 5, 1],
       placement: 'flush',
       connector: 'za',
+      transmissionDelayMs: 0,
     })
   })
 
@@ -107,6 +114,7 @@ describe('voice settings', () => {
       countdown: [10, 5, 1],
       placement: 'flush',
       autoRender: false,
+      transmissionDelayMs: 0,
     })
     saveProjectVoiceSettings(db, 'p1', {
       voice: 'en_US-amy-medium',
@@ -119,6 +127,7 @@ describe('voice settings', () => {
       countdown: [20, 10],
       placement: 'immediate',
       connector: 'in',
+      transmissionDelayMs: 0,
     })
   })
 
@@ -152,6 +161,83 @@ describe('voice settings', () => {
       placement: null,
       connector: 'in',
     })
+  })
+})
+
+describe('announcement transmission delay', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openMemoryDb()
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('defaults to no delay, which is what a local speaker has', () => {
+    expect(getGlobalVoiceSettings(db).transmissionDelayMs).toBe(0)
+  })
+
+  it('round-trips a positive delay', () => {
+    saveGlobalVoiceSettings(db, {
+      voice: DEFAULT_VOICE,
+      countdown: [10, 5, 1],
+      placement: 'flush',
+      autoRender: false,
+      transmissionDelayMs: 350,
+    })
+    expect(getGlobalVoiceSettings(db).transmissionDelayMs).toBe(350)
+  })
+
+  it('reaches the scheduler through the effective settings', () => {
+    saveGlobalVoiceSettings(db, {
+      voice: DEFAULT_VOICE,
+      countdown: [10],
+      placement: 'flush',
+      autoRender: false,
+      transmissionDelayMs: 350,
+    })
+    expect(getEffectiveVoiceSettings(db, 'p1').transmissionDelayMs).toBe(350)
+  })
+
+  it('is not overridable per Project: it describes the machine, not the show', () => {
+    saveGlobalVoiceSettings(db, {
+      voice: DEFAULT_VOICE,
+      countdown: [10],
+      placement: 'flush',
+      autoRender: false,
+      transmissionDelayMs: 350,
+    })
+    saveProjectVoiceSettings(db, 'p1', {
+      voice: 'en_US-amy-medium',
+      countdown: null,
+      placement: null,
+      connector: 'in',
+    })
+    expect(getEffectiveVoiceSettings(db, 'p1').transmissionDelayMs).toBe(350)
+  })
+
+  it('reads a corrupt delay as none rather than throwing', () => {
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+      'voice_transmission_delay',
+      'soon',
+    )
+    expect(getGlobalVoiceSettings(db).transmissionDelayMs).toBe(0)
+  })
+
+  it('clamps a delay that would mute every Announcement', () => {
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+      'voice_transmission_delay',
+      '999999',
+    )
+    expect(getGlobalVoiceSettings(db).transmissionDelayMs).toBe(MAX_TRANSMISSION_DELAY_MS)
+
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+      'voice_transmission_delay',
+      '-999999',
+    )
+    expect(getGlobalVoiceSettings(db).transmissionDelayMs).toBe(MIN_TRANSMISSION_DELAY_MS)
   })
 })
 

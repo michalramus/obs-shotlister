@@ -562,6 +562,26 @@ describe('LiveSession announcements', () => {
       expect(plans[plans.length - 1]).toBeNull()
     })
 
+    it('plays the whole Announcement earlier when the path adds delay', () => {
+      // The operator's Mumble route buffers 400ms, so every clip fires that
+      // much sooner and the band still hears "10" ten seconds out.
+      seedVoice(db)
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+        'voice_transmission_delay',
+        '400',
+      )
+      session.start('rd-1')
+
+      expect(plans[0]!.clips).toEqual([
+        { url: clipUrl('wokal za'), atMs: 1600 - PHRASE_MS },
+        { url: numberUrl(10), atMs: 1600 },
+        { url: numberUrl(5), atMs: 6600 },
+        { url: numberUrl(3), atMs: 8600 },
+        { url: numberUrl(2), atMs: 9600 },
+        { url: numberUrl(1), atMs: 10600 },
+      ])
+    })
+
     it('says nothing during overrun', () => {
       vi.useFakeTimers()
       seedVoice(db)
