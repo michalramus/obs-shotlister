@@ -6,6 +6,24 @@ import { formatMs, computeTiming, computeRemainingMs } from '../timing'
 // costs phone battery — the old loop re-rendered the whole list at 60fps.
 const TICK_INTERVAL_MS = 50
 
+/** `setSinkId` is not in the DOM lib but is what Chromium exposes. */
+type RoutableAudio = HTMLAudioElement & { setSinkId?: (sinkId: string) => Promise<void> }
+
+/**
+ * Points one clip at an output device, falling back to the default.
+ *
+ * A device that has been unplugged since it was chosen must not silence the
+ * countdown — the operator would rather hear their Cues on the wrong speakers
+ * than not at all.
+ */
+function routeToSink(audio: HTMLAudioElement, sinkId: string): void {
+  const routable = audio as RoutableAudio
+  if (typeof routable.setSinkId !== 'function') return
+  routable.setSinkId(sinkId).catch((err: unknown) => {
+    console.error('[ShotlistWidget] cue output device unavailable:', err)
+  })
+}
+
 export interface ShotlistWidgetProps {
   rundownName: string
   shots: Shot[]
@@ -24,6 +42,15 @@ export interface ShotlistWidgetProps {
   muteCount?: boolean
   muteBeep?: boolean
   audioVolume?: number // 0–1, default 1
+  /**
+   * Output device for the countdown Cues. `null` or omitted is the system
+   * default.
+   *
+   * Independent of where Announcements play, so the operator keeps their own
+   * Cues on their own speakers while the band hears only the speech. Only the
+   * operator window sets it — a phone has no such choice to make.
+   */
+  cueSinkId?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -209,6 +236,7 @@ export function ShotlistWidget({
   muteCount = false,
   muteBeep = false,
   audioVolume = 1,
+  cueSinkId = null,
 }: ShotlistWidgetProps): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now())
   const audioPoolRef = useRef<Map<string, HTMLAudioElement>>(new Map())
@@ -245,6 +273,17 @@ export function ShotlistWidget({
     }
   }, [audioBaseUrl])
 
+  // Route the pool whenever the device changes. Done here rather than in
+  // playCue because setSinkId is async: switching on the way to a beep would
+  // put the first one on the old device, which is the one beep the operator
+  // changed the setting to move.
+  useEffect(() => {
+    if (!cueSinkId) return
+    for (const audio of audioPoolRef.current.values()) {
+      routeToSink(audio, cueSinkId)
+    }
+  }, [cueSinkId, audioBaseUrl])
+
   const playCue = useCallback(
     (filename: string): void => {
       if (!audioBaseUrl) return
@@ -253,11 +292,14 @@ export function ShotlistWidget({
         audio = new Audio(`${audioBaseUrl}/${filename}`)
         audioPoolRef.current.set(filename, audio)
       }
+      // A clip created after the routing effect ran still needs pointing at the
+      // chosen device; a no-op once it is already there.
+      if (cueSinkId) routeToSink(audio, cueSinkId)
       audio.volume = audioVolume
       audio.currentTime = 0
       audio.play().catch((err: unknown) => console.error('[ShotlistWidget] audio error:', err))
     },
-    [audioBaseUrl, audioVolume],
+    [audioBaseUrl, audioVolume, cueSinkId],
   )
 
   // Ticker while running

@@ -99,6 +99,7 @@ export default function App(): React.JSX.Element {
   const phraseDurations = useAppStore((s) => s.phraseDurations)
   const unrenderedCount = useAppStore((s) => s.renderStatus?.unrenderedCount ?? 0)
   const announcementSinkId = useAppStore((s) => s.audioDevices.announcementSinkId)
+  const cueSinkId = useAppStore((s) => s.audioDevices.cueSinkId)
   const loadLiveState = useAppStore((s) => s.loadLiveState)
   const activeProjectId = useAppStore((s) => s.activeProjectId)
   const activeRundownId = useAppStore((s) => s.activeRundownId)
@@ -435,6 +436,7 @@ export default function App(): React.JSX.Element {
         muteCount={muteCount}
         muteBeep={muteBeep}
         audioVolume={audioVolume}
+        cueSinkId={cueSinkId}
       />
     ) : null
 
