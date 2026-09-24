@@ -42,3 +42,22 @@ Source lives in `tray/`, built with cargo, outside the yarn build.
   checkable "Mute beep" in the menu would have to be kept in step with the window, and one
   showing the wrong state during a show is worse than an extra click.
 - No authentication, matching the server, which has none.
+
+## Voice-over Rundowns: the tray goes silent
+
+A Voice-over Rundown speaks its own countdown to the band. The tray's fixed Cues would
+talk over that Announcement, and they count to the wrong thing anyway — an Announcement
+counts down to the *next* Call, the Cues to the end of the current one. So the tray plays
+nothing while the active Rundown's Kind is `voice`.
+
+The Kind arrives as `rundown.kind` on the `state:rundown` payload, which the tray already
+replays on connect, so no protocol change is needed on the app side — the field is simply
+there now.
+
+### Release ordering
+
+**The tray release must ship before, or together with, the app release that introduced
+Voice-over Rundowns.** A tray that does not yet read `kind` ignores the field and beeps
+its way through a voice-over show, which is precisely the noise the feature exists to
+replace. Two build systems are involved — the Electron app and the Rust tray — so the
+ordering is a release-day decision that nothing in the code can enforce.
