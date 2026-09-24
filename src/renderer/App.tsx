@@ -96,6 +96,7 @@ export default function App(): React.JSX.Element {
   const loadPhraseDurations = useAppStore((s) => s.loadPhraseDurations)
   const loadAudioDevices = useAppStore((s) => s.loadAudioDevices)
   const setRenderSummary = useAppStore((s) => s.setRenderSummary)
+  const parts = useAppStore((s) => s.parts)
   const phraseDurations = useAppStore((s) => s.phraseDurations)
   const unrenderedCount = useAppStore((s) => s.renderSummary?.unrenderedCount ?? 0)
   const announcementSinkId = useAppStore((s) => s.audioDevices.announcementSinkId)
@@ -434,6 +435,8 @@ export default function App(): React.JSX.Element {
         rundownName={activeRundown.name}
         shots={shots}
         cameras={cameras}
+        parts={parts}
+        kind={activeRundown.kind}
         liveIndex={liveIndex}
         startedAt={startedAt}
         running={running}
