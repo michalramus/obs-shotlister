@@ -20,7 +20,7 @@ import type {
   PartScope,
   PartUpsertInput,
   LyricUpsertInput,
-  ProjectRenderStatus,
+  ProjectRenderSummary,
   AudioDeviceSettings,
   GlobalVoiceSettings,
   ProjectVoiceSettings,
@@ -98,11 +98,11 @@ interface AppStore {
   setPartsColor: (ids: string[], color: string) => Promise<void>
 
   // Announcement rendering
-  renderStatus: ProjectRenderStatus | null
+  renderSummary: ProjectRenderSummary | null
   /** Phrase clip length per Part id; absent means nothing is rendered for it. */
   phraseDurations: Record<string, number>
-  setRenderStatus: (status: ProjectRenderStatus) => void
-  loadRenderStatus: (projectId: string) => Promise<void>
+  setRenderSummary: (status: ProjectRenderSummary) => void
+  loadRenderSummary: (projectId: string) => Promise<void>
   loadPhraseDurations: (projectId: string) => Promise<void>
   renderMissing: (projectId: string) => Promise<void>
 
@@ -166,7 +166,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   parts: [],
   partsInScope: [],
   lyrics: [],
-  renderStatus: null,
+  renderSummary: null,
   phraseDurations: {},
   audioDevices: { cueSinkId: null, announcementSinkId: null },
   voiceSettings: null,
@@ -500,7 +500,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const { activeProjectId, activeRundownId } = get()
     if (activeProjectId) {
       await get().loadParts(activeProjectId)
-      await get().loadRenderStatus(activeProjectId)
+      await get().loadRenderSummary(activeProjectId)
       await get().loadPhraseDurations(activeProjectId)
     }
     if (activeRundownId) await get().loadPartsInScope(activeRundownId)
@@ -528,18 +528,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   // Announcement rendering
-  setRenderStatus: (status) => set({ renderStatus: status }),
+  setRenderSummary: (status) => set({ renderSummary: status }),
 
-  loadRenderStatus: async (projectId) => {
-    set({ renderStatus: await window.api.tts.status({ projectId }) })
+  loadRenderSummary: async (projectId) => {
+    set({ renderSummary: await window.api.speech.status({ projectId }) })
   },
 
   loadPhraseDurations: async (projectId) => {
-    set({ phraseDurations: await window.api.tts.phraseDurations({ projectId }) })
+    set({ phraseDurations: await window.api.speech.phraseDurations({ projectId }) })
   },
 
   renderMissing: async (projectId) => {
-    set({ renderStatus: await window.api.tts.render({ projectId }) })
+    set({ renderSummary: await window.api.speech.render({ projectId }) })
     // Durations are what Edit mode badges against, and a render is the only
     // thing that changes them.
     await get().loadPhraseDurations(projectId)
@@ -569,13 +569,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
     // Voice is part of every clip's content address, so changing it can turn
     // every Part stale at once — the strip has to find out immediately.
     const { activeProjectId } = get()
-    if (activeProjectId) await get().loadRenderStatus(activeProjectId)
+    if (activeProjectId) await get().loadRenderSummary(activeProjectId)
   },
 
   saveProjectVoiceSettings: async (projectId, settings) => {
     await window.api.voice.saveProjectSettings({ projectId, settings })
     set({ projectVoiceSettings: settings })
-    await get().loadRenderStatus(projectId)
+    await get().loadRenderSummary(projectId)
   },
 
   // Lyrics

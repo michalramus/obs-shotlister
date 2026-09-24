@@ -25,7 +25,7 @@ import { toMediaUrl } from '../../shared/media-url'
 import { getEffectiveVoiceSettings } from '../ipc/settings'
 import { getPart } from '../ipc/parts'
 
-import { CLIP_EXTENSION } from '../tts/cache'
+import { CLIP_EXTENSION } from '../speech/cache'
 
 export interface AnnouncementBuilder {
   /**
@@ -44,7 +44,7 @@ interface ClipRow {
 }
 
 /**
- * @param clipsDir Where rendered clips live, normally `<userData>/tts`. Passed
+ * @param clipsDir Where rendered clips live, normally `<userData>/speech`. Passed
  * in rather than resolved here so this module never imports Electron and tests
  * can point it anywhere.
  */
@@ -53,7 +53,7 @@ export function createAnnouncementBuilder(
   clipsDir: string,
 ): AnnouncementBuilder {
   const clipByHash = (hash: string): AnnouncementClip | null => {
-    const row = db.prepare('SELECT duration_ms FROM tts_clips WHERE hash = ?').get(hash) as
+    const row = db.prepare('SELECT duration_ms FROM speech_clips WHERE hash = ?').get(hash) as
       | ClipRow
       | undefined
     if (!row) return null

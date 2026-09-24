@@ -92,12 +92,12 @@ export default function App(): React.JSX.Element {
   const loadCameras = useAppStore((s) => s.loadCameras)
   const loadRundowns = useAppStore((s) => s.loadRundowns)
   const loadParts = useAppStore((s) => s.loadParts)
-  const loadRenderStatus = useAppStore((s) => s.loadRenderStatus)
+  const loadRenderSummary = useAppStore((s) => s.loadRenderSummary)
   const loadPhraseDurations = useAppStore((s) => s.loadPhraseDurations)
   const loadAudioDevices = useAppStore((s) => s.loadAudioDevices)
-  const setRenderStatus = useAppStore((s) => s.setRenderStatus)
+  const setRenderSummary = useAppStore((s) => s.setRenderSummary)
   const phraseDurations = useAppStore((s) => s.phraseDurations)
-  const unrenderedCount = useAppStore((s) => s.renderStatus?.unrenderedCount ?? 0)
+  const unrenderedCount = useAppStore((s) => s.renderSummary?.unrenderedCount ?? 0)
   const announcementSinkId = useAppStore((s) => s.audioDevices.announcementSinkId)
   const cueSinkId = useAppStore((s) => s.audioDevices.cueSinkId)
   const loadLiveState = useAppStore((s) => s.loadLiveState)
@@ -198,7 +198,7 @@ export default function App(): React.JSX.Element {
       window.api.live.onStatePush(handleLiveStatePush),
       window.api.live.onShotHiddenPush(markShotHidden),
       window.api.live.onAnnouncementPush((plan) => announcementPlayer.current.play(plan)),
-      window.api.tts.onStatusPush(setRenderStatus),
+      window.api.speech.onStatusPush(setRenderSummary),
       window.api.server.onError(setServerError),
     ]
     refreshOscSettings()
@@ -272,14 +272,21 @@ export default function App(): React.JSX.Element {
       loadParts(activeProjectId).catch((err: unknown) => {
         console.error('[App] Failed to load parts:', err)
       })
-      loadRenderStatus(activeProjectId).catch((err: unknown) => {
+      loadRenderSummary(activeProjectId).catch((err: unknown) => {
         console.error('[App] Failed to load render status:', err)
       })
       loadPhraseDurations(activeProjectId).catch((err: unknown) => {
         console.error('[App] Failed to load phrase durations:', err)
       })
     }
-  }, [activeProjectId, loadCameras, loadRundowns, loadParts, loadRenderStatus, loadPhraseDurations])
+  }, [
+    activeProjectId,
+    loadCameras,
+    loadRundowns,
+    loadParts,
+    loadRenderSummary,
+    loadPhraseDurations,
+  ])
 
   useEffect(() => {
     loadAudioDevices().catch((err: unknown) =>

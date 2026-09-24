@@ -375,7 +375,7 @@ function numberUrl(n: number): string {
 function insertClip(db: Database.Database, text: string, durationMs: number): string {
   const hash = clipHash(text, VOICE, ENGINE)
   db.prepare(
-    'INSERT OR REPLACE INTO tts_clips (hash, text, voice, engine, duration_ms) VALUES (?, ?, ?, ?, ?)',
+    'INSERT OR REPLACE INTO speech_clips (hash, text, voice, engine, duration_ms) VALUES (?, ?, ?, ?, ?)',
   ).run(hash, text, VOICE, ENGINE, durationMs)
   return hash
 }

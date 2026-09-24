@@ -3,7 +3,7 @@
  * operator can act on.
  *
  * Two pure modules already decided everything interesting: `shared/render-plan`
- * says which clips are wanted and which are orphans, and `main/tts/engine`
+ * says which clips are wanted and which are orphans, and `main/speech/engine`
  * knows how to spawn Piper. This is the seam between them and SQLite — it reads
  * the cache, records what was rendered, and never decides anything itself.
  *
@@ -13,7 +13,7 @@
  */
 
 import type Database from 'better-sqlite3'
-import type { PartRenderState, ProjectRenderStatus } from '../../shared/ipc-contract'
+import type { PartRenderState, ProjectRenderSummary } from '../../shared/ipc-contract'
 import type { Part } from '../../shared/types'
 import {
   ENGINE_ID,
@@ -73,12 +73,12 @@ export function projectRenderPlan(
 }
 
 /** What the warning strip and the Parts panel read. */
-export function projectRenderStatus(
+export function projectRenderSummary(
   db: Database.Database,
   projectId: string,
   cachedHashes: Iterable<string>,
   rendering = false,
-): ProjectRenderStatus {
+): ProjectRenderSummary {
   const plan = projectRenderPlan(db, projectId, cachedHashes)
   return {
     parts: plan.parts,
@@ -133,7 +133,7 @@ export function orphanedClips(db: Database.Database, cachedHashes: Iterable<stri
  */
 export function recordClip(db: Database.Database, item: RenderPlanItem, durationMs: number): void {
   db.prepare(
-    'INSERT OR REPLACE INTO tts_clips (hash, text, voice, engine, duration_ms) VALUES (?, ?, ?, ?, ?)',
+    'INSERT OR REPLACE INTO speech_clips (hash, text, voice, engine, duration_ms) VALUES (?, ?, ?, ?, ?)',
   ).run(item.hash, item.text, item.voice, item.engine, durationMs)
 }
 
@@ -163,7 +163,7 @@ export function recordPartRenders(db: Database.Database, projectId: string): voi
 /** Drops the rows for clips that have been deleted from disk. */
 export function forgetClips(db: Database.Database, hashes: readonly string[]): void {
   if (hashes.length === 0) return
-  const remove = db.prepare('DELETE FROM tts_clips WHERE hash = ?')
+  const remove = db.prepare('DELETE FROM speech_clips WHERE hash = ?')
   const apply = db.transaction(() => {
     for (const hash of hashes) remove.run(hash)
   })
@@ -181,7 +181,7 @@ export function forgetClips(db: Database.Database, hashes: readonly string[]): v
  */
 export function phraseDurations(db: Database.Database, projectId: string): Record<string, number> {
   const settings = getEffectiveVoiceSettings(db, projectId)
-  const lookup = db.prepare('SELECT duration_ms FROM tts_clips WHERE hash = ?')
+  const lookup = db.prepare('SELECT duration_ms FROM speech_clips WHERE hash = ?')
 
   const durations: Record<string, number> = {}
   for (const part of listParts(db, projectId)) {

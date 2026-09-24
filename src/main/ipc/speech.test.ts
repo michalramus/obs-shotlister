@@ -2,14 +2,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { applyMigrations } from '../db/index'
 import {
-  projectRenderStatus,
+  projectRenderSummary,
   missingClips,
   orphanedClips,
   recordClip,
   recordPartRenders,
   forgetClips,
   phraseDurations,
-} from './tts'
+} from './speech'
 import { saveProjectVoiceSettings, saveGlobalVoiceSettings } from './settings'
 import { upsertPart } from './parts'
 import { ENGINE_ID, clipHash, partPhrase } from '../../shared/render-plan'
@@ -39,7 +39,7 @@ function phraseHash(name: string, connector: string, voice = VOICE): string {
   return clipHash(partPhrase(name, connector), voice, ENGINE_ID)
 }
 
-describe('projectRenderStatus', () => {
+describe('projectRenderSummary', () => {
   let db: Database.Database
 
   beforeEach(() => {
@@ -53,17 +53,17 @@ describe('projectRenderStatus', () => {
 
   it('reports a Part with no clip as missing', () => {
     upsertPart(db, { projectId: 'p1', name: 'gitara' })
-    const status = projectRenderStatus(db, 'p1', [])
-    expect(status.parts).toEqual([expect.objectContaining({ name: 'gitara', state: 'missing' })])
-    expect(status.unrenderedCount).toBe(1)
+    const summary = projectRenderSummary(db, 'p1', [])
+    expect(summary.parts).toEqual([expect.objectContaining({ name: 'gitara', state: 'missing' })])
+    expect(summary.unrenderedCount).toBe(1)
   })
 
   it('reports a Part as rendered once its clip exists and is recorded', () => {
     const part = upsertPart(db, { projectId: 'p1', name: 'gitara' })
     recordPartRenders(db, 'p1')
-    const status = projectRenderStatus(db, 'p1', [phraseHash('gitara', 'za')])
-    expect(status.parts).toEqual([{ partId: part.id, name: 'gitara', state: 'rendered' }])
-    expect(status.unrenderedCount).toBe(0)
+    const summary = projectRenderSummary(db, 'p1', [phraseHash('gitara', 'za')])
+    expect(summary.parts).toEqual([{ partId: part.id, name: 'gitara', state: 'rendered' }])
+    expect(summary.unrenderedCount).toBe(0)
   })
 
   it('reports a renamed Part as stale rather than silently keeping the old audio', () => {
@@ -72,7 +72,7 @@ describe('projectRenderStatus', () => {
     const cached = [phraseHash('gitara', 'za')]
 
     upsertPart(db, { id: part.id, projectId: 'p1', name: 'gitara solo' })
-    expect(projectRenderStatus(db, 'p1', cached).parts[0].state).toBe('stale')
+    expect(projectRenderSummary(db, 'p1', cached).parts[0].state).toBe('stale')
   })
 
   it('reports a Part as stale after the Voice changes', () => {
@@ -86,13 +86,13 @@ describe('projectRenderStatus', () => {
       placement: null,
       connector: 'za',
     })
-    expect(projectRenderStatus(db, 'p1', cached).parts[0].state).toBe('stale')
+    expect(projectRenderSummary(db, 'p1', cached).parts[0].state).toBe('stale')
   })
 
   it('reports a Part whose clip vanished from disk as missing, not rendered', () => {
     upsertPart(db, { projectId: 'p1', name: 'gitara' })
     recordPartRenders(db, 'p1')
-    expect(projectRenderStatus(db, 'p1', []).parts[0].state).toBe('missing')
+    expect(projectRenderSummary(db, 'p1', []).parts[0].state).toBe('missing')
   })
 })
 
@@ -201,7 +201,7 @@ describe('recordClip and forgetClips', () => {
 
   it('stores the duration flush placement schedules against', () => {
     recordClip(db, { hash: 'h1', text: 'gitara za', voice: VOICE, engine: ENGINE_ID }, 820)
-    const row = db.prepare('SELECT * FROM tts_clips WHERE hash = ?').get('h1') as {
+    const row = db.prepare('SELECT * FROM speech_clips WHERE hash = ?').get('h1') as {
       duration_ms: number
       text: string
     }
@@ -212,7 +212,9 @@ describe('recordClip and forgetClips', () => {
     const item = { hash: 'h1', text: 'gitara za', voice: VOICE, engine: ENGINE_ID }
     recordClip(db, item, 820)
     recordClip(db, item, 910)
-    const rows = db.prepare('SELECT duration_ms FROM tts_clips').all() as { duration_ms: number }[]
+    const rows = db.prepare('SELECT duration_ms FROM speech_clips').all() as {
+      duration_ms: number
+    }[]
     expect(rows).toEqual([{ duration_ms: 910 }])
   })
 
@@ -220,10 +222,10 @@ describe('recordClip and forgetClips', () => {
     recordClip(db, { hash: 'h1', text: 'a', voice: VOICE, engine: ENGINE_ID }, 100)
     recordClip(db, { hash: 'h2', text: 'b', voice: VOICE, engine: ENGINE_ID }, 100)
     forgetClips(db, [])
-    expect(db.prepare('SELECT COUNT(*) AS n FROM tts_clips').get()).toEqual({ n: 2 })
+    expect(db.prepare('SELECT COUNT(*) AS n FROM speech_clips').get()).toEqual({ n: 2 })
 
     forgetClips(db, ['h1'])
-    const remaining = db.prepare('SELECT hash FROM tts_clips').all()
+    const remaining = db.prepare('SELECT hash FROM speech_clips').all()
     expect(remaining).toEqual([{ hash: 'h2' }])
   })
 })

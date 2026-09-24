@@ -165,7 +165,7 @@ export interface PartRenderState {
   state: RenderState
 }
 
-export interface ProjectRenderStatus {
+export interface ProjectRenderSummary {
   parts: PartRenderState[]
   /** Parts that are `stale` or `missing`; what the warning strip counts. */
   unrenderedCount: number
@@ -314,9 +314,9 @@ export interface IpcContract {
   'audio:devices:save': { payload: AudioDeviceSettings; result: void }
 
   // --- Announcement rendering ---
-  'tts:status': { payload: { projectId: string }; result: ProjectRenderStatus }
-  'tts:render': { payload: { projectId: string }; result: ProjectRenderStatus }
-  'tts:phraseDurations': { payload: { projectId: string }; result: Record<string, number> }
+  'speech:renderSummary': { payload: { projectId: string }; result: ProjectRenderSummary }
+  'speech:render': { payload: { projectId: string }; result: ProjectRenderSummary }
+  'speech:phraseDurations': { payload: { projectId: string }; result: Record<string, number> }
 
   // --- Shots ---
   'shots:list': { payload: { rundownId: string }; result: Shot[] }
@@ -416,7 +416,7 @@ export interface IpcPushContract {
    */
   'live:announcement-push': AnnouncementPlan | null
   /** Render progress, so the warning strip updates without being polled. */
-  'tts:status-push': ProjectRenderStatus
+  'speech:renderSummary-push': ProjectRenderSummary
   'obs:status': { status: OBSConnectionStatus }
   'obs:validationResult': OBSValidateResult | null
   'server:error': string
@@ -492,11 +492,11 @@ export interface ElectronApi {
     get: Request<'audio:devices:get'>
     save: Request<'audio:devices:save'>
   }
-  tts: {
-    status: Request<'tts:status'>
-    render: Request<'tts:render'>
-    phraseDurations: Request<'tts:phraseDurations'>
-    onStatusPush: Subscribe<'tts:status-push'>
+  speech: {
+    status: Request<'speech:renderSummary'>
+    render: Request<'speech:render'>
+    phraseDurations: Request<'speech:phraseDurations'>
+    onStatusPush: Subscribe<'speech:renderSummary-push'>
   }
   shots: {
     list: Request<'shots:list'>
@@ -622,9 +622,9 @@ export const IPC_CHANNELS = [
   'voice:effective',
   'audio:devices:get',
   'audio:devices:save',
-  'tts:status',
-  'tts:render',
-  'tts:phraseDurations',
+  'speech:renderSummary',
+  'speech:render',
+  'speech:phraseDurations',
   'shots:list',
   'shots:create',
   'shots:update',

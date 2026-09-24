@@ -39,7 +39,7 @@ function assertHash(hash: string): void {
 }
 
 export function clipsDir(userDataDir: string): string {
-  return join(userDataDir, 'tts')
+  return join(userDataDir, 'speech')
 }
 
 export function clipPath(userDataDir: string, hash: string): string {

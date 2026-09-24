@@ -77,11 +77,11 @@ const api: ElectronApi = {
     get: request('audio:devices:get'),
     save: request('audio:devices:save'),
   },
-  tts: {
-    status: request('tts:status'),
-    render: request('tts:render'),
-    phraseDurations: request('tts:phraseDurations'),
-    onStatusPush: subscribe('tts:status-push'),
+  speech: {
+    status: request('speech:renderSummary'),
+    render: request('speech:render'),
+    phraseDurations: request('speech:phraseDurations'),
+    onStatusPush: subscribe('speech:renderSummary-push'),
   },
   shots: {
     list: request('shots:list'),

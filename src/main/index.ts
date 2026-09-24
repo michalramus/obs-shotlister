@@ -81,10 +81,10 @@ import {
   getAudioDevices,
   saveAudioDevices,
 } from './ipc/settings'
-import { clipsDir } from './tts/cache'
-import { createRenderService } from './tts/service'
-import type { RenderService } from './tts/service'
-import { phraseDurations } from './ipc/tts'
+import { clipsDir } from './speech/cache'
+import { createRenderService } from './speech/service'
+import type { RenderService } from './speech/service'
+import { phraseDurations } from './ipc/speech'
 import { startOscServer, stopOscServer } from './osc/server'
 import {
   listTransitionMappings,
@@ -381,15 +381,15 @@ function registerIpcHandlers(): void {
   )
 
   // Announcement rendering
-  registerIpcHandler('tts:status', ({ projectId }: { projectId: string }) =>
+  registerIpcHandler('speech:renderSummary', ({ projectId }: { projectId: string }) =>
     render.status(projectId),
   )
 
-  registerIpcHandler('tts:render', ({ projectId }: { projectId: string }) =>
+  registerIpcHandler('speech:render', ({ projectId }: { projectId: string }) =>
     render.renderMissing(projectId),
   )
 
-  registerIpcHandler('tts:phraseDurations', ({ projectId }: { projectId: string }) =>
+  registerIpcHandler('speech:phraseDurations', ({ projectId }: { projectId: string }) =>
     phraseDurations(db, projectId),
   )
 
@@ -883,14 +883,16 @@ app.whenReady().then(() => {
     _db,
     app.getPath('userData'),
     () => live.getState().running,
-    (status) => pushToWindow('tts:status-push', status),
+    (status) => pushToWindow('speech:renderSummary-push', status),
   )
   publish = createChangePublisher(_db, live, () => _io)
   live.clear()
   // App start is one of the only two moments the cache may be touched (ADR
   // 0005). Deliberately not awaited: a slow sweep must not hold up the window,
   // and a failed one is a disk-space problem, never a reason not to start.
-  render.sweepOrphans().catch((err: unknown) => console.error('[tts] sweep on start failed:', err))
+  render
+    .sweepOrphans()
+    .catch((err: unknown) => console.error('[speech] sweep on start failed:', err))
   registerIpcHandlers()
   const audioDir = app.isPackaged
     ? join(process.resourcesPath, 'audio')
@@ -969,7 +971,7 @@ app.on('will-quit', () => {
 // before the process goes is simply retried at the next start.
 app.on('before-quit', () => {
   render?.sweepOrphans().catch((err: unknown) => {
-    console.error('[tts] sweep on quit failed:', err)
+    console.error('[speech] sweep on quit failed:', err)
   })
 })
 

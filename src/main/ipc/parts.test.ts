@@ -322,7 +322,7 @@ describe('upsertPart', () => {
   it('leaves the part_renders row alone on rename, so the part reads stale and not missing', () => {
     insertPart(db, 'pt-1', 'p1', 1, 'gitara')
     db.prepare(
-      'INSERT INTO tts_clips (hash, text, voice, engine, duration_ms) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO speech_clips (hash, text, voice, engine, duration_ms) VALUES (?, ?, ?, ?, ?)',
     ).run('h1', 'gitara za', 'pl', 'piper', 800)
     db.prepare('INSERT INTO part_renders (part_id, voice, engine, hash) VALUES (?, ?, ?, ?)').run(
       'pt-1',

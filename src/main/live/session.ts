@@ -54,7 +54,7 @@ export interface LiveSessionOptions {
    * caller decides that "a plan" means "send it to the renderer".
    */
   onAnnouncement?: (plan: AnnouncementPlan | null) => void
-  /** Where rendered clips live, normally `<userData>/tts`. */
+  /** Where rendered clips live, normally `<userData>/speech`. */
   clipsDir?: string
 }
 
