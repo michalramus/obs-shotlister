@@ -89,6 +89,7 @@ interface AppStore {
   renameFolder: (from: string, to: string) => Promise<void>
 
   // Part CRUD actions
+  reloadParts: () => Promise<void>
   loadParts: (projectId: string) => Promise<void>
   loadPartsInScope: (rundownId: string) => Promise<void>
   upsertPart: (input: PartUpsertInput) => Promise<Part>
@@ -486,36 +487,44 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ partsInScope })
   },
 
+  /**
+   * Refetches everything a Part change moves.
+   *
+   * Scope decides which of the two lists a Part lands in, and a new Part is
+   * born at Rundown scope, so both are refetched rather than patched. The
+   * render status comes too: naming a Part is exactly what makes audio missing,
+   * and the warning strip reads that count — without this it only appeared
+   * after switching projects, which is long after the operator needed it.
+   */
+  reloadParts: async () => {
+    const { activeProjectId, activeRundownId } = get()
+    if (activeProjectId) {
+      await get().loadParts(activeProjectId)
+      await get().loadRenderStatus(activeProjectId)
+      await get().loadPhraseDurations(activeProjectId)
+    }
+    if (activeRundownId) await get().loadPartsInScope(activeRundownId)
+  },
+
   upsertPart: async (input) => {
     const part = await window.api.parts.upsert(input)
-    const { activeProjectId, activeRundownId } = get()
-    // Scope decides which list a Part lands in, and a new Part is created at
-    // Rundown scope, so both lists are refetched rather than patched.
-    if (activeProjectId) await get().loadParts(activeProjectId)
-    if (activeRundownId) await get().loadPartsInScope(activeRundownId)
+    await get().reloadParts()
     return part
   },
 
   removePart: async (id) => {
     await window.api.parts.delete({ id })
-    set((state) => ({
-      parts: state.parts.filter((p) => p.id !== id),
-      partsInScope: state.partsInScope.filter((p) => p.id !== id),
-    }))
+    await get().reloadParts()
   },
 
   promotePart: async (id, scope) => {
     await window.api.parts.promote({ id, scope })
-    const { activeProjectId, activeRundownId } = get()
-    if (activeProjectId) await get().loadParts(activeProjectId)
-    if (activeRundownId) await get().loadPartsInScope(activeRundownId)
+    await get().reloadParts()
   },
 
   setPartsColor: async (ids, color) => {
     await window.api.parts.setColor({ ids, color })
-    const { activeProjectId, activeRundownId } = get()
-    if (activeProjectId) await get().loadParts(activeProjectId)
-    if (activeRundownId) await get().loadPartsInScope(activeRundownId)
+    await get().reloadParts()
   },
 
   // Announcement rendering
