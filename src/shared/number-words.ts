@@ -11,13 +11,17 @@
  * which numbers a countdown uses must never be able to require a re-render.
  */
 
-import { NUMBER_CLIP_RANGE } from './render-plan'
-
-// The range comes from the render planner rather than being restated here: the
-// two must agree exactly, or a countdown number would be offered that no Voice
-// ever renders a clip for.
-export const NUMBER_CLIP_MIN = NUMBER_CLIP_RANGE.first
-export const NUMBER_CLIP_MAX = NUMBER_CLIP_RANGE.last
+/**
+ * Every number a countdown may use, rendered in full for each Voice.
+ *
+ * Defined beside the words rather than with the render planner that consumes
+ * it, because this module has no Node dependencies and the planner does: the
+ * settings UI needs these bounds to validate a countdown, and pulling them
+ * through the planner dragged `node:crypto` into the renderer bundle.
+ */
+export const NUMBER_CLIP_MIN = 1
+export const NUMBER_CLIP_MAX = 60
+export const NUMBER_CLIP_RANGE = { first: NUMBER_CLIP_MIN, last: NUMBER_CLIP_MAX } as const
 
 /** Languages a Voice can be announced in. Falls back to English. */
 export type NumberLanguage = 'pl' | 'en'

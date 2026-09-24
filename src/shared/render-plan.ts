@@ -16,15 +16,11 @@
 import { createHash } from 'node:crypto'
 import type { PartRenderState, RenderState } from './ipc-contract'
 import type { Part } from './types'
+import { NUMBER_CLIP_RANGE } from './number-words'
 
-/**
- * The countdown numbers rendered for every Voice, unconditionally.
- *
- * Deliberately not derived from the countdown a Project currently uses: rendering
- * all of 1..60 up front removes an invalidation path entirely, so changing which
- * numbers count down is a settings change that can never require a re-render.
- */
-export const NUMBER_CLIP_RANGE = { first: 1, last: 60 } as const
+// Re-exported so the render path keeps one import, but owned by number-words:
+// that module has no Node dependencies, and the settings UI needs these bounds.
+export { NUMBER_CLIP_RANGE } from './number-words'
 
 /**
  * Joins the hashed fields with NUL, which cannot occur in a Part name, a voice id
