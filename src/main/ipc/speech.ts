@@ -125,6 +125,92 @@ export function orphanedClips(db: Database.Database, cachedHashes: Iterable<stri
 }
 
 /**
+ * Cached clips that exist on disk but whose length nobody wrote down.
+ *
+ * A render records each clip as it lands, but the batch that left this database
+ * in its current state did not — it recorded everything only once the whole run
+ * finished, so a run interrupted after fifty of sixty clips left fifty WAVs with
+ * no rows. Those clips are then invisible to a re-render, because the plan reads
+ * the cache from disk and sees them as already rendered, and invisible to a
+ * sweep, because they are still wanted. Without a duration the announcer can
+ * play them but never place them, so they have to be measured rather than
+ * re-synthesised.
+ *
+ * The text and Voice cannot be recovered from a hash — that is what content
+ * addressing costs — so they come from the plan instead: every Project is asked
+ * what it wants, and a wanted clip that is on disk without a row is one of these.
+ */
+export function clipsNeedingDurations(
+  db: Database.Database,
+  cachedHashes: Iterable<string>,
+): RenderPlanItem[] {
+  const cached = new Set(cachedHashes)
+  if (cached.size === 0) return []
+
+  const known = new Set(
+    (db.prepare('SELECT hash FROM speech_clips').all() as { hash: string }[]).map((r) => r.hash),
+  )
+
+  const projects = db.prepare('SELECT id FROM projects').all() as { id: string }[]
+  const byHash = new Map<string, RenderPlanItem>()
+  for (const { id } of projects) {
+    for (const item of projectRenderPlan(db, id, cached).wanted) {
+      if (cached.has(item.hash) && !known.has(item.hash)) byHash.set(item.hash, item)
+    }
+  }
+  return [...byHash.values()]
+}
+
+/**
+ * Cached clips this Project wants that no other Project wants.
+ *
+ * What "delete this Project's audio" is allowed to touch. Clips are
+ * content-addressed and shared on purpose — two Projects on the same Voice share
+ * every number clip — so deleting everything one Project points at would silently
+ * strip the audio from the Project next to it. Only what nothing else claims goes.
+ *
+ * Orphans are deliberately not included: nothing claims those either, but they
+ * are the other button's job, and a Project archive should not quietly become a
+ * cache-wide clean.
+ */
+export function clipsOnlyUsedBy(
+  db: Database.Database,
+  projectId: string,
+  cachedHashes: Iterable<string>,
+): string[] {
+  const cached = [...cachedHashes]
+  const mine = new Set(
+    projectRenderPlan(db, projectId, cached)
+      .wanted.map((item) => item.hash)
+      .filter((hash) => cached.includes(hash)),
+  )
+  if (mine.size === 0) return []
+
+  const others = db.prepare('SELECT id FROM projects WHERE id != ?').all(projectId) as {
+    id: string
+  }[]
+  for (const { id } of others) {
+    for (const item of projectRenderPlan(db, id, cached).wanted) mine.delete(item.hash)
+    if (mine.size === 0) break
+  }
+  return [...mine]
+}
+
+/**
+ * Drops what a Project's Parts were last rendered to.
+ *
+ * Runs with the delete above, and has to: a `part_renders` row pointing at a
+ * clip that is gone reads as `missing`, which is true, but leaving the rows
+ * behind would make a Part whose clip another Project still holds read as
+ * `rendered` while this Project believes it deleted its audio.
+ */
+export function forgetPartRenders(db: Database.Database, projectId: string): void {
+  db.prepare(
+    'DELETE FROM part_renders WHERE part_id IN (SELECT id FROM parts WHERE project_id = ?)',
+  ).run(projectId)
+}
+
+/**
  * Records a clip that now exists on disk.
  *
  * The duration is the load-bearing part: flush placement schedules the phrase

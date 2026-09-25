@@ -8,6 +8,9 @@ import {
   recordClip,
   recordPartRenders,
   forgetClips,
+  forgetPartRenders,
+  clipsNeedingDurations,
+  clipsOnlyUsedBy,
   phraseDurations,
 } from './speech'
 import { saveProjectVoiceSettings, saveGlobalVoiceSettings } from './settings'
@@ -306,5 +309,157 @@ describe('phraseDurations', () => {
     )
     upsertPart(db, { id: part.id, projectId: 'p1', name: 'wokal' })
     expect(phraseDurations(db, 'p1')).toEqual({})
+  })
+})
+
+describe('clipsNeedingDurations', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openMemoryDb()
+    insertProject(db, 'p1')
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('recovers the text and Voice behind a clip on disk with no row', () => {
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    const hash = phraseHash('gitara', 'za')
+
+    expect(clipsNeedingDurations(db, [hash])).toEqual([
+      { hash, text: 'gitara za', voice: VOICE, engine: ENGINE_ID },
+    ])
+  })
+
+  it('ignores a clip whose duration is already recorded', () => {
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    const hash = phraseHash('gitara', 'za')
+    recordClip(db, { hash, text: 'gitara za', voice: VOICE, engine: ENGINE_ID }, 900)
+
+    expect(clipsNeedingDurations(db, [hash])).toEqual([])
+  })
+
+  it('ignores a wanted clip that is not on disk — nothing to measure', () => {
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    expect(clipsNeedingDurations(db, [])).toEqual([])
+  })
+
+  it('ignores a cached clip nothing wants, which is the sweep’s job', () => {
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    expect(clipsNeedingDurations(db, [phraseHash('perkusja', 'za')])).toEqual([])
+  })
+
+  it('reports each hash once when two Projects want the same clip', () => {
+    insertProject(db, 'p2')
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    upsertPart(db, { projectId: 'p2', name: 'gitara' })
+
+    expect(clipsNeedingDurations(db, [phraseHash('gitara', 'za')])).toHaveLength(1)
+  })
+
+  it('covers the countdown numbers, not just the Part phrases', () => {
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    const numbers = numberHashes(VOICE)
+
+    const found = clipsNeedingDurations(db, numbers).map((item) => item.hash)
+    expect(found.sort()).toEqual([...numbers].sort())
+  })
+})
+
+describe('clipsOnlyUsedBy', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openMemoryDb()
+    insertProject(db, 'p1')
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('returns a phrase clip no other Project wants', () => {
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    const hash = phraseHash('gitara', 'za')
+
+    expect(clipsOnlyUsedBy(db, 'p1', [hash])).toEqual([hash])
+  })
+
+  it('spares a phrase clip another Project shares', () => {
+    insertProject(db, 'p2')
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    upsertPart(db, { projectId: 'p2', name: 'gitara' })
+
+    expect(clipsOnlyUsedBy(db, 'p1', [phraseHash('gitara', 'za')])).toEqual([])
+  })
+
+  it('spares the number clips a Project on the same Voice shares', () => {
+    insertProject(db, 'p2')
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    upsertPart(db, { projectId: 'p2', name: 'perkusja' })
+
+    const cached = [...numberHashes(VOICE), phraseHash('gitara', 'za')]
+    expect(clipsOnlyUsedBy(db, 'p1', cached)).toEqual([phraseHash('gitara', 'za')])
+  })
+
+  it('deletes the number clips when every other Project uses another Voice', () => {
+    insertProject(db, 'p2')
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    upsertPart(db, { projectId: 'p2', name: 'perkusja' })
+    saveProjectVoiceSettings(db, 'p2', {
+      voice: 'en_US-amy-medium',
+      countdown: null,
+      placement: null,
+      connector: 'za',
+    })
+
+    const numbers = numberHashes(VOICE)
+    expect(clipsOnlyUsedBy(db, 'p1', numbers).sort()).toEqual([...numbers].sort())
+  })
+
+  it('returns nothing for a clip that is not on disk', () => {
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    expect(clipsOnlyUsedBy(db, 'p1', [])).toEqual([])
+  })
+
+  it('leaves an orphan alone — that is the clean action, not this one', () => {
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    const orphan = phraseHash('stara nazwa', 'za')
+
+    expect(clipsOnlyUsedBy(db, 'p1', [phraseHash('gitara', 'za'), orphan])).not.toContain(orphan)
+  })
+})
+
+describe('forgetPartRenders', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openMemoryDb()
+    insertProject(db, 'p1')
+    insertProject(db, 'p2')
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('drops this Project’s rows and leaves the other Project’s alone', () => {
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    upsertPart(db, { projectId: 'p2', name: 'gitara' })
+    recordPartRenders(db, 'p1')
+    recordPartRenders(db, 'p2')
+
+    forgetPartRenders(db, 'p1')
+
+    const cached = [phraseHash('gitara', 'za')]
+    expect(projectRenderSummary(db, 'p1', cached).parts[0].state).toBe('missing')
+    expect(projectRenderSummary(db, 'p2', cached).parts[0].state).toBe('rendered')
+  })
+
+  it('is a no-op for a Project that never rendered', () => {
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    expect(() => forgetPartRenders(db, 'p1')).not.toThrow()
   })
 })
