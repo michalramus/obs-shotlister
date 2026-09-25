@@ -414,6 +414,9 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler('project:setActive', (payload: { projectId: string | null }) => {
     live.setActiveProject(payload.projectId)
+    // The Project the operator just opened is the one whose missing audio
+    // matters now, and it may never have been rendered at all.
+    if (payload.projectId !== null) render.scheduleAutoRender(payload.projectId)
     publish.rundownChanged()
   })
 
@@ -925,6 +928,15 @@ app.whenReady().then(() => {
   render
     .backfillDurations()
     .then(() => render?.sweepOrphans())
+    // Auto-rendering means "nothing should stay unrendered", so start-up is one
+    // of its triggers: a Project left half-rendered by a closed app, or one
+    // imported since, is exactly the case the operator turned this on for.
+    // After the repair, so a clip whose duration was just recovered is not
+    // synthesised a second time.
+    .then(() => {
+      if (!_db) return
+      for (const project of listProjects(_db)) render?.scheduleAutoRender(project.id)
+    })
     .catch((err: unknown) => console.error('[speech] cache repair on start failed:', err))
   registerIpcHandlers()
   const audioDir = app.isPackaged
