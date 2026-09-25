@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, protocol } from 'electron'
+import { app, BrowserWindow, dialog, protocol, shell } from 'electron'
 import { join } from 'path'
 import { readFileSync, existsSync, createReadStream, promises as fsPromises } from 'fs'
 import { extname } from 'path'
@@ -737,6 +737,15 @@ function registerIpcHandlers(): void {
   // UI mode
   registerIpcHandler('ui:setMode', (mode: 'edit' | 'live') => {
     currentUiMode = mode
+  })
+
+  registerIpcHandler('app:openDataDir', async () => {
+    const dir = app.getPath('userData')
+    // `openPath` reports a failure as a message rather than by throwing, so the
+    // one way this goes wrong would otherwise be silent.
+    const problem = await shell.openPath(dir)
+    if (problem) throw new Error(`Could not open ${dir}: ${problem}`)
+    return dir
   })
 
   // Assets

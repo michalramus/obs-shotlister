@@ -409,6 +409,14 @@ export interface IpcContract {
   // --- Shell ---
   'ui:setMode': { payload: 'edit' | 'live'; result: void }
   'assets:audioDir': { payload: NoPayload; result: string }
+  /**
+   * Opens the app's data directory in the OS file browser, and returns its path.
+   *
+   * This is where the recordings and the database actually live — under
+   * Application Support on macOS, AppData on Windows — which is a folder nobody
+   * can be expected to find by hand.
+   */
+  'app:openDataDir': { payload: NoPayload; result: string }
 
   // --- Export / import ---
   'export:project': { payload: { projectId: string }; result: void }
@@ -596,6 +604,9 @@ export interface ElectronApi {
   assets: {
     getAudioDir: Request<'assets:audioDir'>
   }
+  appData: {
+    openDir: Request<'app:openDataDir'>
+  }
   server: {
     onError: Subscribe<'server:error'>
   }
@@ -693,6 +704,7 @@ export const IPC_CHANNELS = [
   'osc:settings:save',
   'ui:setMode',
   'assets:audioDir',
+  'app:openDataDir',
   'export:project',
   'export:rundown',
   'export:database',

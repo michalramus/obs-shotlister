@@ -109,6 +109,8 @@ interface AppStore {
   cleanOrphanClips: (projectId: string) => Promise<number>
   /** Deletes this Project's audio; resolves with how many clips went. */
   deleteProjectClips: (projectId: string) => Promise<number>
+  /** Opens the app's data folder in Finder/Explorer; resolves with its path. */
+  openAppDataDir: () => Promise<string>
 
   // Audio output devices
   audioDevices: AudioDeviceSettings
@@ -548,6 +550,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     // thing that changes them.
     await get().loadPhraseDurations(projectId)
   },
+
+  openAppDataDir: async () => window.api.appData.openDir(),
 
   cleanOrphanClips: async (projectId) => {
     const removed = await window.api.speech.cleanOrphans({ projectId })

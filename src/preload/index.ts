@@ -160,6 +160,9 @@ const api: ElectronApi = {
   assets: {
     getAudioDir: request('assets:audioDir'),
   },
+  appData: {
+    openDir: request('app:openDataDir'),
+  },
   server: {
     onError: subscribe('server:error'),
   },
