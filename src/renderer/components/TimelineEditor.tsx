@@ -12,6 +12,7 @@ import {
 } from '../timeline/coordinates'
 import { usePlaybackProbe } from '../timeline/playback-probe'
 import { describeDecodeFailure } from '../timeline/waveform-error'
+import { RulerLane } from './timeline/RulerLane'
 import {
   editPlayheadMs,
   livePlayheadMs,
@@ -1758,45 +1759,7 @@ export function TimelineEditor({
         {/* Explicit width = totalPx + containerWidth so max scrollLeft = totalPx (playhead reaches end) */}
         <div style={{ paddingLeft: PLAYHEAD_FIXED_PX, width: totalPx + containerWidth }}>
           {/* Row 2: Time ruler */}
-          <div
-            style={{
-              height: RULER_HEIGHT,
-              width: totalPx,
-              background: '#1a1a1a',
-              position: 'relative',
-              flexShrink: 0,
-            }}
-          >
-            {ticks.map((tick) => (
-              <div
-                key={tick.px}
-                style={{
-                  position: 'absolute',
-                  left: tick.px,
-                  top: 0,
-                  height: '100%',
-                  width: '1px',
-                  background: '#444',
-                }}
-              >
-                {tick.label !== undefined && (
-                  <span
-                    style={{
-                      position: 'absolute',
-                      top: '2px',
-                      left: '2px',
-                      fontSize: '9px',
-                      color: '#888',
-                      whiteSpace: 'nowrap',
-                      pointerEvents: 'none',
-                    }}
-                  >
-                    {tick.label}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
+          <RulerLane ticks={ticks} width={totalPx} height={RULER_HEIGHT} />
 
           {/* Row 3: Camera track */}
           <div
