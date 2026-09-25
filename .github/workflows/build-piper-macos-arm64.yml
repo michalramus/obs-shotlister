@@ -88,6 +88,21 @@ jobs:
           cmake --build piper-build --config Release
           cmake --install piper-build
 
+      # piper's install rule copies the executable and the espeak data but not
+      # the libraries it links against, and the binary carries no LC_RPATH — so
+      # an install tree on its own is a binary that cannot start:
+      #   Library not loaded: @rpath/libespeak-ng.1.dylib, no LC_RPATH's found
+      # The dylibs come from the piper-phonemize install, and an @loader_path
+      # rpath is what makes "next to the binary" the place dyld looks.
+      - name: Bundle the libraries the binary needs
+        run: |
+          cp -a pp-install/lib/*.dylib _install/piper/ 2>/dev/null || true
+          find piper-build -name '*.dylib' -exec cp -a {} _install/piper/ \;
+          install_name_tool -add_rpath @loader_path _install/piper/piper
+          # Debug bundles are a third of the tarball and nothing loads them.
+          rm -rf _install/piper/*.dSYM
+          ls -la _install/piper
+
       - name: Refuse to publish anything that is not arm64
         # The whole reason this workflow exists. Upstream shipped a mislabelled
         # tarball for two years because nothing checked.
@@ -109,7 +124,12 @@ jobs:
 
       - name: Check it actually runs
         run: |
+          # No pipe: `| head` would make the step's exit status head's, and a
+          # binary that cannot even be loaded by dyld would report success.
+          # That is exactly how a tarball with no dylibs in it got published.
+          set -o pipefail
           ./_install/piper/piper --help 2>&1 | head -5
+          otool -L ./_install/piper/piper
 
       - name: Package
         id: package
@@ -138,6 +158,10 @@ jobs:
         if: inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          # Nothing checks this repository out — only piper and piper-phonemize
+          # are cloned, into subdirectories — so gh has no git remote to infer
+          # the repository from and fails with "not a git repository".
+          GH_REPO: ${{ github.repository }}
         run: |
           gh release upload "${{ inputs.release_tag }}" \
             _install/piper_macos_aarch64.tar.gz --clobber
