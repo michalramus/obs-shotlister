@@ -25,7 +25,11 @@ function openMemoryDb(): Database.Database {
 }
 
 function insertProject(db: Database.Database, id: string, name: string): void {
-  db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(id, name, Date.now())
+  db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+    id,
+    name,
+    Date.now(),
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -59,7 +63,11 @@ describe('listProjects', () => {
   })
 
   it('returns projects with correct shape', () => {
-    db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run('p1', 'Alpha', 1234)
+    db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+      'p1',
+      'Alpha',
+      1234,
+    )
     const result = listProjects(db)
     const p = result[0] as Project
     expect(p.id).toBe('p1')
@@ -175,9 +183,9 @@ describe('deleteProject', () => {
   })
 
   it('cascades deletion to cameras belonging to the project', () => {
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'cam-1', 'p1', 1, 'Main', '#e74c3c',
-    )
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('cam-1', 'p1', 1, 'Main', '#e74c3c')
     deleteProject(db, 'p1')
     const cam = db.prepare('SELECT id FROM cameras WHERE id = ?').get('cam-1')
     expect(cam).toBeUndefined()
@@ -185,7 +193,10 @@ describe('deleteProject', () => {
 
   it('cascades deletion to rundowns belonging to the project', () => {
     db.prepare('INSERT INTO rundowns (id, project_id, name, created_at) VALUES (?, ?, ?, ?)').run(
-      'rd-1', 'p1', 'Morning', 1000,
+      'rd-1',
+      'p1',
+      'Morning',
+      1000,
     )
     deleteProject(db, 'p1')
     const rd = db.prepare('SELECT id FROM rundowns WHERE id = ?').get('rd-1')
@@ -215,27 +226,27 @@ describe('listCameras', () => {
   })
 
   it('returns cameras for the specified project only', () => {
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'cam-1', 'p1', 1, 'Wide', '#e74c3c',
-    )
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'cam-2', 'p2', 1, 'Close', '#3498db',
-    )
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('cam-1', 'p1', 1, 'Wide', '#e74c3c')
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('cam-2', 'p2', 1, 'Close', '#3498db')
     const result = listCameras(db, 'p1')
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('cam-1')
   })
 
   it('returns cameras ordered by number ascending', () => {
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'cam-3', 'p1', 3, 'C', '#000',
-    )
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'cam-1', 'p1', 1, 'A', '#000',
-    )
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'cam-2', 'p1', 2, 'B', '#000',
-    )
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('cam-3', 'p1', 3, 'C', '#000')
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('cam-1', 'p1', 1, 'A', '#000')
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('cam-2', 'p1', 2, 'B', '#000')
     const result = listCameras(db, 'p1')
     expect(result.map((c: Camera) => c.number)).toEqual([1, 2, 3])
   })
@@ -274,7 +285,13 @@ describe('upsertCamera', () => {
   })
 
   it('creates a new camera when no id is provided', () => {
-    const cam = upsertCamera(db, { projectId: 'p1', number: 1, name: 'Wide', color: '#e74c3c', resolveColor: null })
+    const cam = upsertCamera(db, {
+      projectId: 'p1',
+      number: 1,
+      name: 'Wide',
+      color: '#e74c3c',
+      resolveColor: null,
+    })
     expect(cam.id).toBeTypeOf('string')
     expect(cam.id.length).toBeGreaterThan(0)
     expect(cam.name).toBe('Wide')
@@ -284,18 +301,43 @@ describe('upsertCamera', () => {
   })
 
   it('creates a new camera with a resolve color', () => {
-    const cam = upsertCamera(db, { projectId: 'p1', number: 1, name: 'Wide', color: '#e74c3c', resolveColor: 'Red' })
+    const cam = upsertCamera(db, {
+      projectId: 'p1',
+      number: 1,
+      name: 'Wide',
+      color: '#e74c3c',
+      resolveColor: 'Red',
+    })
     expect(cam.resolveColor).toBe('Red')
   })
 
   it('persists the new camera in listCameras', () => {
-    upsertCamera(db, { projectId: 'p1', number: 1, name: 'Wide', color: '#e74c3c', resolveColor: null })
+    upsertCamera(db, {
+      projectId: 'p1',
+      number: 1,
+      name: 'Wide',
+      color: '#e74c3c',
+      resolveColor: null,
+    })
     expect(listCameras(db, 'p1')).toHaveLength(1)
   })
 
   it('updates an existing camera when id is provided', () => {
-    const created = upsertCamera(db, { projectId: 'p1', number: 1, name: 'Wide', color: '#e74c3c', resolveColor: null })
-    const updated = upsertCamera(db, { id: created.id, projectId: 'p1', number: 2, name: 'Close-up', color: '#3498db', resolveColor: 'Blue' })
+    const created = upsertCamera(db, {
+      projectId: 'p1',
+      number: 1,
+      name: 'Wide',
+      color: '#e74c3c',
+      resolveColor: null,
+    })
+    const updated = upsertCamera(db, {
+      id: created.id,
+      projectId: 'p1',
+      number: 2,
+      name: 'Close-up',
+      color: '#3498db',
+      resolveColor: 'Blue',
+    })
     expect(updated.id).toBe(created.id)
     expect(updated.name).toBe('Close-up')
     expect(updated.number).toBe(2)
@@ -304,14 +346,33 @@ describe('upsertCamera', () => {
   })
 
   it('does not create a duplicate when updating', () => {
-    const created = upsertCamera(db, { projectId: 'p1', number: 1, name: 'Wide', color: '#e74c3c', resolveColor: null })
-    upsertCamera(db, { id: created.id, projectId: 'p1', number: 1, name: 'Wide Renamed', color: '#e74c3c', resolveColor: null })
+    const created = upsertCamera(db, {
+      projectId: 'p1',
+      number: 1,
+      name: 'Wide',
+      color: '#e74c3c',
+      resolveColor: null,
+    })
+    upsertCamera(db, {
+      id: created.id,
+      projectId: 'p1',
+      number: 1,
+      name: 'Wide Renamed',
+      color: '#e74c3c',
+      resolveColor: null,
+    })
     expect(listCameras(db, 'p1')).toHaveLength(1)
   })
 
   it('throws if projectId refers to a non-existent project', () => {
     expect(() =>
-      upsertCamera(db, { projectId: 'nonexistent', number: 1, name: 'Wide', color: '#e74c3c', resolveColor: null }),
+      upsertCamera(db, {
+        projectId: 'nonexistent',
+        number: 1,
+        name: 'Wide',
+        color: '#e74c3c',
+        resolveColor: null,
+      }),
     ).toThrow()
   })
 })
@@ -326,12 +387,12 @@ describe('deleteCamera', () => {
   beforeEach(() => {
     db = openMemoryDb()
     insertProject(db, 'p1', 'Alpha')
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'cam-1', 'p1', 1, 'Wide', '#e74c3c',
-    )
-    db.prepare('INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)').run(
-      'cam-2', 'p1', 2, 'Close', '#3498db',
-    )
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('cam-1', 'p1', 1, 'Wide', '#e74c3c')
+    db.prepare(
+      'INSERT INTO cameras (id, project_id, number, name, color) VALUES (?, ?, ?, ?, ?)',
+    ).run('cam-2', 'p1', 2, 'Close', '#3498db')
   })
 
   afterEach(() => {

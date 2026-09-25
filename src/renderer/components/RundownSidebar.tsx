@@ -1022,7 +1022,9 @@ export function RundownSidebar(): React.JSX.Element {
               )
             }
           >
-            {contextRundown.kind === 'voice' ? 'Convert to camera rundown' : 'Convert to voice-over rundown'}
+            {contextRundown.kind === 'voice'
+              ? 'Convert to camera rundown'
+              : 'Convert to voice-over rundown'}
           </button>
           {contextRundown.folder && (
             <button

@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { useAppStore } from '../store'
-import type { OBSConnectionStatus, OBSValidateResult, TransitionMapping } from '../../shared/ipc-contract'
+import type {
+  OBSConnectionStatus,
+  OBSValidateResult,
+  TransitionMapping,
+} from '../../shared/ipc-contract'
 import type { Camera } from '../../shared/types'
 
 const s = {
@@ -232,7 +236,9 @@ interface TransitionMappingsSectionProps {
   obsConnected: boolean
 }
 
-function TransitionMappingsSection({ obsConnected }: TransitionMappingsSectionProps): React.JSX.Element {
+function TransitionMappingsSection({
+  obsConnected,
+}: TransitionMappingsSectionProps): React.JSX.Element {
   const [mappings, setMappings] = useState<TransitionMapping[]>([])
   const [obsTransitions, setObsTransitions] = useState<string[]>([])
   const [savingMap, setSavingMap] = useState<Record<string, boolean>>({})
@@ -336,7 +342,9 @@ function TransitionMappingsSection({ obsConnected }: TransitionMappingsSectionPr
                       onChange={(e) => void handleObsNameChange(m.logicalName, e.target.value)}
                     >
                       {obsTransitions.map((t) => (
-                        <option key={t} value={t}>{t}</option>
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
                       ))}
                       {!obsTransitions.includes(m.obsTransitionName) && (
                         <option value={m.obsTransitionName}>{m.obsTransitionName}</option>
@@ -353,7 +361,9 @@ function TransitionMappingsSection({ obsConnected }: TransitionMappingsSectionPr
                         const val = e.target.value
                         setMappings((prev) =>
                           prev.map((mp) =>
-                            mp.logicalName === m.logicalName ? { ...mp, obsTransitionName: val } : mp,
+                            mp.logicalName === m.logicalName
+                              ? { ...mp, obsTransitionName: val }
+                              : mp,
                           ),
                         )
                       }}
@@ -403,7 +413,9 @@ function TransitionMappingsSection({ obsConnected }: TransitionMappingsSectionPr
                   >
                     <option value="">— Select —</option>
                     {obsTransitions.map((t) => (
-                      <option key={t} value={t}>{t}</option>
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
                     ))}
                   </select>
                 ) : (
@@ -470,25 +482,40 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
   const [sceneSaving, setSceneSaving] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
-    window.api.obs.getSettings().then((settings) => {
-      setUrl(settings.url)
-      setPassword(settings.password)
-    }).catch((err: unknown) => console.error('[OBSSettingsPanel] getSettings:', err))
-    window.api.obs.getStatus().then((r) => setObsStatus(r.status)).catch(() => {})
-    window.api.obs.getEnabled().then(setObsEnabled).catch(() => {})
+    window.api.obs
+      .getSettings()
+      .then((settings) => {
+        setUrl(settings.url)
+        setPassword(settings.password)
+      })
+      .catch((err: unknown) => console.error('[OBSSettingsPanel] getSettings:', err))
+    window.api.obs
+      .getStatus()
+      .then((r) => setObsStatus(r.status))
+      .catch(() => {})
+    window.api.obs
+      .getEnabled()
+      .then(setObsEnabled)
+      .catch(() => {})
     // Subscribe to pushed validation results
     window.api.obs.onValidationResult((result) => setValidationResult(result))
   }, [setObsStatus])
 
   useEffect(() => {
     if (activeProjectId) {
-      window.api.cameras.list({ projectId: activeProjectId }).then(setCameras).catch(() => {})
+      window.api.cameras
+        .list({ projectId: activeProjectId })
+        .then(setCameras)
+        .catch(() => {})
     }
   }, [activeProjectId])
 
   useEffect(() => {
     if (obsStatus === 'connected') {
-      window.api.obs.getScenes().then(setObsScenes).catch(() => {})
+      window.api.obs
+        .getScenes()
+        .then(setObsScenes)
+        .catch(() => {})
     }
   }, [obsStatus])
 
@@ -583,7 +610,9 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
       <div style={s.panel}>
         <div style={s.header}>
           <h2 style={s.title}>OBS Settings</h2>
-          <button style={s.closeBtn} onClick={onClose} aria-label="Close">x</button>
+          <button style={s.closeBtn} onClick={onClose} aria-label="Close">
+            x
+          </button>
         </div>
 
         {/* Section A: Connection */}
@@ -632,7 +661,11 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
           <div style={{ ...s.statusRow, marginTop: '12px' }}>
             <div style={s.dot(obsStatus)} />
             <span style={{ color: '#ccc' }}>
-              {obsStatus === 'connected' ? 'Connected' : obsStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
+              {obsStatus === 'connected'
+                ? 'Connected'
+                : obsStatus === 'connecting'
+                  ? 'Connecting...'
+                  : 'Disconnected'}
             </span>
             {obsStatus === 'connected' ? (
               <button style={s.connectBtn(obsStatus)} onClick={handleDisconnect} disabled={loading}>
@@ -658,22 +691,29 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
             <p style={s.sectionTitle}>OBS Validation</p>
             <div style={s.validationBox}>
               <div>
-                {validationResult.studioModeEnabled
-                  ? <span style={s.okText}>Studio mode enabled</span>
-                  : <span style={s.errorText}>Studio mode not enabled</span>
-                }
+                {validationResult.studioModeEnabled ? (
+                  <span style={s.okText}>Studio mode enabled</span>
+                ) : (
+                  <span style={s.errorText}>Studio mode not enabled</span>
+                )}
               </div>
               <div>
-                {validationResult.missingScenes.length === 0
-                  ? <span style={s.okText}>All scenes mapped</span>
-                  : <span style={s.errorText}>Missing scenes: {validationResult.missingScenes.join(', ')}</span>
-                }
+                {validationResult.missingScenes.length === 0 ? (
+                  <span style={s.okText}>All scenes mapped</span>
+                ) : (
+                  <span style={s.errorText}>
+                    Missing scenes: {validationResult.missingScenes.join(', ')}
+                  </span>
+                )}
               </div>
               <div>
-                {validationResult.missingTransitions.length === 0
-                  ? <span style={s.okText}>All transitions found</span>
-                  : <span style={s.errorText}>Missing transitions: {validationResult.missingTransitions.join(', ')}</span>
-                }
+                {validationResult.missingTransitions.length === 0 ? (
+                  <span style={s.okText}>All transitions found</span>
+                ) : (
+                  <span style={s.errorText}>
+                    Missing transitions: {validationResult.missingTransitions.join(', ')}
+                  </span>
+                )}
               </div>
               <button style={s.refreshBtn} onClick={() => void handleRefreshValidation()}>
                 Refresh
@@ -688,9 +728,20 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
         {/* Section C: Camera → OBS Scene mappings */}
         {activeProjectId !== null && (
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: '10px',
+              }}
+            >
               <p style={{ ...s.sectionTitle, margin: 0 }}>Camera → OBS Scene</p>
-              <button style={s.refreshBtn} onClick={() => void handleRefreshScenes()} title="Refresh OBS scenes">
+              <button
+                style={s.refreshBtn}
+                onClick={() => void handleRefreshScenes()}
+                title="Refresh OBS scenes"
+              >
                 Refresh scenes
               </button>
             </div>
@@ -704,7 +755,9 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
               <tbody>
                 {cameras.map((cam) => (
                   <tr key={cam.id}>
-                    <td style={s.td}>CAM{cam.number} — {cam.name}</td>
+                    <td style={s.td}>
+                      CAM{cam.number} — {cam.name}
+                    </td>
                     <td style={s.td}>
                       {obsStatus === 'connected' && obsScenes.length > 0 ? (
                         <select
@@ -716,7 +769,9 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
                         >
                           <option value="">— None —</option>
                           {obsScenes.map((scene) => (
-                            <option key={scene} value={scene}>{scene}</option>
+                            <option key={scene} value={scene}>
+                              {scene}
+                            </option>
                           ))}
                           {cam.obsScene && !obsScenes.includes(cam.obsScene) && (
                             <option value={cam.obsScene}>{cam.obsScene}</option>
@@ -727,12 +782,16 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
                           style={s.input}
                           type="text"
                           value={cam.obsScene ?? ''}
-                          placeholder={obsStatus === 'connected' ? 'Scene name' : 'OBS not connected'}
+                          placeholder={
+                            obsStatus === 'connected' ? 'Scene name' : 'OBS not connected'
+                          }
                           aria-label={`OBS scene for ${cam.name}`}
                           onChange={(e) => {
                             const val = e.target.value
                             setCameras((prev) =>
-                              prev.map((c) => (c.id === cam.id ? { ...c, obsScene: val || null } : c)),
+                              prev.map((c) =>
+                                c.id === cam.id ? { ...c, obsScene: val || null } : c,
+                              ),
                             )
                           }}
                           onBlur={(e) => void handleSceneChange(cam, e.target.value)}

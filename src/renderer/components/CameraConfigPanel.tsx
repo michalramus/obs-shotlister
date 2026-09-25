@@ -280,7 +280,11 @@ interface DeleteCameraDialogProps {
   onConfirm: () => Promise<void>
 }
 
-function DeleteCameraDialog({ camera, onCancel, onConfirm }: DeleteCameraDialogProps): React.JSX.Element {
+function DeleteCameraDialog({
+  camera,
+  onCancel,
+  onConfirm,
+}: DeleteCameraDialogProps): React.JSX.Element {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -296,13 +300,22 @@ function DeleteCameraDialog({ camera, onCancel, onConfirm }: DeleteCameraDialogP
   }
 
   return (
-    <div style={s.confirmOverlay} role="dialog" aria-modal="true" aria-labelledby="delete-cam-title">
+    <div
+      style={s.confirmOverlay}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="delete-cam-title"
+    >
       <div style={s.confirmDialog}>
         <h3 id="delete-cam-title" style={s.confirmTitle}>
           Delete camera?
         </h3>
         <p style={{ margin: 0, color: '#ccc', fontSize: '14px' }}>
-          Delete <strong style={{ color: '#fff' }}>#{camera.number} {camera.name}</strong>? This cannot be undone.
+          Delete{' '}
+          <strong style={{ color: '#fff' }}>
+            #{camera.number} {camera.name}
+          </strong>
+          ? This cannot be undone.
         </p>
         {error !== null && <p style={s.errorText}>{error}</p>}
         <div style={s.row}>
@@ -401,10 +414,7 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
       </td>
       <td style={{ ...s.td, width: '56px' }}>
         <div style={s.colorCell}>
-          <div
-            style={{ ...s.colorSwatch, background: draft.color }}
-            title={draft.color}
-          />
+          <div style={{ ...s.colorSwatch, background: draft.color }} title={draft.color} />
           <input
             type="color"
             style={s.colorInput}
@@ -526,7 +536,14 @@ function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): Rea
     setSaving(true)
     setError(null)
     try {
-      await upsertCamera({ projectId, number, name: name.trim(), color, resolveColor, obsScene: null })
+      await upsertCamera({
+        projectId,
+        number,
+        name: name.trim(),
+        color,
+        resolveColor,
+        obsScene: null,
+      })
       onDone()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add camera.')
@@ -673,11 +690,7 @@ export function CameraConfigPanel({ onClose }: CameraConfigPanelProps): React.JS
             </thead>
             <tbody>
               {cameras.map((cam) => (
-                <CameraRow
-                  key={cam.id}
-                  camera={cam}
-                  onRequestDelete={setPendingDelete}
-                />
+                <CameraRow key={cam.id} camera={cam} onRequestDelete={setPendingDelete} />
               ))}
               {addingNew && (
                 <NewCameraRow

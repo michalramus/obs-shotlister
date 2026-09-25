@@ -75,7 +75,11 @@ export function createProject(db: Database.Database, name: string): Project {
   const id = randomUUID()
   const createdAt = Date.now()
 
-  db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(id, name, createdAt)
+  db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
+    id,
+    name,
+    createdAt,
+  )
 
   return { id, name, createdAt }
 }
@@ -91,7 +95,9 @@ export function renameProject(db: Database.Database, id: string, name: string): 
     throw new Error(`Project not found: ${id}`)
   }
 
-  const row = db.prepare('SELECT id, name, created_at FROM projects WHERE id = ?').get(id) as ProjectRow
+  const row = db
+    .prepare('SELECT id, name, created_at FROM projects WHERE id = ?')
+    .get(id) as ProjectRow
   return rowToProject(row)
 }
 
@@ -118,12 +124,12 @@ export function listCameras(db: Database.Database, projectId: string): Camera[] 
 
 export function getCameraById(db: Database.Database, id: string): Camera | null {
   const row = db
-    .prepare('SELECT id, project_id, number, name, color, resolve_color, obs_scene FROM cameras WHERE id = ?')
+    .prepare(
+      'SELECT id, project_id, number, name, color, resolve_color, obs_scene FROM cameras WHERE id = ?',
+    )
     .get(id) as CameraRow | undefined
   return row ? rowToCamera(row) : null
 }
-
-
 
 export function upsertCamera(db: Database.Database, input: CameraUpsertInput): Camera {
   if (input.id) {
@@ -132,14 +138,24 @@ export function upsertCamera(db: Database.Database, input: CameraUpsertInput): C
       .prepare(
         'UPDATE cameras SET project_id = ?, number = ?, name = ?, color = ?, resolve_color = ?, obs_scene = ? WHERE id = ?',
       )
-      .run(input.projectId, input.number, input.name, input.color, input.resolveColor ?? null, input.obsScene ?? null, input.id)
+      .run(
+        input.projectId,
+        input.number,
+        input.name,
+        input.color,
+        input.resolveColor ?? null,
+        input.obsScene ?? null,
+        input.id,
+      )
 
     if (result.changes === 0) {
       throw new Error(`Camera not found: ${input.id}`)
     }
 
     const row = db
-      .prepare('SELECT id, project_id, number, name, color, resolve_color, obs_scene FROM cameras WHERE id = ?')
+      .prepare(
+        'SELECT id, project_id, number, name, color, resolve_color, obs_scene FROM cameras WHERE id = ?',
+      )
       .get(input.id) as CameraRow
     return rowToCamera(row)
   } else {
@@ -147,7 +163,15 @@ export function upsertCamera(db: Database.Database, input: CameraUpsertInput): C
     const id = randomUUID()
     db.prepare(
       'INSERT INTO cameras (id, project_id, number, name, color, resolve_color, obs_scene) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    ).run(id, input.projectId, input.number, input.name, input.color, input.resolveColor ?? null, input.obsScene ?? null)
+    ).run(
+      id,
+      input.projectId,
+      input.number,
+      input.name,
+      input.color,
+      input.resolveColor ?? null,
+      input.obsScene ?? null,
+    )
 
     return {
       id,

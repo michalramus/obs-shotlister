@@ -139,10 +139,13 @@ export function OSCSettingsPanel({ onClose }: OSCSettingsPanelProps): React.JSX.
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    window.api.osc.getSettings().then((settings) => {
-      setEnabled(settings.enabled)
-      setPort(settings.port)
-    }).catch((err: unknown) => console.error('[OSCSettingsPanel] getSettings:', err))
+    window.api.osc
+      .getSettings()
+      .then((settings) => {
+        setEnabled(settings.enabled)
+        setPort(settings.port)
+      })
+      .catch((err: unknown) => console.error('[OSCSettingsPanel] getSettings:', err))
   }, [])
 
   async function handleSave(): Promise<void> {
@@ -161,7 +164,9 @@ export function OSCSettingsPanel({ onClose }: OSCSettingsPanelProps): React.JSX.
       <div style={s.panel}>
         <div style={s.header}>
           <h2 style={s.title}>OSC Settings</h2>
-          <button style={s.closeBtn} onClick={onClose} aria-label="Close">×</button>
+          <button style={s.closeBtn} onClick={onClose} aria-label="Close">
+            ×
+          </button>
         </div>
 
         <div>
@@ -192,18 +197,15 @@ export function OSCSettingsPanel({ onClose }: OSCSettingsPanelProps): React.JSX.
           </div>
 
           <div style={{ marginTop: '12px' }}>
-            {enabled
-              ? <span style={s.statusEnabled}>Listening on port {port}</span>
-              : <span style={s.statusLine}>Disabled</span>
-            }
+            {enabled ? (
+              <span style={s.statusEnabled}>Listening on port {port}</span>
+            ) : (
+              <span style={s.statusLine}>Disabled</span>
+            )}
           </div>
         </div>
 
-        <button
-          style={s.saveBtn}
-          onClick={() => void handleSave()}
-          disabled={saving}
-        >
+        <button style={s.saveBtn} onClick={() => void handleSave()} disabled={saving}>
           {saving ? 'Saving...' : 'Save'}
         </button>
       </div>

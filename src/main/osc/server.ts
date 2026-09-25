@@ -2,10 +2,7 @@ import { Server } from 'node-osc'
 
 let oscServer: Server | null = null
 
-export function startOscServer(
-  port: number,
-  on: { next: () => void; skip: () => void },
-): void {
+export function startOscServer(port: number, on: { next: () => void; skip: () => void }): void {
   stopOscServer()
   try {
     oscServer = new Server(port, '0.0.0.0', () => {

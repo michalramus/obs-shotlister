@@ -16,7 +16,12 @@ describe('editPlayheadMs', () => {
 
   it('resumes from where playback started', () => {
     expect(
-      editPlayheadMs({ origin: { headMs: 5000, wallMs: 1000 }, nowMs: 2000, media: null, totalMs: 60_000 }),
+      editPlayheadMs({
+        origin: { headMs: 5000, wallMs: 1000 },
+        nowMs: 2000,
+        media: null,
+        totalMs: 60_000,
+      }),
     ).toBe(6000)
   })
 

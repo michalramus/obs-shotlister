@@ -328,12 +328,20 @@ export function ResolveImportDialog({ onClose }: Props): React.JSX.Element {
                         <td style={s.td}>{i + 1}</td>
                         <td style={s.td}>{row.resolveColor}</td>
                         <td style={s.td}>
-                          {cam ? `CAM${cam.number} ${cam.name}` : <span style={s.warning}>⚠ unmapped</span>}
+                          {cam ? (
+                            `CAM${cam.number} ${cam.name}`
+                          ) : (
+                            <span style={s.warning}>⚠ unmapped</span>
+                          )}
                         </td>
                         <td style={s.td}>{row.label}</td>
                         <td style={s.td}>
                           {durationMs !== null ? msToMss(durationMs) : row.durationTimecode}
-                          {!isMapped && <span style={{ ...s.warning, marginLeft: '4px' }}>← will be skipped</span>}
+                          {!isMapped && (
+                            <span style={{ ...s.warning, marginLeft: '4px' }}>
+                              ← will be skipped
+                            </span>
+                          )}
                         </td>
                       </tr>
                     )
@@ -355,7 +363,9 @@ export function ResolveImportDialog({ onClose }: Props): React.JSX.Element {
               disabled={importing || importableCount === 0}
               aria-label={`Import ${importableCount} shots`}
             >
-              {importing ? 'Importing…' : `Import ${importableCount} shot${importableCount !== 1 ? 's' : ''}`}
+              {importing
+                ? 'Importing…'
+                : `Import ${importableCount} shot${importableCount !== 1 ? 's' : ''}`}
             </button>
           )}
         </div>

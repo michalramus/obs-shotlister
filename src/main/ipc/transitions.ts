@@ -3,8 +3,6 @@ import type { TransitionMapping } from '../../shared/ipc-contract'
 
 export const BUILTIN_TRANSITIONS = ['cut', 'fade', 'stinger'] as const
 
-
-
 export function listTransitionMappings(db: Database.Database): TransitionMapping[] {
   const rows = db
     .prepare('SELECT logical_name, obs_transition_name FROM transition_mappings')
