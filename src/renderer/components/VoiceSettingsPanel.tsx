@@ -347,6 +347,30 @@ const s = {
     cursor: 'pointer',
   } satisfies React.CSSProperties,
 
+  dangerBtn: {
+    padding: '7px 10px',
+    fontSize: '12px',
+    borderRadius: '4px',
+    border: '1px solid #7a3630',
+    background: '#2a2a2a',
+    color: '#e0796f',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap' as const,
+  } satisfies React.CSSProperties,
+
+  noteText: {
+    color: '#888',
+    fontSize: '12px',
+    margin: '6px 0 0',
+  } satisfies React.CSSProperties,
+
+  cacheRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    marginTop: '10px',
+  } satisfies React.CSSProperties,
+
   toggleRow: {
     display: 'flex',
     alignItems: 'center',
@@ -638,10 +662,30 @@ interface RenderStateSectionProps {
   projectId: string
 }
 
+/**
+ * What the headline says while a batch runs.
+ *
+ * The count matters more than it looks: on Apple Silicon the engine takes about
+ * five seconds per clip, so a full countdown set is minutes of work. A bare
+ * "Rendering..." for that long is indistinguishable from a hung app, and the
+ * operator's next move is to restart — mid-batch, which is the one thing that
+ * used to lose work.
+ */
+export function renderingHeadline(
+  progress: { completed: number; total: number } | undefined,
+): string {
+  if (progress === undefined || progress.total === 0) return 'Rendering...'
+  return `Rendering ${progress.completed}/${progress.total}...`
+}
+
 function RenderStateSection({ projectId }: RenderStateSectionProps): React.JSX.Element {
   const renderSummary = useAppStore((st) => st.renderSummary)
   const renderMissing = useAppStore((st) => st.renderMissing)
+  const cleanOrphanClips = useAppStore((st) => st.cleanOrphanClips)
+  const deleteProjectClips = useAppStore((st) => st.deleteProjectClips)
   const [error, setError] = useState<string | null>(null)
+  const [note, setNote] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
   const parts = renderSummary?.parts ?? []
   const summary = summarizeRenderStates(parts)
@@ -649,30 +693,99 @@ function RenderStateSection({ projectId }: RenderStateSectionProps): React.JSX.E
 
   function handleRenderMissing(): void {
     setError(null)
+    setNote(null)
     renderMissing(projectId).catch((err: unknown) =>
       setError(err instanceof Error ? err.message : 'Rendering failed.'),
     )
   }
 
+  /** Both cache actions report the same way: a count, or the reason there is none. */
+  function runCacheAction(action: () => Promise<number>, describe: (n: number) => string): void {
+    setError(null)
+    setNote(null)
+    setBusy(true)
+    action()
+      .then((removed) => setNote(describe(removed)))
+      .catch((err: unknown) =>
+        setError(err instanceof Error ? err.message : 'Deleting recordings failed.'),
+      )
+      .finally(() => setBusy(false))
+  }
+
+  function handleClean(): void {
+    runCacheAction(
+      () => cleanOrphanClips(projectId),
+      (removed) =>
+        removed === 0
+          ? 'Nothing to clean — every recording on disk is still in use.'
+          : `Deleted ${removed} unused recording${removed === 1 ? '' : 's'}.`,
+    )
+  }
+
+  function handleDeleteAll(): void {
+    const confirmed = window.confirm(
+      "Delete this project's recordings?\n\n" +
+        'Recordings shared with another project are kept. Parts are not touched — ' +
+        'they will read as missing until you render again.',
+    )
+    if (!confirmed) return
+    runCacheAction(
+      () => deleteProjectClips(projectId),
+      (removed) =>
+        removed === 0
+          ? 'Nothing deleted — this project had no recordings of its own.'
+          : `Deleted ${removed} recording${removed === 1 ? '' : 's'}.`,
+    )
+  }
+
+  const locked = rendering || busy
+
   return (
     <div>
       <p style={s.sectionTitle}>Render status</p>
       <div style={s.summaryRow}>
-        <span>{rendering ? 'Rendering...' : summary.headline}</span>
+        <span>{rendering ? renderingHeadline(renderSummary?.progress) : summary.headline}</span>
         <button
           style={{
             ...s.primaryBtn,
-            opacity: rendering || summary.unrendered === 0 ? 0.5 : 1,
-            cursor: rendering || summary.unrendered === 0 ? 'default' : 'pointer',
+            opacity: locked || summary.unrendered === 0 ? 0.5 : 1,
+            cursor: locked || summary.unrendered === 0 ? 'default' : 'pointer',
           }}
           onClick={handleRenderMissing}
-          disabled={rendering || summary.unrendered === 0}
+          disabled={locked || summary.unrendered === 0}
           title="Render every missing or stale part across every rundown in this project"
         >
           Render all missing
         </button>
       </div>
+      <div style={s.cacheRow}>
+        <button
+          style={{
+            ...s.smallBtn,
+            opacity: locked ? 0.5 : 1,
+            cursor: locked ? 'default' : 'pointer',
+          }}
+          onClick={handleClean}
+          disabled={locked}
+          title="Delete recordings no project points at any more"
+        >
+          Clean unused
+        </button>
+        <button
+          style={{
+            ...s.dangerBtn,
+            opacity: locked ? 0.5 : 1,
+            cursor: locked ? 'default' : 'pointer',
+          }}
+          onClick={handleDeleteAll}
+          disabled={locked}
+          title="Delete this project's recordings — for an archived project that no longer needs them"
+        >
+          Delete this project's recordings
+        </button>
+      </div>
       {error !== null && <p style={s.errorText}>{error}</p>}
+      {note !== null && <p style={s.noteText}>{note}</p>}
 
       {parts.length > 0 && (
         <table style={s.table}>

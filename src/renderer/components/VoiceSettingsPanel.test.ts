@@ -9,6 +9,7 @@ import {
   parseCountdownInput,
   summarizeRenderStates,
   parseDelayInput,
+  renderingHeadline,
 } from './VoiceSettingsPanel'
 import { TRANSMISSION_DELAY_MAX_MS, TRANSMISSION_DELAY_MIN_MS } from '../../shared/announcement'
 import type { PartRenderState, RenderState } from '../../shared/ipc-contract'
@@ -219,5 +220,19 @@ describe('parseDelayInput', () => {
   it('accepts the bounds themselves', () => {
     expect(parseDelayInput(String(TRANSMISSION_DELAY_MAX_MS)).ok).toBe(true)
     expect(parseDelayInput(String(TRANSMISSION_DELAY_MIN_MS)).ok).toBe(true)
+  })
+})
+
+describe('renderingHeadline', () => {
+  it('counts the clips so a slow batch does not read as a hang', () => {
+    expect(renderingHeadline({ completed: 7, total: 62 })).toBe('Rendering 7/62...')
+  })
+
+  it('falls back to the bare word before the first progress arrives', () => {
+    expect(renderingHeadline(undefined)).toBe('Rendering...')
+  })
+
+  it('does not offer "0/0" for a batch with nothing in it', () => {
+    expect(renderingHeadline({ completed: 0, total: 0 })).toBe('Rendering...')
   })
 })
