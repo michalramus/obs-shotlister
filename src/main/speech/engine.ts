@@ -60,8 +60,13 @@ function piperDir(): string {
 }
 
 /**
- * The two voices that ship with the app. Read-only in a packaged build, which
- * is why it cannot also be where a downloaded voice lands.
+ * Voices shipped inside the app bundle.
+ *
+ * Normally empty: nothing is bundled any more (ADR 0007). Kept as the first
+ * place looked in, because `scripts/fetch-piper.mjs` can still be pointed at a
+ * voice to ship one, and a bundled copy was verified at build time so it should
+ * win over anything later written into userData. Read-only in a packaged build,
+ * which is why it cannot also be where a downloaded voice lands.
  */
 export function bundledVoicesDir(): string {
   return app.isPackaged
@@ -437,12 +442,26 @@ function messageOf(error: unknown): string {
  * an engine that cannot be executed will fail identically for all sixty-one,
  * and logging that sixty-one times buries the one line that explains it.
  */
-class EngineUnusableError extends Error {
+export class EngineUnusableError extends Error {
   readonly engineUnusable = true
 }
 
 export function isEngineUnusable(error: unknown): boolean {
   return error instanceof EngineUnusableError
+}
+
+/**
+ * Names the clip that failed, without losing whether the engine can run at all.
+ *
+ * The naming used to be done with a plain `new Error`, which quietly downgraded
+ * every spawn failure: `runPiper` reports EBADARCH and EACCES as unusable, the
+ * rewrap made them ordinary, and `renderAll` then carried on to the next clip.
+ * The mislabelled-arm64 case — the one with a whole paragraph of advice written
+ * for it — printed that paragraph sixty-one times.
+ */
+export function renderFailure(item: { text: string; voice: string }, error: unknown): Error {
+  const message = `rendering "${item.text}" (${item.voice}): ${messageOf(error)}`
+  return isEngineUnusable(error) ? new EngineUnusableError(message) : new Error(message)
 }
 
 /**
@@ -609,7 +628,7 @@ export async function synthesise(
     return { hash: item.hash, durationMs }
   } catch (error) {
     await rm(temporary, { force: true }).catch(() => undefined)
-    throw new Error(`rendering "${item.text}" (${item.voice}): ${messageOf(error)}`)
+    throw renderFailure(item, error)
   }
 }
 

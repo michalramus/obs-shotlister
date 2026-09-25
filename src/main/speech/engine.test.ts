@@ -13,6 +13,9 @@ import {
   spawnFailureMessage,
   trimLeadingSilence,
   wavDurationMs,
+  EngineUnusableError,
+  isEngineUnusable,
+  renderFailure,
 } from './engine'
 
 interface Chunk {
@@ -390,5 +393,32 @@ describe('trimLeadingSilence', () => {
       chunk({ id: 'data', body: Buffer.alloc(80) }),
     ])
     expect(trimLeadingSilence(wav)).toBe(wav)
+  })
+})
+
+describe('renderFailure', () => {
+  const item = { text: 'gitara za', voice: 'pl_PL-mc_speech-medium' }
+
+  it('names the clip that failed', () => {
+    const failure = renderFailure(item, new Error('boom'))
+    expect(failure.message).toContain('gitara za')
+    expect(failure.message).toContain('pl_PL-mc_speech-medium')
+    expect(failure.message).toContain('boom')
+  })
+
+  it('keeps an unusable engine unusable, so the batch stops', () => {
+    // The regression this guards: wrapping with a plain Error downgraded every
+    // spawn failure, and renderAll carried on to all sixty remaining clips.
+    const failure = renderFailure(item, new EngineUnusableError('wrong CPU architecture'))
+    expect(isEngineUnusable(failure)).toBe(true)
+    expect(failure.message).toContain('wrong CPU architecture')
+  })
+
+  it('leaves an ordinary clip failure ordinary, so the batch carries on', () => {
+    expect(isEngineUnusable(renderFailure(item, new Error('piper exited with code 1')))).toBe(false)
+  })
+
+  it('handles a thrown non-Error', () => {
+    expect(renderFailure(item, 'just a string').message).toContain('just a string')
   })
 })
