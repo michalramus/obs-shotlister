@@ -78,13 +78,23 @@ export interface RenderService {
    */
   deleteProjectClips: (projectId: string) => Promise<number>
   /**
-   * Renders shortly after a change, when the operator has asked for that.
+   * Renders whatever a Project is missing, when the operator has asked for that
+   * to happen by itself.
    *
-   * Debounced, because the trigger is editing: renaming a Part fires on every
-   * keystroke the caller reports, and synthesising each intermediate name would
-   * fill the cache with clips that are orphaned before they finish. A no-op
-   * when the setting is off, which is the default — a slow machine must not
-   * synthesise while the operator is still working.
+   * The condition is "something is unrendered", not "something just changed" —
+   * so this is called on an edit, on a Voice change, when a Project becomes
+   * active and at app start. Anything that leaves audio missing should end up
+   * here, because that is what the setting promises.
+   *
+   * Debounced, because one of those triggers is editing: renaming a Part fires
+   * on every keystroke the caller reports, and synthesising each intermediate
+   * name would fill the cache with clips that are orphaned before they finish.
+   * Projects queued during the debounce are all rendered, one after another —
+   * a global Voice change makes every Project stale at once, and only doing the
+   * last of them would leave the rest silently unrendered.
+   *
+   * A no-op when the setting is off, which is the default — a slow machine must
+   * not synthesise while the operator is still working.
    */
   scheduleAutoRender: (projectId: string) => void
 }
@@ -100,6 +110,8 @@ export function createRenderService(
 ): RenderService {
   let rendering = false
   let autoRenderTimer: ReturnType<typeof setTimeout> | null = null
+  /** Projects queued during the current debounce. Every one of them renders. */
+  const autoRenderQueue = new Set<string>()
   /**
    * How far the render in flight has got, or null when none is.
    *
@@ -274,15 +286,28 @@ export function createRenderService(
       // Retrying an engine that cannot be executed only refills the log.
       if (engineBroken) return
 
+      autoRenderQueue.add(projectId)
       if (autoRenderTimer) clearTimeout(autoRenderTimer)
       autoRenderTimer = setTimeout(() => {
         autoRenderTimer = null
-        // Re-checked rather than trusted from when it was scheduled: a session
-        // may have started during the debounce, and nothing synthesises then.
-        if (isLive()) return
-        renderMissing(projectId).catch((err: unknown) =>
-          console.error('[speech] auto-render failed:', messageOf(err)),
-        )
+        const queued = [...autoRenderQueue]
+        autoRenderQueue.clear()
+
+        void (async () => {
+          for (const id of queued) {
+            // Re-checked every time rather than trusted from when it was
+            // scheduled: a session may start part-way through, and nothing
+            // synthesises then. A queue dropped this way is not retried — the
+            // operator can render by hand after the show, and starting a batch
+            // the moment a session ends is the last thing that machine needs.
+            if (isLive() || engineBroken) return
+            try {
+              await renderMissing(id)
+            } catch (err: unknown) {
+              console.error('[speech] auto-render failed:', messageOf(err))
+            }
+          }
+        })()
       }, AUTO_RENDER_DEBOUNCE_MS)
       // Never hold the app open waiting to synthesise.
       autoRenderTimer.unref?.()
