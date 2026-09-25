@@ -18,7 +18,7 @@ import { render, screen, act, cleanup } from '@testing-library/react'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import type { Shot, Camera } from '../../shared/types'
 
-const renders = { item: 0, ruler: 0, overview: 0 }
+const renders = { item: 0, ruler: 0, overview: 0, media: 0 }
 
 vi.mock('./timeline/ItemLane', () => ({
   ItemLane: React.memo(function ItemLaneStub(): React.JSX.Element {
@@ -30,6 +30,12 @@ vi.mock('./timeline/RulerLane', () => ({
   RulerLane: React.memo(function RulerLaneStub(): React.JSX.Element {
     renders.ruler++
     return <div data-testid="ruler-lane" />
+  }),
+}))
+vi.mock('./timeline/MediaLane', () => ({
+  MediaLane: React.memo(function MediaLaneStub(): React.JSX.Element {
+    renders.media++
+    return <div data-testid="media-lane" />
   }),
 }))
 vi.mock('./timeline/OverviewBar', () => ({
@@ -66,6 +72,12 @@ const shots: Shot[] = Array.from({ length: 20 }, (_, i) => ({
   transitionMs: 0,
 }))
 
+/**
+ * Media attached, because that is the state the lag was reported in — and the
+ * media lane holds the waveform, the single widest thing on the timeline.
+ */
+const media = { filePath: '/tmp/reference.mp3', offsetMs: 0 }
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
@@ -101,7 +113,7 @@ describe('lane memoisation during playback', () => {
         onAddMarker={noop}
         onUpdateMarker={noop}
         onDeleteMarker={noop}
-        rundownMedia={null}
+        rundownMedia={media}
         onImportMedia={noop}
         onUpdateMediaOffset={noop}
         onClearMedia={noop}
@@ -120,6 +132,7 @@ describe('lane memoisation during playback', () => {
     renders.item = 0
     renders.ruler = 0
     renders.overview = 0
+    renders.media = 0
 
     const scroller = (): Element | null => document.querySelector('.timeline-scroll')
     let lastScrollLeft = 0
@@ -139,6 +152,6 @@ describe('lane memoisation during playback', () => {
       }
     }
 
-    expect(renders).toEqual({ item: 0, ruler: 0, overview: 0 })
+    expect(renders).toEqual({ item: 0, ruler: 0, overview: 0, media: 0 })
   })
 })

@@ -31,6 +31,21 @@ if (typeof window !== 'undefined') {
     })
   }
 
+  // The preload bridge does not exist outside Electron. Components reach for it on
+  // mount, and an unstubbed `window.api` surfaces as an unhandled rejection that
+  // vitest warns can cause false positives. Only the members a mounted component
+  // touches before any interaction are needed; a test that exercises more should
+  // stub what it needs itself.
+  if (!('api' in window)) {
+    ;(window as unknown as Record<string, unknown>).api = {
+      mediaFileExists: () => Promise.resolve(false),
+      mediaPeaks: {
+        get: () => Promise.resolve(null),
+        put: () => Promise.resolve(undefined),
+      },
+    }
+  }
+
   // Media elements are inert in jsdom: play() is undefined rather than a
   // promise-returning no-op, which the transport effect awaits.
   if (typeof HTMLMediaElement !== 'undefined') {

@@ -15,6 +15,7 @@ import { describeDecodeFailure } from '../timeline/waveform-error'
 import { RulerLane } from './timeline/RulerLane'
 import { OverviewBar } from './timeline/OverviewBar'
 import { ItemLane, type ItemLaneHandlers } from './timeline/ItemLane'
+import { MediaLane } from './timeline/MediaLane'
 import {
   editPlayheadMs,
   livePlayheadMs,
@@ -302,7 +303,6 @@ export function TimelineEditor({
   const [waveformData, setWaveformData] = useState<number[] | null>(null)
   const [mediaDurationMs, setMediaDurationMs] = useState<number>(0)
   const [mediaOffsetOverride, setMediaOffsetOverride] = useState<number | null>(null)
-  const [mediaHovered, setMediaHovered] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; shotId: string } | null>(
     null,
@@ -1265,6 +1265,25 @@ export function TimelineEditor({
     [],
   )
 
+  const mediaLaneCallbacksRef = useRef({
+    onTrackMouseDown: (_e: React.MouseEvent) => {},
+    onImportMedia: () => {},
+    onClearMedia: () => {},
+  })
+  mediaLaneCallbacksRef.current = {
+    onTrackMouseDown: (e) => handleMediaTrackMouseDown(e as React.MouseEvent<HTMLDivElement>),
+    onImportMedia,
+    onClearMedia,
+  }
+  const mediaLaneHandlers = useMemo(
+    () => ({
+      onTrackMouseDown: (e: React.MouseEvent) => mediaLaneCallbacksRef.current.onTrackMouseDown(e),
+      onImportMedia: () => mediaLaneCallbacksRef.current.onImportMedia(),
+      onClearMedia: () => mediaLaneCallbacksRef.current.onClearMedia(),
+    }),
+    [],
+  )
+
   keyActionsRef.current = {
     setLyricIn,
     setLyricOut,
@@ -2151,160 +2170,21 @@ export function TimelineEditor({
           </div>
 
           {/* Row 5: Media track */}
-          {(() => {
-            const effectiveOffset = mediaOffsetOverride ?? rundownMedia?.offsetMs ?? 0
-            const offsetPx = pxAtMs(effectiveOffset, zoomPxPerSec)
-            const svgWidth = waveformSvgWidth
-            const trackHeightPx = MEDIA_ROW_HEIGHT
-
-            return (
-              <div
-                style={{
-                  height: MEDIA_ROW_HEIGHT,
-                  width: totalPx,
-                  background: '#0d0d0d',
-                  position: 'relative',
-                  borderTop: '1px solid #2a2a2a',
-                  overflow: 'hidden',
-                  cursor: rundownMedia ? 'grab' : 'default',
-                  userSelect: 'none',
-                }}
-                onMouseEnter={() => setMediaHovered(true)}
-                onMouseLeave={() => setMediaHovered(false)}
-                onMouseDown={rundownMedia ? handleMediaTrackMouseDown : undefined}
-                onDoubleClick={!rundownMedia ? onImportMedia : undefined}
-              >
-                {!rundownMedia && (
-                  <span
-                    style={{
-                      position: 'absolute',
-                      left: '8px',
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                      color: '#333',
-                      fontSize: '10px',
-                      fontFamily: 'monospace',
-                      pointerEvents: 'none',
-                    }}
-                  >
-                    Double-click or use &apos;Import media&apos; to add a reference track
-                  </span>
-                )}
-
-                {rundownMedia && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: 0,
-                      top: 0,
-                      width: '100%',
-                      height: '100%',
-                      transform: `translateX(${offsetPx}px)`,
-                    }}
-                  >
-                    {mediaFileNotFound ? (
-                      <span
-                        style={{
-                          position: 'absolute',
-                          left: '8px',
-                          top: '50%',
-                          transform: 'translateY(-50%)',
-                          color: '#e67e22',
-                          fontSize: '10px',
-                          fontFamily: 'monospace',
-                          pointerEvents: 'none',
-                        }}
-                      >
-                        Media file not found — relink or clear
-                      </span>
-                    ) : waveformError ? (
-                      <span
-                        style={{
-                          position: 'absolute',
-                          left: '8px',
-                          top: '50%',
-                          transform: 'translateY(-50%)',
-                          color: '#e74c3c',
-                          fontSize: '10px',
-                          fontFamily: 'monospace',
-                          pointerEvents: 'none',
-                        }}
-                      >
-                        {`No waveform: ${waveformError}`}
-                      </span>
-                    ) : waveformData === null ? (
-                      <span
-                        style={{
-                          position: 'absolute',
-                          left: '8px',
-                          top: '50%',
-                          transform: 'translateY(-50%)',
-                          color: '#555',
-                          fontSize: '10px',
-                          fontFamily: 'monospace',
-                          pointerEvents: 'none',
-                        }}
-                      >
-                        Loading waveform...
-                      </span>
-                    ) : (
-                      <svg width={svgWidth} height={trackHeightPx} style={{ display: 'block' }}>
-                        <path d={waveformPath} fill="rgba(39,174,96,0.7)" />
-                      </svg>
-                    )}
-
-                    {/* Filename + clear overlay */}
-                    {mediaHovered && (
-                      <div
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          padding: '2px 6px',
-                          pointerEvents: 'none',
-                        }}
-                      >
-                        <span
-                          style={{
-                            color: '#888',
-                            fontSize: '9px',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            maxWidth: '200px',
-                          }}
-                        >
-                          {rundownMedia.filePath.split('/').pop() ?? rundownMedia.filePath}
-                        </span>
-                        <button
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: '#888',
-                            fontSize: '9px',
-                            cursor: 'pointer',
-                            padding: '0 2px',
-                            pointerEvents: 'all',
-                          }}
-                          onMouseDown={(e) => e.stopPropagation()}
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onClearMedia()
-                          }}
-                          title="Remove media track"
-                        >
-                          × Clear
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )
-          })()}
+          <MediaLane
+            media={rundownMedia}
+            offsetOverrideMs={mediaOffsetOverride}
+            zoomPxPerSec={zoomPxPerSec}
+            width={totalPx}
+            height={MEDIA_ROW_HEIGHT}
+            waveformPath={waveformPath}
+            waveformSvgWidth={waveformSvgWidth}
+            waveformData={waveformData}
+            waveformError={waveformError}
+            mediaFileNotFound={mediaFileNotFound}
+            onTrackMouseDown={mediaLaneHandlers.onTrackMouseDown}
+            onImportMedia={mediaLaneHandlers.onImportMedia}
+            onClearMedia={mediaLaneHandlers.onClearMedia}
+          />
 
           {/* Spacer: ensures the timeline can scroll far enough right for the playhead to reach the end of the last clip */}
           <div style={{ width: totalPx + Math.max(0, containerWidth), height: 0, flexShrink: 0 }} />
