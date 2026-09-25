@@ -28,7 +28,8 @@ import {
 } from '../ipc/speech'
 import { getGlobalVoiceSettings } from '../ipc/settings'
 import { clipPath, ensureClipsDir, listCachedHashes, sweep } from './cache'
-import { audibleDurationMs, renderAll } from './engine'
+import { audibleDurationMs, downloadedVoicesDir, renderAll } from './engine'
+import { ensureVoice } from './voices'
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -119,7 +120,7 @@ export function createRenderService(
    * engine spends about five seconds per clip, so sixty numbers is five minutes
    * during which a bare "Rendering..." says nothing at all.
    */
-  let progress: { completed: number; total: number } | null = null
+  let progress: { completed: number; total: number; stage?: string } | null = null
   /**
    * Set once the engine has proved it cannot run at all. Only an explicit
    * render clears it: the operator has to have done something about the
@@ -158,6 +159,22 @@ export function createRenderService(
       progress = { completed: 0, total: items.length }
       onStatus?.(await statusFor(projectId))
 
+      // Once per batch, not once per clip: every item here names a Voice, and
+      // a Voice the operator picked may simply never have been installed. It is
+      // a download of a hundred-odd megabytes, so it happens here, before a
+      // single clip is attempted, rather than inside the loop.
+      for (const voice of new Set(items.map((item) => item.voice))) {
+        await ensureVoice(voice, {
+          voicesDir: downloadedVoicesDir(userDataDir),
+          onDownload: (id, bytes) => {
+            const mb = Math.round(bytes / 1_000_000)
+            console.log(`[speech] installing voice ${id} (${mb} MB)`)
+            progress = { completed: 0, total: items.length, stage: `Installing voice ${id}` }
+            pushStatus(projectId)
+          },
+        })
+      }
+
       const byHash = new Map(items.map((item) => [item.hash, item]))
       const result = await renderAll(items, { userDataDir }, (step) => {
         progress = { completed: step.completed, total: step.total }
@@ -191,6 +208,12 @@ export function createRenderService(
       for (const failure of result.failed) {
         console.error('[speech] failed to render', failure.item.text, failure.message)
       }
+    } catch (error) {
+      // Latched for the same reason an unusable engine is: nothing in this batch
+      // or the next can succeed without the voice, and auto-render would
+      // otherwise restart a hundred-megabyte download every few seconds.
+      engineBroken = true
+      throw error
     } finally {
       rendering = false
       progress = null

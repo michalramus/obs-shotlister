@@ -187,7 +187,16 @@ export interface ProjectRenderSummary {
    * A batch is minutes long on the slowest engine, so the count is the
    * difference between "working" and "hung" to whoever is watching it.
    */
-  progress?: { completed: number; total: number }
+  progress?: {
+    completed: number
+    total: number
+    /**
+     * What the render is doing when it is not synthesising — installing a voice,
+     * mostly. A voice model is over a hundred megabytes, so without this the
+     * panel would sit on "Rendering 0/62" for a minute and read as stuck.
+     */
+    stage?: string
+  }
 }
 
 // ---------------------------------------------------------------------------

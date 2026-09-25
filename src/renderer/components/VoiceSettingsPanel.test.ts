@@ -236,3 +236,15 @@ describe('renderingHeadline', () => {
     expect(renderingHeadline({ completed: 0, total: 0 })).toBe('Rendering...')
   })
 })
+
+describe('renderingHeadline — stages', () => {
+  it('says what it is doing when that is not synthesis', () => {
+    expect(
+      renderingHeadline({ completed: 0, total: 62, stage: 'Installing voice pl_PL-bass-high' }),
+    ).toBe('Installing voice pl_PL-bass-high...')
+  })
+
+  it('goes back to the count once the stage is over', () => {
+    expect(renderingHeadline({ completed: 3, total: 62 })).toBe('Rendering 3/62...')
+  })
+})

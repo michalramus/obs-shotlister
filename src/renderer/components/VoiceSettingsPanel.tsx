@@ -675,8 +675,11 @@ interface RenderStateSectionProps {
  * used to lose work.
  */
 export function renderingHeadline(
-  progress: { completed: number; total: number } | undefined,
+  progress: { completed: number; total: number; stage?: string } | undefined,
 ): string {
+  // A stage is something other than synthesis — installing a voice — and it
+  // outranks the count, which would be a stuck "0/62" for the whole download.
+  if (progress?.stage) return `${progress.stage}...`
   if (progress === undefined || progress.total === 0) return 'Rendering...'
   return `Rendering ${progress.completed}/${progress.total}...`
 }
