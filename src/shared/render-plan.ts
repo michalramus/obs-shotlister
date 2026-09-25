@@ -101,6 +101,16 @@ export interface RenderPlanItem {
 export interface RenderPlan {
   parts: PartRenderState[]
   toRender: RenderPlanItem[]
+  /**
+   * Every clip this Project wants, cached or not — `toRender` is the subset that
+   * is not on disk yet.
+   *
+   * Two callers need the whole list rather than the shortfall. Backfilling a
+   * duration has to recover the text and Voice behind a hash, which a
+   * content-addressed filename cannot give back. Deleting a Project's audio has
+   * to know what that Project claims before it can work out what only it claims.
+   */
+  wanted: RenderPlanItem[]
   /** Hashes present in the cache that nothing needs; what orphan cleanup consumes. */
   toSweep: string[]
 }
@@ -138,18 +148,19 @@ export function computeRenderPlan(input: RenderPlanInput): RenderPlan {
   const cached = new Set(input.cachedHashes)
 
   // Every hash the cache is entitled to keep. Whatever is left over is an orphan.
-  const wanted = new Set<string>()
+  const wantedHashes = new Set<string>()
+  const wanted: RenderPlanItem[] = []
   const toRender: RenderPlanItem[] = []
-  const queued = new Set<string>()
 
-  // Two Parts can share a name and a number word can repeat, so the queue is
+  // Two Parts can share a name and a number word can repeat, so both lists are
   // deduplicated by hash: synthesising one clip twice writes the same file twice.
   const want = (text: string): string => {
     const hash = clipHash(text, voice, engine)
-    wanted.add(hash)
-    if (!cached.has(hash) && !queued.has(hash)) {
-      queued.add(hash)
-      toRender.push({ hash, text, voice, engine })
+    if (!wantedHashes.has(hash)) {
+      wantedHashes.add(hash)
+      const item = { hash, text, voice, engine }
+      wanted.push(item)
+      if (!cached.has(hash)) toRender.push(item)
     }
     return hash
   }
@@ -175,6 +186,7 @@ export function computeRenderPlan(input: RenderPlanInput): RenderPlan {
   return {
     parts: partStates,
     toRender,
-    toSweep: [...cached].filter((hash) => !wanted.has(hash)),
+    wanted,
+    toSweep: [...cached].filter((hash) => !wantedHashes.has(hash)),
   }
 }

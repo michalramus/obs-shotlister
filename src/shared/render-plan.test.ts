@@ -280,3 +280,46 @@ describe('computeRenderPlan — duplicates', () => {
     expect(plan.toSweep).toEqual([stray])
   })
 })
+
+describe('computeRenderPlan — the wanted list', () => {
+  it('lists a clip the cache already holds, which toRender does not', () => {
+    const cached = [phraseHash('gitara')]
+    const plan = computeRenderPlan(
+      input({
+        parts: [part('a', 'gitara')],
+        cachedHashes: cached,
+        countdownNumberWords: new Map(),
+      }),
+    )
+
+    expect(plan.toRender).toEqual([])
+    expect(plan.wanted).toContainEqual({
+      hash: phraseHash('gitara'),
+      text: 'gitara za',
+      voice: VOICE,
+      engine: ENGINE,
+    })
+  })
+
+  it('covers the Part phrases and every number clip', () => {
+    const plan = computeRenderPlan(input({ parts: [part('a', 'gitara')] }))
+
+    expect(plan.wanted).toHaveLength(NUMBER_CLIP_RANGE.last + 1)
+  })
+
+  it('lists two Parts sharing a name once', () => {
+    const plan = computeRenderPlan(
+      input({ parts: [part('a', 'gitara'), part('b', 'gitara')], countdownNumberWords: new Map() }),
+    )
+
+    expect(plan.wanted).toHaveLength(1)
+  })
+
+  it('is exactly what survives a sweep', () => {
+    const cached = [...numberHashes(), phraseHash('gitara'), phraseHash('stara nazwa')]
+    const plan = computeRenderPlan(input({ parts: [part('a', 'gitara')], cachedHashes: cached }))
+
+    const kept = cached.filter((hash) => !plan.toSweep.includes(hash))
+    expect(kept.sort()).toEqual(plan.wanted.map((item) => item.hash).sort())
+  })
+})
