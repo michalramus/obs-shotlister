@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_COUNTDOWN, PHRASE_GAP_MS, scheduleAnnouncement } from './announcement'
+import {
+  DEFAULT_COUNTDOWN,
+  PHRASE_GAP_MS,
+  announcementShape,
+  scheduleAnnouncement,
+} from './announcement'
 import type { AnnouncementClip, ScheduleInput } from './announcement'
 
 // ---------------------------------------------------------------------------
@@ -359,6 +364,76 @@ describe('scheduleAnnouncement — transmission delay', () => {
       const phrase = clips.find((c) => c.url === 'phrase.opus')!
       const first = clips.find((c) => c.url === '10.opus')!
       expect(phrase.atMs + 800 + PHRASE_GAP_MS).toBe(first.atMs)
+    }
+  })
+})
+
+describe('announcementShape', () => {
+  const base = {
+    phraseDurationMs: 800,
+    countdown: DEFAULT_COUNTDOWN,
+    placement: 'flush' as const,
+  }
+
+  it('is full when a number fits in front of the phrase', () => {
+    expect(announcementShape({ ...base, leadMs: 15000 })).toBe('full')
+  })
+
+  it('is phrase-only when the name fits but no number does', () => {
+    // 1.5s: only "1" survives, at 500ms, with no room for 800ms of phrase.
+    expect(announcementShape({ ...base, leadMs: 1500 })).toBe('phrase-only')
+  })
+
+  it('is dropped when not even the name fits', () => {
+    expect(announcementShape({ ...base, leadMs: 700 })).toBe('dropped')
+  })
+
+  it('counts the breath when deciding a number survives', () => {
+    // A countdown of one, so there is no smaller number to fall back to.
+    // "5" lands at leadMs - 5000; the phrase needs 800 + 300 in front of it.
+    const single = { ...base, countdown: [5] }
+    expect(announcementShape({ ...single, leadMs: 6100 })).toBe('full')
+    expect(announcementShape({ ...single, leadMs: 6099 })).toBe('phrase-only')
+  })
+
+  it('answers for immediate placement too, where the phrase never moves', () => {
+    const immediate = { ...base, placement: 'immediate' as const }
+    expect(announcementShape({ ...immediate, leadMs: 15000 })).toBe('full')
+    // 900ms: the phrase fits, but "1" would land before the previous Call went live.
+    expect(announcementShape({ ...immediate, leadMs: 900 })).toBe('phrase-only')
+    expect(announcementShape({ ...immediate, leadMs: 700 })).toBe('dropped')
+  })
+
+  it('accounts for the path delay', () => {
+    expect(announcementShape({ ...base, leadMs: 1000, transmissionDelayMs: 800 })).toBe('dropped')
+  })
+
+  it('is phrase-only when the countdown is empty, however long the Call', () => {
+    expect(announcementShape({ ...base, countdown: [], leadMs: 60000 })).toBe('phrase-only')
+  })
+
+  it('agrees with the scheduler at every lead', () => {
+    // The two must never disagree: badging is only useful if it describes what
+    // the show will actually do.
+    for (const placement of ['flush', 'immediate'] as const) {
+      for (const transmissionDelayMs of [0, 400]) {
+        for (let leadMs = 0; leadMs <= 16000; leadMs += 50) {
+          const plan = scheduleAnnouncement(makeInput({ leadMs, placement, transmissionDelayMs }))
+          const expected =
+            plan === null
+              ? 'dropped'
+              : plan.clips.some((c) => c.url !== 'phrase.opus')
+                ? 'full'
+                : 'phrase-only'
+
+          expect({
+            leadMs,
+            placement,
+            transmissionDelayMs,
+            shape: announcementShape({ ...base, leadMs, placement, transmissionDelayMs }),
+          }).toEqual({ leadMs, placement, transmissionDelayMs, shape: expected })
+        }
+      }
     }
   })
 })

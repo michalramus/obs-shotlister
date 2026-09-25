@@ -90,6 +90,61 @@ export interface ScheduleInput {
 }
 
 /**
+ * What an operator will actually hear before a Call.
+ *
+ * - `full`: the name and at least one countdown number.
+ * - `phrase-only`: the name, and no countdown at all. The Call is long enough to
+ *   say what is next but not long enough to say when, so the band is told to
+ *   change and given no beat to change on.
+ * - `dropped`: nothing. Not even the name fits.
+ */
+export type AnnouncementShape = 'full' | 'phrase-only' | 'dropped'
+
+export interface AnnouncementShapeInput {
+  leadMs: number
+  /** The rendered phrase clip's length. */
+  phraseDurationMs: number
+  countdown: number[]
+  placement: PhrasePlacement
+  transmissionDelayMs?: number
+  phraseGapMs?: number
+}
+
+/**
+ * Which of the three an Announcement will be, without building it.
+ *
+ * Edit mode needs this per Call, for every Call, on every keystroke that resizes
+ * one — so it answers from durations alone rather than by scheduling a plan it
+ * would throw away. It applies the same arithmetic {@link scheduleAnnouncement}
+ * does and has to keep applying it: the two disagreeing would mean badging a
+ * Call that speaks fine, or worse, staying quiet about one that will not.
+ */
+export function announcementShape(input: AnnouncementShapeInput): AnnouncementShape {
+  const { leadMs, phraseDurationMs, countdown, placement } = input
+  const delayMs = input.transmissionDelayMs ?? 0
+  const gapMs = input.phraseGapMs ?? PHRASE_GAP_MS
+
+  // A number lands where the scheduler puts it, and only counts if that is
+  // inside the lead at all.
+  const spokenNumbers = countdown
+    .map((n) => leadMs - n * 1000 - delayMs)
+    .filter((atMs) => atMs >= 0 && atMs < leadMs)
+
+  if (placement === 'immediate') {
+    if (phraseDurationMs + delayMs > leadMs) return 'dropped'
+    return spokenNumbers.length > 0 ? 'full' : 'phrase-only'
+  }
+
+  // Flush: the phrase has to fit in front of a number, breath included, for that
+  // number to survive alongside it.
+  if (spokenNumbers.some((atMs) => atMs - phraseDurationMs - gapMs >= 0)) return 'full'
+
+  // No number to anchor against, so the phrase flushes against the Call's own
+  // start — which it may still not reach.
+  return leadMs - phraseDurationMs - delayMs >= 0 ? 'phrase-only' : 'dropped'
+}
+
+/**
  * Builds the plan for one Call, or `null` when nothing should be spoken.
  *
  * `atMs` is measured from the moment the previous Call goes live, which is the
