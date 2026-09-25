@@ -40,6 +40,37 @@ const ANNOUNCEMENT_PROBLEM_TITLE: Record<'dropped' | 'phrase-only', string> = {
   dropped: 'too short for its announcement; nothing will be spoken',
   'phrase-only': 'too short for a countdown; only the name will be spoken, with no numbers',
 }
+
+/**
+ * Red for silence, amber for a name with no count.
+ *
+ * Both are loud on purpose. These warnings mark Calls that are *short*, which
+ * are the narrowest blocks on the timeline — the place a subtle mark is least
+ * likely to be seen, and the mark most worth seeing.
+ */
+const ANNOUNCEMENT_PROBLEM_COLOR: Record<'dropped' | 'phrase-only', string> = {
+  dropped: '#e74c3c',
+  'phrase-only': '#f1c40f',
+}
+
+/** The strip's summary, or null when every Call announces properly. */
+export function announcementProblemLabel(
+  problems: ReadonlyMap<string, 'dropped' | 'phrase-only'>,
+): string | null {
+  let dropped = 0
+  let phraseOnly = 0
+  for (const shape of problems.values()) {
+    if (shape === 'dropped') dropped++
+    else phraseOnly++
+  }
+  if (dropped === 0 && phraseOnly === 0) return null
+
+  const parts: string[] = []
+  if (dropped > 0) parts.push(`${dropped} silent`)
+  if (phraseOnly > 0) parts.push(`${phraseOnly} with no countdown`)
+  const total = dropped + phraseOnly
+  return `${total} ${total === 1 ? 'call is' : 'calls are'} too short: ${parts.join(', ')}`
+}
 import {
   ADD_PART_KEY,
   AddPartDialog,
@@ -1346,6 +1377,11 @@ export function TimelineEditor({
     [isVoice, shots, phraseDurationMsByPartId, announcementSettings],
   )
 
+  const announcementProblemSummary = useMemo(
+    () => announcementProblemLabel(announcementProblems),
+    [announcementProblems],
+  )
+
   // The dragged line is drawn where the pointer is, not where it is stored.
   const lyricsForLane =
     lyricDragOverride === null
@@ -1492,6 +1528,33 @@ export function TimelineEditor({
           >
             {lyricError}
           </span>
+        )}
+        {/*
+          The layer that cannot be missed. Ringing the blocks is only useful to
+          someone already looking at them, and a Rundown can be long enough that
+          the short Call is scrolled off screen entirely. Clicking selects the
+          first one and scrolls it into view.
+        */}
+        {announcementProblemSummary !== null && (
+          <button
+            style={{
+              background: '#7a2f28',
+              border: '1px solid #e74c3c',
+              borderRadius: '3px',
+              color: '#ffb4ab',
+              fontSize: '11px',
+              padding: '2px 8px',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap' as const,
+            }}
+            title="Jump to the first call whose announcement will not fit"
+            onClick={() => {
+              const first = shots.find((shot) => announcementProblems.has(shot.id))
+              if (first) onShotClick(first.id)
+            }}
+          >
+            ⚠ {announcementProblemSummary}
+          </button>
         )}
         <div style={{ flex: 1 }} />
         <button
@@ -1674,7 +1737,20 @@ export function TimelineEditor({
                         background: unassigned
                           ? `repeating-linear-gradient(45deg, ${UNASSIGNED_COLOR}, ${UNASSIGNED_COLOR} 6px, #2c2c2c 6px, #2c2c2c 12px)`
                           : bgColor,
-                        boxShadow: isLive ? 'inset 0 0 0 2px white' : undefined,
+                        // Ringed in the warning colour, so a Call too short to
+                        // announce is obvious at any width — including the
+                        // sliver-wide blocks these warnings are always about.
+                        // Stacked with the live ring rather than replacing it:
+                        // the item going out is never the thing to hide.
+                        boxShadow:
+                          [
+                            isLive ? 'inset 0 0 0 2px white' : null,
+                            problem !== undefined
+                              ? `inset 0 0 0 ${isLive ? '4px' : '2px'} ${ANNOUNCEMENT_PROBLEM_COLOR[problem]}`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(', ') || undefined,
                         overflow: 'hidden',
                         cursor: 'pointer',
                         userSelect: 'none',
@@ -1693,6 +1769,37 @@ export function TimelineEditor({
                           : `${target.title} — ${ANNOUNCEMENT_PROBLEM_TITLE[problem]}`
                       }
                     >
+                      {/*
+                        Outside the label, and outside its width gate: the label
+                        is hidden below 20px and a Call this warning fires on is
+                        routinely narrower than that. Absolute, so it overhangs a
+                        block too small to contain it rather than vanishing.
+                      */}
+                      {problem !== undefined && (
+                        <div
+                          title={ANNOUNCEMENT_PROBLEM_TITLE[problem]}
+                          style={{
+                            position: 'absolute',
+                            top: '-1px',
+                            left: '-1px',
+                            minWidth: '14px',
+                            height: '14px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: ANNOUNCEMENT_PROBLEM_COLOR[problem],
+                            color: '#000',
+                            fontSize: '10px',
+                            fontWeight: 700,
+                            lineHeight: 1,
+                            borderRadius: '0 0 3px 0',
+                            pointerEvents: 'none',
+                            zIndex: 3,
+                          }}
+                        >
+                          ⚠
+                        </div>
+                      )}
                       {widthPx > 20 && (
                         <div
                           style={{
@@ -1702,7 +1809,8 @@ export function TimelineEditor({
                             height: '100%',
                             justifyContent: 'center',
                             gap: 1,
-                            paddingLeft: '4px',
+                            // Clear of the corner flag when there is one.
+                            paddingLeft: problem === undefined ? '4px' : '18px',
                           }}
                         >
                           <strong
@@ -1715,20 +1823,6 @@ export function TimelineEditor({
                               whiteSpace: 'nowrap',
                             }}
                           >
-                            {problem !== undefined && (
-                              <span
-                                title={ANNOUNCEMENT_PROBLEM_TITLE[problem]}
-                                style={{
-                                  marginRight: '3px',
-                                  // Nothing spoken is worse than a name with no
-                                  // countdown behind it, and the two should not
-                                  // read as the same warning at a glance.
-                                  color: problem === 'dropped' ? '#e74c3c' : '#f1c40f',
-                                }}
-                              >
-                                ⚠
-                              </span>
-                            )}
                             {target.label}
                           </strong>
                           {shot.label && widthPx > 60 && (
