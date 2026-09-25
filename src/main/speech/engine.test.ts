@@ -6,7 +6,13 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { spawnFailureMessage, wavDurationMs } from './engine'
+import {
+  audibleDurationMs,
+  defaultPiperCli,
+  piperArgs,
+  spawnFailureMessage,
+  wavDurationMs,
+} from './engine'
 
 interface Chunk {
   id: string
@@ -180,5 +186,95 @@ describe('spawnFailureMessage', () => {
       binary,
     )
     expect(message).toContain('boom')
+  })
+})
+
+/** A 16-bit mono WAV whose samples are supplied by `sample(i)`. */
+function makeWav(sampleRate: number, samples: number, sample: (i: number) => number): Buffer {
+  const dataBytes = samples * 2
+  const buf = Buffer.alloc(44 + dataBytes)
+  buf.write('RIFF', 0, 'ascii')
+  buf.writeUInt32LE(36 + dataBytes, 4)
+  buf.write('WAVE', 8, 'ascii')
+  buf.write('fmt ', 12, 'ascii')
+  buf.writeUInt32LE(16, 16)
+  buf.writeUInt16LE(1, 20)
+  buf.writeUInt16LE(1, 22)
+  buf.writeUInt32LE(sampleRate, 24)
+  buf.writeUInt32LE(sampleRate * 2, 28)
+  buf.writeUInt16LE(2, 32)
+  buf.writeUInt16LE(16, 34)
+  buf.write('data', 36, 'ascii')
+  buf.writeUInt32LE(dataBytes, 40)
+  for (let i = 0; i < samples; i++) buf.writeInt16LE(sample(i), 44 + i * 2)
+  return buf
+}
+
+describe('audibleDurationMs', () => {
+  it('ignores the pad Piper leaves at the end of every clip', () => {
+    const wav = makeWav(1000, 1500, (i) => (i < 1000 ? 8000 : 0))
+    expect(wavDurationMs(wav)).toBe(1500)
+    expect(audibleDurationMs(wav)).toBe(1000)
+  })
+
+  it('keeps silence that sits between words', () => {
+    // The gap is speech timing, not padding.
+    const wav = makeWav(1000, 1000, (i) => (i < 300 || i >= 700 ? 8000 : 0))
+    expect(audibleDurationMs(wav)).toBe(1000)
+  })
+
+  it('treats near-silence as padding, not as a quiet ending', () => {
+    const wav = makeWav(1000, 1000, (i) => (i < 500 ? 8000 : 5))
+    expect(audibleDurationMs(wav)).toBe(500)
+  })
+
+  it('returns the full duration for a clip with nothing audible in it', () => {
+    // A silent clip is a synthesis failure; reporting 0 would schedule it as
+    // though it were instantaneous.
+    const wav = makeWav(1000, 800, () => 0)
+    expect(audibleDurationMs(wav)).toBe(800)
+  })
+
+  it('handles a clip that is audible to its final sample', () => {
+    const wav = makeWav(2000, 500, () => -9000)
+    expect(audibleDurationMs(wav)).toBe(250)
+  })
+})
+
+describe('piperArgs', () => {
+  const paths = {
+    model: '/v/pl.onnx',
+    config: '/v/pl.onnx.json',
+    binary: '/p/piper',
+    outputFile: '/tmp/out.wav',
+  }
+
+  it('passes the full CLI everything it needs, including a zero pad', () => {
+    const args = piperArgs('full', paths)
+    expect(args).toContain('--config')
+    expect(args).toContain('--espeak_data')
+    expect(args.join(' ')).toContain('--sentence_silence 0')
+  })
+
+  it('passes the minimal CLI only the two flags it accepts', () => {
+    // The arm64 build rejects anything else outright.
+    expect(piperArgs('minimal', paths)).toEqual([
+      '--model',
+      '/v/pl.onnx',
+      '--output_file',
+      '/tmp/out.wav',
+    ])
+  })
+})
+
+describe('defaultPiperCli', () => {
+  it('assumes the community build on Apple Silicon, which has no upstream one', () => {
+    expect(defaultPiperCli('darwin', 'arm64')).toBe('minimal')
+  })
+
+  it('assumes the upstream CLI everywhere upstream ships one', () => {
+    expect(defaultPiperCli('darwin', 'x64')).toBe('full')
+    expect(defaultPiperCli('linux', 'x64')).toBe('full')
+    expect(defaultPiperCli('win32', 'x64')).toBe('full')
   })
 })

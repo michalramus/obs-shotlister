@@ -15,6 +15,7 @@
 
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { access, readFile, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app } from 'electron'
@@ -65,6 +66,76 @@ function voicesDir(): string {
 
 export function piperBinaryPath(): string {
   return join(piperDir(), process.platform === 'win32' ? 'piper.exe' : 'piper')
+}
+
+/**
+ * Which command line the installed Piper speaks.
+ *
+ * - `full`: the upstream C++ CLI — `--config`, `--espeak_data`,
+ *   `--sentence_silence` and the rest.
+ * - `minimal`: the community arm64 build, which is the Python Piper wrapped by
+ *   PyInstaller and takes `--model` and `--output_file` and nothing else.
+ *
+ * Written beside the binary by `scripts/fetch-piper.mjs`, which already knows
+ * which one it installed — cheaper and more certain than probing `--help`.
+ * A missing stamp means an engine fetched before this existed, which can only
+ * be the upstream build.
+ */
+export type PiperCli = 'full' | 'minimal'
+
+export function piperCli(): PiperCli {
+  try {
+    const stamp = readFileSync(join(piperDir(), 'piper-cli.txt'), 'utf-8').trim()
+    if (stamp === 'minimal' || stamp === 'full') return stamp
+  } catch {
+    /* fall through to the platform default */
+  }
+  return defaultPiperCli(process.platform, process.arch)
+}
+
+/**
+ * What to assume when the stamp is missing or unreadable.
+ *
+ * Only Apple Silicon has no upstream build, so only it runs the community
+ * binary and its smaller CLI. Guessing `full` everywhere would make a packaging
+ * slip show up as every clip failing on exactly one platform — the quietest
+ * possible way to break speech.
+ */
+export function defaultPiperCli(platform: string, arch: string): PiperCli {
+  return platform === 'darwin' && arch === 'arm64' ? 'minimal' : 'full'
+}
+
+/**
+ * The arguments this binary understands.
+ *
+ * The minimal CLI infers the config from the model path and bundles its own
+ * espeak data, so the flags it lacks are ones it does not need — except
+ * `--sentence_silence`, whose absence leaves a trailing pad on every clip.
+ * That one is handled when the clip is measured; see {@link audibleDurationMs}.
+ */
+export function piperArgs(
+  cli: PiperCli,
+  paths: { model: string; config: string; binary: string; outputFile: string },
+): string[] {
+  if (cli === 'minimal') {
+    return ['--model', paths.model, '--output_file', paths.outputFile]
+  }
+  return [
+    '--model',
+    paths.model,
+    '--config',
+    paths.config,
+    '--espeak_data',
+    join(paths.binary, '..', 'espeak-ng-data'),
+    // Piper pads every utterance with 0.2s of silence by default. Flush
+    // placement schedules the phrase backwards from the first number using
+    // this clip's duration, so padding would open a gap exactly where the
+    // sentence is meant to be continuous.
+    '--sentence_silence',
+    '0',
+    '--output_file',
+    paths.outputFile,
+  ]
 }
 
 export function voiceModelPath(voice: string): string {
@@ -138,6 +209,78 @@ export function wavDurationMs(wav: Buffer): number {
   if (audioBytes === 0) throw new Error('malformed WAV: no audio in data chunk')
 
   return Math.round((audioBytes / byteRate) * 1000)
+}
+
+/** Anything quieter than this is padding, not speech. ~1% of full scale. */
+const SILENCE_FLOOR = 300
+
+/**
+ * How long a clip actually *says* something, ignoring the pad at the end.
+ *
+ * This is the number flush placement schedules against, and it has to be the
+ * audible length rather than the file length: Piper pads every utterance, and
+ * a pad counted as speech opens a gap exactly where the phrase is meant to run
+ * continuously into the first countdown number. The upstream CLI can be told
+ * not to pad; the arm64 build has no such flag, so the pad is measured away
+ * here instead and both behave the same.
+ *
+ * The file keeps its padding — trimming the audio would gain nothing, since
+ * clips are scheduled independently and a trailing silence simply plays under
+ * the next one.
+ *
+ * Falls back to the full duration for anything not 16-bit PCM, and for a clip
+ * with no audible content at all: a zero-length clip would be a worse answer
+ * than an honest one.
+ */
+export function audibleDurationMs(wav: Buffer): number {
+  const full = wavDurationMs(wav)
+
+  const view = pcm16View(wav)
+  if (view === null) return full
+
+  const { start, sampleCount, frameBytes, sampleRate } = view
+  let lastAudible = -1
+  for (let i = 0; i < sampleCount; i++) {
+    if (Math.abs(wav.readInt16LE(start + i * frameBytes)) > SILENCE_FLOOR) lastAudible = i
+  }
+  if (lastAudible < 0) return full
+
+  return Math.min(full, Math.round(((lastAudible + 1) / sampleRate) * 1000))
+}
+
+/** The `data` chunk of a 16-bit PCM WAV, or null when it is anything else. */
+function pcm16View(
+  wav: Buffer,
+): { start: number; sampleCount: number; frameBytes: number; sampleRate: number } | null {
+  if (wav.length < RIFF_HEADER_BYTES) return null
+
+  let channels = 0
+  let sampleRate = 0
+  let bitsPerSample = 0
+  let start = -1
+  let length = 0
+  let offset = RIFF_HEADER_BYTES
+
+  while (offset + CHUNK_HEADER_BYTES <= wav.length) {
+    const id = wav.toString('ascii', offset, offset + 4)
+    const declared = wav.readUInt32LE(offset + 4)
+    const body = offset + CHUNK_HEADER_BYTES
+
+    if (id === 'fmt ' && body + 16 <= wav.length) {
+      channels = wav.readUInt16LE(body + 2)
+      sampleRate = wav.readUInt32LE(body + 4)
+      bitsPerSample = wav.readUInt16LE(body + 14)
+    } else if (id === 'data') {
+      const available = wav.length - body
+      start = body
+      length = declared === 0 || declared > available ? available : declared
+    }
+    offset = body + declared + (declared % 2)
+  }
+
+  if (bitsPerSample !== 16 || channels < 1 || sampleRate <= 0 || start < 0) return null
+  const frameBytes = 2 * channels
+  return { start, sampleCount: Math.floor(length / frameBytes), frameBytes, sampleRate }
 }
 
 // ---------------------------------------------------------------------------
@@ -316,26 +459,11 @@ export async function synthesise(
 
   try {
     await runPiper(
-      [
-        '--model',
-        model,
-        '--config',
-        config,
-        '--espeak_data',
-        join(binary, '..', 'espeak-ng-data'),
-        // Piper pads every utterance with 0.2s of silence by default. Flush
-        // placement schedules the phrase backwards from the first number using
-        // this clip's duration, so padding would open a gap exactly where the
-        // sentence is meant to be continuous.
-        '--sentence_silence',
-        '0',
-        '--output_file',
-        temporary,
-      ],
+      piperArgs(piperCli(), { model, config, binary, outputFile: temporary }),
       item.text,
       opts,
     )
-    const durationMs = wavDurationMs(await readFile(temporary))
+    const durationMs = audibleDurationMs(await readFile(temporary))
     await rename(temporary, clipPath(opts.userDataDir, item.hash))
     return { hash: item.hash, durationMs }
   } catch (error) {
