@@ -941,6 +941,14 @@ export function VoiceSettingsPanel({ onClose }: VoiceSettingsPanelProps): React.
           </button>
         </div>
 
+        {/*
+          First, not last. This is the only thing in the panel anyone opens it to
+          *do* — everything below is configuration you set once. Rendering is also
+          the slow action, so it wants to be started before you go looking for
+          anything else, not found after scrolling past six sections of settings.
+        */}
+        {activeProjectId !== null && <RenderStateSection projectId={activeProjectId} />}
+
         <p style={s.hint}>
           Every setting here is global, with an optional override for the active project. The
           connector word is per-project only.
@@ -1153,9 +1161,6 @@ export function VoiceSettingsPanel({ onClose }: VoiceSettingsPanelProps): React.
             synthesised until you ask - which is what a slow machine wants while you are editing.
           </p>
         </div>
-
-        {/* Render status */}
-        {activeProjectId !== null && <RenderStateSection projectId={activeProjectId} />}
 
         {/* Output devices */}
         <OutputDevicesSection />
