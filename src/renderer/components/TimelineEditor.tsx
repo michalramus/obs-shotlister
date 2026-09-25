@@ -602,8 +602,11 @@ export function TimelineEditor({
     [waveformData, waveformSvgWidth],
   )
 
-  const totalMs = totalDurationMs(shots)
-  const totalPx = Math.max(pxAtMs(totalMs, zoomPxPerSec), 300)
+  const totalMs = useMemo(() => totalDurationMs(shots), [shots])
+  const totalPx = useMemo(
+    () => Math.max(pxAtMs(totalMs, zoomPxPerSec), 300),
+    [totalMs, zoomPxPerSec],
+  )
   totalMsRef.current = totalMs
   totalPxRef.current = totalPx
 
@@ -640,10 +643,7 @@ export function TimelineEditor({
     if (!rect || totalPxRef.current <= 0) return
     const ow = overviewWidthRef.current
     const vpLeft = (scrollLeft / totalPxRef.current) * ow
-    const vpRight = Math.min(
-      ow,
-      vpLeft + (scrollerWidthRef.current / totalPxRef.current) * ow,
-    )
+    const vpRight = Math.min(ow, vpLeft + (scrollerWidthRef.current / totalPxRef.current) * ow)
     rect.style.left = `${vpLeft}px`
     rect.style.width = `${Math.max(4, vpRight - vpLeft)}px`
   }
@@ -694,8 +694,7 @@ export function TimelineEditor({
       const newMs = editPlayheadMs({
         origin,
         nowMs: performance.now(),
-        media:
-          vid && media ? { currentTimeSec: vid.currentTime, offsetMs: media.offsetMs } : null,
+        media: vid && media ? { currentTimeSec: vid.currentTime, offsetMs: media.offsetMs } : null,
         totalMs,
       })
       advancePlayhead(newMs)
@@ -1367,18 +1366,25 @@ export function TimelineEditor({
     window.addEventListener('mouseup', onMU)
   }
 
-  // Build tick marks for ruler
-  const ticks: { px: number; major: boolean; label?: string }[] = []
-  const minorIntervalMs = 5000
-  const majorIntervalMs = 30000
-  const endMs = totalMs + majorIntervalMs
-  for (let ms = 0; ms <= endMs; ms += minorIntervalMs) {
-    const px = pxAtMs(ms, zoomPxPerSec)
-    const major = ms % majorIntervalMs === 0
-    ticks.push({ px, major, label: major ? formatTime(ms) : undefined })
-  }
+  // Tick marks for the ruler. An hour-long Rundown is 727 of these, and they
+  // depend on nothing that changes while the playhead moves.
+  const ticks = useMemo(() => {
+    const out: { px: number; major: boolean; label?: string }[] = []
+    const minorIntervalMs = 5000
+    const majorIntervalMs = 30000
+    const endMs = totalMs + majorIntervalMs
+    for (let ms = 0; ms <= endMs; ms += minorIntervalMs) {
+      const px = pxAtMs(ms, zoomPxPerSec)
+      const major = ms % majorIntervalMs === 0
+      out.push({ px, major, label: major ? formatTime(ms) : undefined })
+    }
+    return out
+  }, [totalMs, zoomPxPerSec])
 
-  const targetById = targetsById(targetsOf(rundownKind, cameras, partsInScope))
+  const targetById = useMemo(
+    () => targetsById(targetsOf(rundownKind, cameras, partsInScope)),
+    [rundownKind, cameras, partsInScope],
+  )
 
   const UNASSIGNED_COLOR = '#3a3a3a'
 
@@ -1389,32 +1395,44 @@ export function TimelineEditor({
    * colour, because a Live session refuses to start on one and the operator
    * should see that here rather than when they press start.
    */
-  function itemTarget(shot: Shot): { color: string; label: string; title: string } {
+  const itemTargets = useMemo(() => {
     const noun = targetNoun(rundownKind)
-    if (isUnassigned(shot, rundownKind)) {
-      return {
-        color: UNASSIGNED_COLOR,
-        label: `No ${noun.toLowerCase()}`,
-        title: `No ${noun} assigned — a Live session will refuse to start`,
+    const byId = new Map<string, { color: string; label: string; title: string }>()
+    for (const shot of shots) {
+      if (isUnassigned(shot, rundownKind)) {
+        byId.set(shot.id, {
+          color: UNASSIGNED_COLOR,
+          label: `No ${noun.toLowerCase()}`,
+          title: `No ${noun} assigned — a Live session will refuse to start`,
+        })
+        continue
       }
-    }
 
-    const target = targetOf(shot, rundownKind, targetById)
-    // Resolving to nothing here does not mean unassigned — that was ruled out
-    // above. It is a Part outside this Rundown's scope, which is still a real
-    // assignment (ADR 0006); only its name and colour are unavailable.
-    if (!target) {
-      return {
-        color: '#666',
-        label: noun,
-        title: `${noun} from another scope (${shot.durationMs}ms)`,
+      const target = targetOf(shot, rundownKind, targetById)
+      // Resolving to nothing here does not mean unassigned — that was ruled out
+      // above. It is a Part outside this Rundown's scope, which is still a real
+      // assignment (ADR 0006); only its name and colour are unavailable.
+      if (!target) {
+        byId.set(shot.id, {
+          color: '#666',
+          label: noun,
+          title: `${noun} from another scope (${shot.durationMs}ms)`,
+        })
+        continue
       }
+      byId.set(shot.id, {
+        color: target.color,
+        label: isVoice ? target.name : target.badge,
+        title: `${target.name} (${shot.durationMs}ms)`,
+      })
     }
-    return {
-      color: target.color,
-      label: isVoice ? target.name : target.badge,
-      title: `${target.name} (${shot.durationMs}ms)`,
-    }
+    return byId
+  }, [shots, rundownKind, targetById, isVoice])
+
+  /** Fallback for a Shot that is not in `shots` — never expected, never thrown. */
+  const UNKNOWN_TARGET = { color: UNASSIGNED_COLOR, label: '', title: '' }
+  function itemTarget(shot: Shot): { color: string; label: string; title: string } {
+    return itemTargets.get(shot.id) ?? UNKNOWN_TARGET
   }
 
   const announcementProblems = useMemo(
@@ -1435,24 +1453,33 @@ export function TimelineEditor({
   )
 
   // The dragged line is drawn where the pointer is, not where it is stored.
-  const lyricsForLane =
-    lyricDragOverride === null
-      ? lyrics
-      : lyrics.map((l) =>
-          l.id === lyricDragOverride.id
-            ? { ...l, startMs: lyricDragOverride.startMs, endMs: lyricDragOverride.endMs }
-            : l,
-        )
-  const lyricLane = lyricBlocks(lyricsForLane, zoomPxPerSec)
+  const lyricsForLane = useMemo(
+    () =>
+      lyricDragOverride === null
+        ? lyrics
+        : lyrics.map((l) =>
+            l.id === lyricDragOverride.id
+              ? { ...l, startMs: lyricDragOverride.startMs, endMs: lyricDragOverride.endMs }
+              : l,
+          ),
+    [lyrics, lyricDragOverride],
+  )
+  const lyricLane = useMemo(
+    () => lyricBlocks(lyricsForLane, zoomPxPerSec),
+    [lyricsForLane, zoomPxPerSec],
+  )
   // The whole point of the lane: which line is being sung right now. The playhead
   // is committed to state at PLAYHEAD_COMMIT_INTERVAL_MS, so this lags by at most
   // that — far below the length of a sung line.
   const currentLyricId = lyricAtMs(lyrics, playheadMs)?.id ?? null
 
   // Shot left offsets, honouring any resize drag in progress
-  const shotOffsets = shotStartOffsetsMs(shots, dragOverride).map((ms) => pxAtMs(ms, zoomPxPerSec))
+  const shotOffsets = useMemo(
+    () => shotStartOffsetsMs(shots, dragOverride).map((ms) => pxAtMs(ms, zoomPxPerSec)),
+    [shots, dragOverride, zoomPxPerSec],
+  )
 
-  const sortedCameras = [...cameras].sort((a, b) => a.number - b.number)
+  const sortedCameras = useMemo(() => [...cameras].sort((a, b) => a.number - b.number), [cameras])
 
   const btnStyle: React.CSSProperties = {
     background: '#333',
