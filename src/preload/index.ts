@@ -81,6 +81,8 @@ const api: ElectronApi = {
     status: request('speech:renderSummary'),
     render: request('speech:render'),
     phraseDurations: request('speech:phraseDurations'),
+    cleanOrphans: request('speech:cleanOrphans'),
+    deleteProjectClips: request('speech:deleteProjectClips'),
     onStatusPush: subscribe('speech:renderSummary-push'),
   },
   shots: {

@@ -181,6 +181,13 @@ export interface ProjectRenderSummary {
   unrenderedCount: number
   /** True while a render is in flight, so the UI can disable its button. */
   rendering: boolean
+  /**
+   * How far that render has got. Absent when none is running.
+   *
+   * A batch is minutes long on the slowest engine, so the count is the
+   * difference between "working" and "hung" to whoever is watching it.
+   */
+  progress?: { completed: number; total: number }
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +334,10 @@ export interface IpcContract {
   'speech:renderSummary': { payload: { projectId: string }; result: ProjectRenderSummary }
   'speech:render': { payload: { projectId: string }; result: ProjectRenderSummary }
   'speech:phraseDurations': { payload: { projectId: string }; result: Record<string, number> }
+  /** Deletes clips no Project wants any more; returns how many went. */
+  'speech:cleanOrphans': { payload: { projectId: string }; result: number }
+  /** Deletes this Project's audio, sparing anything another Project shares. */
+  'speech:deleteProjectClips': { payload: { projectId: string }; result: number }
 
   // --- Shots ---
   'shots:list': { payload: { rundownId: string }; result: Shot[] }
@@ -506,6 +517,8 @@ export interface ElectronApi {
     status: Request<'speech:renderSummary'>
     render: Request<'speech:render'>
     phraseDurations: Request<'speech:phraseDurations'>
+    cleanOrphans: Request<'speech:cleanOrphans'>
+    deleteProjectClips: Request<'speech:deleteProjectClips'>
     onStatusPush: Subscribe<'speech:renderSummary-push'>
   }
   shots: {
@@ -635,6 +648,8 @@ export const IPC_CHANNELS = [
   'speech:renderSummary',
   'speech:render',
   'speech:phraseDurations',
+  'speech:cleanOrphans',
+  'speech:deleteProjectClips',
   'shots:list',
   'shots:create',
   'shots:update',

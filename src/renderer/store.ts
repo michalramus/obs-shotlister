@@ -105,6 +105,10 @@ interface AppStore {
   loadRenderSummary: (projectId: string) => Promise<void>
   loadPhraseDurations: (projectId: string) => Promise<void>
   renderMissing: (projectId: string) => Promise<void>
+  /** Deletes clips no Project wants any more; resolves with how many went. */
+  cleanOrphanClips: (projectId: string) => Promise<number>
+  /** Deletes this Project's audio; resolves with how many clips went. */
+  deleteProjectClips: (projectId: string) => Promise<number>
 
   // Audio output devices
   audioDevices: AudioDeviceSettings
@@ -543,6 +547,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
     // Durations are what Edit mode badges against, and a render is the only
     // thing that changes them.
     await get().loadPhraseDurations(projectId)
+  },
+
+  cleanOrphanClips: async (projectId) => {
+    const removed = await window.api.speech.cleanOrphans({ projectId })
+    await get().loadRenderSummary(projectId)
+    return removed
+  },
+
+  deleteProjectClips: async (projectId) => {
+    const removed = await window.api.speech.deleteProjectClips({ projectId })
+    await get().loadRenderSummary(projectId)
+    // Deleting audio changes what Edit mode knows a Part's phrase to be worth
+    // as surely as rendering it does.
+    await get().loadPhraseDurations(projectId)
+    return removed
   },
 
   // Audio output devices
