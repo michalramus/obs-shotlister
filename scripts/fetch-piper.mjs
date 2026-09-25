@@ -31,6 +31,7 @@ import {
   copyFile,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rename,
   rm,
@@ -126,10 +127,14 @@ const VOICES_REVISION = 'c10ece1aade47bb51c153c893d14e5bf8e5b7117'
 const VOICES_BASE = `https://huggingface.co/rhasspy/piper-voices/resolve/${VOICES_REVISION}`
 
 const VOICES = {
-  'pl_PL-gosia-medium': {
-    path: 'pl/pl_PL/gosia/medium',
-    model: '38f66464240ed74f186e6b7dc13c6e3b22e023426299f25c2b3cc9dfa9373fbc',
-    config: '1aefb31a9d53ffe44a8163ff73ec833acb7a6253848f6bb0403d8a66f9c7510d',
+  // The default Polish voice. `high` rather than `medium`: it is the voice the
+  // band actually hears over Mumble, and a 22kHz model survives that path
+  // noticeably better than a 16kHz one. It costs 114MB against gosia's 63MB,
+  // which is disk on the operator's machine and nothing on show night.
+  'pl_PL-bass-high': {
+    path: 'pl/pl_PL/bass/high',
+    model: '73b8408967c58118700f21eb2413cd8b666c7844c6136cf674bf5dd56bde72c2',
+    config: '7bb41aa14fee87a31cc32264119c09e3553335196d3db15b39b1c18790e13c59',
   },
   'en_US-amy-medium': {
     path: 'en/en_US/amy/medium',
@@ -368,6 +373,39 @@ async function fetchVoice(voice, scratch) {
   )
 }
 
+/**
+ * Deletes voices this manifest no longer pins.
+ *
+ * electron-builder copies the whole voices directory into the package, so a
+ * voice dropped from the manifest would keep shipping — a hundred megabytes of
+ * a model nothing selects, in every installer, forever. Re-pinning a voice is
+ * the normal reason this runs, and it is exactly when the old one stops being
+ * wanted.
+ *
+ * Only files that look like voice files go; anything else in there was put
+ * there by someone who meant it.
+ */
+async function pruneVoices() {
+  let entries
+  try {
+    entries = await readdir(VOICES_DIR)
+  } catch {
+    return
+  }
+
+  const wanted = new Set(Object.keys(VOICES))
+  for (const name of entries) {
+    const voice = name.endsWith('.onnx.json')
+      ? name.slice(0, -'.onnx.json'.length)
+      : name.endsWith('.onnx')
+        ? name.slice(0, -'.onnx'.length)
+        : null
+    if (voice === null || wanted.has(voice)) continue
+    await rm(join(VOICES_DIR, name), { force: true })
+    console.log(`[piper] ${name}: removed, no longer pinned`)
+  }
+}
+
 async function main() {
   const requested = process.argv.slice(2)
   const targets = requested.includes('all')
@@ -380,6 +418,7 @@ async function main() {
   try {
     for (const target of targets) await fetchTarget(target, scratch)
     for (const voice of Object.keys(VOICES)) await fetchVoice(voice, scratch)
+    await pruneVoices()
   } finally {
     await rm(scratch, { recursive: true, force: true })
   }

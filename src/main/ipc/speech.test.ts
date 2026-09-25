@@ -13,7 +13,7 @@ import {
   clipsOnlyUsedBy,
   phraseDurations,
 } from './speech'
-import { saveProjectVoiceSettings, saveGlobalVoiceSettings } from './settings'
+import { DEFAULT_VOICE, saveProjectVoiceSettings, saveGlobalVoiceSettings } from './settings'
 import { upsertPart } from './parts'
 import { ENGINE_ID, clipHash, partPhrase } from '../../shared/render-plan'
 import { languageOfVoice, numberWords } from '../../shared/number-words'
@@ -29,7 +29,10 @@ function insertProject(db: Database.Database, id: string): void {
   db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(id, id, 1000)
 }
 
-const VOICE = 'pl_PL-gosia-medium'
+/** Taken from the setting rather than spelled out: these tests are about what
+ * a Project falls back to, and re-pinning the default voice should not rewrite
+ * two dozen expectations. */
+const VOICE = DEFAULT_VOICE
 
 /** Every number clip a Voice needs, so tests can distinguish them from phrases. */
 function numberHashes(voice: string): string[] {

@@ -8,6 +8,7 @@ import { clipHash } from '../../shared/render-plan'
 import { languageOfVoice, numberWords } from '../../shared/number-words'
 import { toMediaUrl } from '../../shared/media-url'
 import { PHRASE_GAP_MS } from '../../shared/announcement'
+import { DEFAULT_VOICE } from '../ipc/settings'
 
 function openMemoryDb(): Database.Database {
   const db = new Database(':memory:')
@@ -358,7 +359,8 @@ describe('LiveSession', () => {
 // number of calls is not the behaviour the band hears.
 // ---------------------------------------------------------------------------
 
-const VOICE = 'pl_PL-gosia-medium'
+/** The default a Project falls back to; see the note in ipc/speech.test.ts. */
+const VOICE = DEFAULT_VOICE
 const ENGINE = 'piper'
 const CONNECTOR = 'za'
 const CLIPS_DIR = '/clips'
