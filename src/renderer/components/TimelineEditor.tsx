@@ -14,6 +14,7 @@ import { usePlaybackProbe } from '../timeline/playback-probe'
 import { describeDecodeFailure } from '../timeline/waveform-error'
 import { RulerLane } from './timeline/RulerLane'
 import { OverviewBar } from './timeline/OverviewBar'
+import { ItemLane, type ItemLaneHandlers } from './timeline/ItemLane'
 import {
   editPlayheadMs,
   livePlayheadMs,
@@ -35,28 +36,15 @@ import {
 import { useAppStore } from '../store'
 
 /**
- * What each badge means, in the words an operator can act on.
+ * The default for the optional `phraseDurationMsByPartId` prop.
  *
- * `phrase-only` is the one worth spelling out: it is not a failure the show will
- * make obvious. The name is spoken, the Announcement sounds like it worked, and
- * the band simply never hears a count.
+ * Module-level on purpose. Written as `= {}` in the destructuring it was a fresh
+ * object on every render, which invalidated the memo that derives Announcement
+ * problems from it, which produced a new Map, which defeated the memo on the item
+ * lane — so the largest lane on the timeline re-rendered on every playback commit
+ * despite being memoised.
  */
-const ANNOUNCEMENT_PROBLEM_TITLE: Record<AnnouncementProblem, string> = {
-  dropped: 'too short for its announcement; nothing will be spoken',
-  'phrase-only': 'too short for a countdown; only the name will be spoken, with no numbers',
-}
-
-/**
- * Red for silence, amber for a name with no count.
- *
- * Both are loud on purpose. These warnings mark Calls that are *short*, which
- * are the narrowest blocks on the timeline — the place a subtle mark is least
- * likely to be seen, and the mark most worth seeing.
- */
-const ANNOUNCEMENT_PROBLEM_COLOR: Record<AnnouncementProblem, string> = {
-  dropped: '#e74c3c',
-  'phrase-only': '#f1c40f',
-}
+const NO_PHRASE_DURATIONS: Record<string, number> = {}
 
 /** The strip's summary, or null when every Call announces properly. */
 export function announcementProblemLabel(
@@ -281,7 +269,7 @@ export function TimelineEditor({
   mediaVideoRef,
   selectedShotId,
   onLabelEdit,
-  phraseDurationMsByPartId = {},
+  phraseDurationMsByPartId = NO_PHRASE_DURATIONS,
   announcementSettings,
 }: TimelineEditorProps): React.JSX.Element {
   // Parts, Lyrics and the Rundown's Kind are read from the store rather than
@@ -1246,6 +1234,37 @@ export function TimelineEditor({
     if (selectedLyricId === id) setSelectedLyricId(null)
   }
 
+  // Stable identity so ItemLane can memoise, current logic through a ref so no
+  // dependency list has to be kept in step with handlers that close over most of
+  // this component. Same pattern as keyActionsRef below.
+  const itemLaneCallbacksRef = useRef<ItemLaneHandlers>({
+    onTrackClick: () => {},
+    onBlockClick: () => {},
+    onOpenContextMenu: () => {},
+    onBoundaryMouseDown: () => {},
+    onExtendMouseDown: () => {},
+  })
+  itemLaneCallbacksRef.current = {
+    onTrackClick: (e) => handleTrackClick(e as React.MouseEvent<HTMLDivElement>),
+    onBlockClick: (e, shotId) => handleBlockClick(e, shotId),
+    onOpenContextMenu: (x, y, shotId) => setContextMenu({ x, y, shotId }),
+    onBoundaryMouseDown: (e, shot, nextShot) => handleBoundaryMouseDown(e, shot, nextShot),
+    onExtendMouseDown: (e, shot, durationMs) => handleExtendMouseDown(e, shot, durationMs),
+  }
+  const itemLaneHandlers = useMemo<ItemLaneHandlers>(
+    () => ({
+      onTrackClick: (e) => itemLaneCallbacksRef.current.onTrackClick(e),
+      onBlockClick: (e, shotId) => itemLaneCallbacksRef.current.onBlockClick(e, shotId),
+      onOpenContextMenu: (x, y, shotId) =>
+        itemLaneCallbacksRef.current.onOpenContextMenu(x, y, shotId),
+      onBoundaryMouseDown: (e, shot, nextShot) =>
+        itemLaneCallbacksRef.current.onBoundaryMouseDown(e, shot, nextShot),
+      onExtendMouseDown: (e, shot, durationMs) =>
+        itemLaneCallbacksRef.current.onExtendMouseDown(e, shot, durationMs),
+    }),
+    [],
+  )
+
   keyActionsRef.current = {
     setLyricIn,
     setLyricOut,
@@ -1259,6 +1278,34 @@ export function TimelineEditor({
       assignPartAtPlayhead(part)
       return true
     },
+  }
+
+  /** Lengthens the final Shot past its current end. Committed on mouse-up. */
+  function handleExtendMouseDown(
+    e: React.MouseEvent,
+    lastShot: Shot,
+    currentDurationMs: number,
+  ): void {
+    e.preventDefault()
+    e.stopPropagation()
+    extendDragRef.current = { startX: e.clientX, origDur: currentDurationMs }
+    function onMM(ev: MouseEvent): void {
+      if (!extendDragRef.current) return
+      const deltaMs = msAtPx(ev.clientX - extendDragRef.current.startX, zoomRef.current)
+      setDragOverride({ [lastShot.id]: Math.max(1000, extendDragRef.current.origDur + deltaMs) })
+    }
+    function onMU(ev: MouseEvent): void {
+      if (extendDragRef.current) {
+        const deltaMs = msAtPx(ev.clientX - extendDragRef.current.startX, zoomRef.current)
+        onExtendLastShot(lastShot.id, Math.max(1000, extendDragRef.current.origDur + deltaMs))
+        extendDragRef.current = null
+      }
+      setDragOverride({})
+      window.removeEventListener('mousemove', onMM)
+      window.removeEventListener('mouseup', onMU)
+    }
+    window.addEventListener('mousemove', onMM)
+    window.addEventListener('mouseup', onMU)
   }
 
   function handleBoundaryMouseDown(e: React.MouseEvent, shotA: Shot, shotB: Shot): void {
@@ -1487,12 +1534,6 @@ export function TimelineEditor({
     }
     return byId
   }, [shots, rundownKind, targetById, isVoice])
-
-  /** Fallback for a Shot that is not in `shots` — never expected, never thrown. */
-  const UNKNOWN_TARGET = { color: UNASSIGNED_COLOR, label: '', title: '' }
-  function itemTarget(shot: Shot): { color: string; label: string; title: string } {
-    return itemTargets.get(shot.id) ?? UNKNOWN_TARGET
-  }
 
   const announcementProblems = useMemo(
     () =>
@@ -1781,279 +1822,21 @@ export function TimelineEditor({
           <RulerLane ticks={ticks} width={totalPx} height={RULER_HEIGHT} />
 
           {/* Row 3: Camera track */}
-          <div
-            style={{
-              height: TRACK_HEIGHT,
-              width: totalPx,
-              background: '#0d0d0d',
-              position: 'relative',
-              cursor: 'crosshair',
-            }}
-            onClick={handleTrackClick}
-          >
-            {shots.length === 0 ? (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  height: '100%',
-                  color: '#555',
-                  fontSize: '12px',
-                  pointerEvents: 'none',
-                }}
-              >
-                {isVoice ? 'No calls — create a rundown' : 'No shots — create a rundown'}
-              </div>
-            ) : (
-              shots.map((shot, i) => {
-                const target = itemTarget(shot)
-                const unassigned = isUnassigned(shot, rundownKind)
-                const problem = announcementProblems.get(shot.id)
-                const bgColor = target.color
-                const leftPx = shotOffsets[i]
-                const effectiveDuration = dragOverride[shot.id] ?? shot.durationMs
-                const widthPx = pxAtMs(effectiveDuration, zoomPxPerSec)
-                const isLive = liveIndex !== null && shots[liveIndex]?.id === shot.id
-
-                // Transition triangle
-                const hasTransition = shot.transitionName !== null && shot.transitionMs > 0
-                const triWidthPx = hasTransition ? pxAtMs(shot.transitionMs, zoomPxPerSec) : 0
-
-                // Boundary handle (rendered after each shot except the last)
-                const nextShot = shots[i + 1]
-                const boundaryLeftPx = leftPx + widthPx
-
-                return (
-                  <React.Fragment key={shot.id}>
-                    {/* Shot block */}
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: leftPx,
-                        top: 0,
-                        width: widthPx,
-                        height: TRACK_HEIGHT,
-                        background: unassigned
-                          ? `repeating-linear-gradient(45deg, ${UNASSIGNED_COLOR}, ${UNASSIGNED_COLOR} 6px, #2c2c2c 6px, #2c2c2c 12px)`
-                          : bgColor,
-                        // Ringed in the warning colour, so a Call too short to
-                        // announce is obvious at any width — including the
-                        // sliver-wide blocks these warnings are always about.
-                        // Stacked with the live ring rather than replacing it:
-                        // the item going out is never the thing to hide.
-                        boxShadow:
-                          [
-                            isLive ? 'inset 0 0 0 2px white' : null,
-                            problem !== undefined
-                              ? `inset 0 0 0 ${isLive ? '4px' : '2px'} ${ANNOUNCEMENT_PROBLEM_COLOR[problem]}`
-                              : null,
-                          ]
-                            .filter(Boolean)
-                            .join(', ') || undefined,
-                        overflow: 'hidden',
-                        cursor: 'pointer',
-                        userSelect: 'none',
-                        border: unassigned ? '1px dashed #e67e22' : '1px solid rgba(0,0,0,0.5)',
-                        boxSizing: 'border-box' as const,
-                      }}
-                      onClick={(e) => handleBlockClick(e, shot.id)}
-                      onContextMenu={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        setContextMenu({ x: e.clientX, y: e.clientY, shotId: shot.id })
-                      }}
-                      title={
-                        problem === undefined
-                          ? target.title
-                          : `${target.title} — ${ANNOUNCEMENT_PROBLEM_TITLE[problem]}`
-                      }
-                    >
-                      {/*
-                        Outside the label, and outside its width gate: the label
-                        is hidden below 20px and a Call this warning fires on is
-                        routinely narrower than that. Absolute, so it overhangs a
-                        block too small to contain it rather than vanishing.
-                      */}
-                      {problem !== undefined && (
-                        <div
-                          title={ANNOUNCEMENT_PROBLEM_TITLE[problem]}
-                          style={{
-                            position: 'absolute',
-                            top: '-1px',
-                            left: '-1px',
-                            minWidth: '14px',
-                            height: '14px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            background: ANNOUNCEMENT_PROBLEM_COLOR[problem],
-                            color: '#000',
-                            fontSize: '10px',
-                            fontWeight: 700,
-                            lineHeight: 1,
-                            borderRadius: '0 0 3px 0',
-                            pointerEvents: 'none',
-                            zIndex: 3,
-                          }}
-                        >
-                          ⚠
-                        </div>
-                      )}
-                      {widthPx > 20 && (
-                        <div
-                          style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            overflow: 'hidden',
-                            height: '100%',
-                            justifyContent: 'center',
-                            gap: 1,
-                            // Clear of the corner flag when there is one.
-                            paddingLeft: problem === undefined ? '4px' : '18px',
-                          }}
-                        >
-                          <strong
-                            style={{
-                              fontSize: '11px',
-                              lineHeight: 1.2,
-                              color: unassigned ? '#e67e22' : 'white',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {target.label}
-                          </strong>
-                          {shot.label && widthPx > 60 && (
-                            <span
-                              style={{
-                                fontSize: '9px',
-                                opacity: 0.7,
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                                lineHeight: 1.2,
-                                color: 'white',
-                              }}
-                            >
-                              {shot.label}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Transition triangle overlay */}
-                    {hasTransition && triWidthPx > 0 && (
-                      <svg
-                        style={{
-                          position: 'absolute',
-                          left: leftPx,
-                          top: 0,
-                          width: triWidthPx,
-                          height: TRACK_HEIGHT,
-                          pointerEvents: 'none',
-                          zIndex: 5,
-                        }}
-                      >
-                        <polygon
-                          points={`0,0 ${triWidthPx},0 0,${TRACK_HEIGHT}`}
-                          fill="rgba(255,255,255,0.4)"
-                        />
-                      </svg>
-                    )}
-
-                    {/* Boundary drag handle between this shot and the next */}
-                    {nextShot !== undefined && (
-                      <div
-                        style={{
-                          position: 'absolute',
-                          left: boundaryLeftPx - 4,
-                          top: 0,
-                          width: 8,
-                          height: TRACK_HEIGHT,
-                          cursor: 'ew-resize',
-                          background: 'transparent',
-                          zIndex: 10,
-                        }}
-                        onMouseDown={(e) => handleBoundaryMouseDown(e, shot, nextShot)}
-                        onMouseEnter={(e) => {
-                          const el = e.currentTarget as HTMLDivElement
-                          el.style.background = 'rgba(255,255,255,0.2)'
-                        }}
-                        onMouseLeave={(e) => {
-                          const el = e.currentTarget as HTMLDivElement
-                          el.style.background = 'transparent'
-                        }}
-                      />
-                    )}
-                  </React.Fragment>
-                )
-              })
-            )}
-
-            {/* Extend last shot drag handle */}
-            {shots.length > 0 &&
-              (() => {
-                const lastShot = shots[shots.length - 1]
-                const lastOffset = shotOffsets[shots.length - 1]
-                const lastDur = dragOverride[lastShot.id] ?? lastShot.durationMs
-                const lastEndPx = lastOffset + pxAtMs(lastDur, zoomPxPerSec)
-                return (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: lastEndPx - 4,
-                      top: 0,
-                      width: 8,
-                      height: TRACK_HEIGHT,
-                      cursor: 'ew-resize',
-                      background: 'transparent',
-                      zIndex: 10,
-                    }}
-                    onMouseEnter={(e) => {
-                      const el = e.currentTarget as HTMLDivElement
-                      el.style.background = 'rgba(255,255,255,0.3)'
-                    }}
-                    onMouseLeave={(e) => {
-                      const el = e.currentTarget as HTMLDivElement
-                      el.style.background = 'transparent'
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      extendDragRef.current = { startX: e.clientX, origDur: lastDur }
-                      function onMM(ev: MouseEvent): void {
-                        if (!extendDragRef.current) return
-                        const deltaMs = msAtPx(
-                          ev.clientX - extendDragRef.current.startX,
-                          zoomRef.current,
-                        )
-                        const newDur = Math.max(1000, extendDragRef.current.origDur + deltaMs)
-                        setDragOverride({ [lastShot.id]: newDur })
-                      }
-                      function onMU(ev: MouseEvent): void {
-                        if (extendDragRef.current) {
-                          const deltaMs = msAtPx(
-                            ev.clientX - extendDragRef.current.startX,
-                            zoomRef.current,
-                          )
-                          const newDur = Math.max(1000, extendDragRef.current.origDur + deltaMs)
-                          onExtendLastShot(lastShot.id, newDur)
-                          extendDragRef.current = null
-                        }
-                        setDragOverride({})
-                        window.removeEventListener('mousemove', onMM)
-                        window.removeEventListener('mouseup', onMU)
-                      }
-                      window.addEventListener('mousemove', onMM)
-                      window.addEventListener('mouseup', onMU)
-                    }}
-                  />
-                )
-              })()}
-          </div>
+          <ItemLane
+            shots={shots}
+            shotOffsets={shotOffsets}
+            dragOverride={dragOverride}
+            itemTargets={itemTargets}
+            announcementProblems={announcementProblems}
+            rundownKind={rundownKind}
+            isVoice={isVoice}
+            liveIndex={liveIndex}
+            zoomPxPerSec={zoomPxPerSec}
+            width={totalPx}
+            height={TRACK_HEIGHT}
+            unassignedColor={UNASSIGNED_COLOR}
+            handlers={itemLaneHandlers}
+          />
 
           {/* Row 3b: Lyrics track — the second and only other Track, in both Kinds */}
           <div
