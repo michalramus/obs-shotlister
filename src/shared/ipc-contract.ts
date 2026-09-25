@@ -451,11 +451,11 @@ export interface IpcContract {
    * fresh for it. Saves re-decoding a whole 4K container on every Rundown switch.
    */
   'media:peaks:get': {
-    payload: string
+    payload: { filePath: string; version: string }
     result: { peaks: number[]; durationMs: number } | null
   }
   'media:peaks:put': {
-    payload: { filePath: string; peaks: number[]; durationMs: number }
+    payload: { filePath: string; version: string; peaks: number[]; durationMs: number }
     result: void
   }
 

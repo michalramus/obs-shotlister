@@ -735,12 +735,14 @@ function registerIpcHandlers(): void {
     }
   })
 
-  registerIpcHandler('media:peaks:get', (filePath: string) => waveformCache.get(filePath))
+  registerIpcHandler('media:peaks:get', (payload: { filePath: string; version: string }) =>
+    waveformCache.get(payload.filePath, payload.version),
+  )
 
   registerIpcHandler(
     'media:peaks:put',
-    (payload: { filePath: string; peaks: number[]; durationMs: number }) =>
-      waveformCache.put(payload.filePath, {
+    (payload: { filePath: string; version: string; peaks: number[]; durationMs: number }) =>
+      waveformCache.put(payload.filePath, payload.version, {
         peaks: payload.peaks,
         durationMs: payload.durationMs,
       }),

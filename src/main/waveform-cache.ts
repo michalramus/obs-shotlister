@@ -7,17 +7,24 @@
  * allocation, and it happened again on every Rundown switch and every app start
  * for a file that had not changed.
  *
- * The peaks themselves are tiny — at most a few tens of thousands of floats — so
- * the fix is simply to keep them. Stored under userData rather than in the
- * project database: they are a derived artifact of a file on this machine, so
- * they must not travel in a Project export, and losing them costs only one
- * re-decode.
+ * Under userData rather than in the project database: peaks are a derived artifact
+ * of a file on this machine, so they must not travel in a Project export, and
+ * losing them costs only one re-decode.
  *
- * Freshness is the file's own identity — size and mtime — so replacing the file
- * at the same path invalidates the entry without anyone having to remember to.
+ * One file per entry, not one file for all of them. A single shared document
+ * reached 13MB at the entry cap, and answering one lookup meant parsing all of it
+ * on the thread that also serves IPC, OBS and SQLite — reintroducing the stall the
+ * cache exists to remove. Per-entry files also make a write atomic rather than a
+ * read-modify-write two concurrent decodes can clobber.
+ *
+ * Freshness is the file's own size and mtime plus the version of the algorithm
+ * that produced the peaks, so replacing a file at the same path — or changing the
+ * peak resolution in a later release — invalidates the entry without anyone having
+ * to remember to.
  */
 
 import { promises as fsPromises } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 
 /** What the renderer needs to draw the media lane without decoding anything. */
@@ -30,22 +37,22 @@ interface StoredEntry extends WaveformEntry {
   /** Identity of the file the peaks were taken from. */
   sizeBytes: number
   mtimeMs: number
+  /** Identifies the settings the peaks were produced with. */
+  version: string
 }
 
-type CacheFile = Record<string, StoredEntry>
-
-const FILE_NAME = 'waveform-cache.json'
+const DIR_NAME = 'waveform-cache'
 
 /**
- * Cap on remembered files, so a long-running install does not grow without
- * bound. Evicts the least recently written — the operator's current material is
- * what matters, and an evicted entry costs one re-decode.
+ * Cap on remembered files, so a long-running install does not grow without bound.
+ * Evicts by write time — a re-decode is cheap next to an unbounded cache, and
+ * tracking true recency would mean a write on every read.
  */
 const MAX_ENTRIES = 64
 
 export interface WaveformCache {
-  get(filePath: string): Promise<WaveformEntry | null>
-  put(filePath: string, entry: WaveformEntry): Promise<void>
+  get(filePath: string, version: string): Promise<WaveformEntry | null>
+  put(filePath: string, version: string, entry: WaveformEntry): Promise<void>
 }
 
 /** Identity of the file at `filePath`, or null if it cannot be read. */
@@ -58,46 +65,72 @@ async function identify(filePath: string): Promise<{ sizeBytes: number; mtimeMs:
   }
 }
 
-export function createWaveformCache(userDataDir: string): WaveformCache {
-  const cachePath = join(userDataDir, FILE_NAME)
+/** Hashed so any path — spaces, unicode, length — is a usable filename. */
+function entryName(filePath: string): string {
+  return createHash('sha256').update(filePath).digest('hex').slice(0, 32) + '.json'
+}
 
-  async function read(): Promise<CacheFile> {
-    try {
-      const raw = await fsPromises.readFile(cachePath, 'utf8')
-      const parsed: unknown = JSON.parse(raw)
-      // A hand-edited or truncated cache must not break media loading; an
-      // unreadable cache is simply an empty one.
-      return parsed !== null && typeof parsed === 'object' ? (parsed as CacheFile) : {}
-    } catch {
-      return {}
-    }
+export function createWaveformCache(userDataDir: string): WaveformCache {
+  const dir = join(userDataDir, DIR_NAME)
+
+  /** Deletes the oldest entries once the directory is over the cap. */
+  async function evict(): Promise<void> {
+    const names = await fsPromises.readdir(dir).catch(() => [])
+    if (names.length <= MAX_ENTRIES) return
+    const withTimes = await Promise.all(
+      names.map(async (name) => ({
+        name,
+        mtimeMs: await fsPromises
+          .stat(join(dir, name))
+          .then((s) => s.mtimeMs)
+          .catch(() => 0),
+      })),
+    )
+    withTimes.sort((a, b) => a.mtimeMs - b.mtimeMs)
+    await Promise.all(
+      withTimes
+        .slice(0, withTimes.length - MAX_ENTRIES)
+        .map((e) => fsPromises.rm(join(dir, e.name), { force: true })),
+    )
   }
 
   return {
-    async get(filePath) {
+    async get(filePath, version) {
       const identity = await identify(filePath)
       if (!identity) return null
-      const entry = (await read())[filePath]
-      if (!entry) return null
-      if (entry.sizeBytes !== identity.sizeBytes || entry.mtimeMs !== identity.mtimeMs) return null
+
+      let entry: StoredEntry
+      try {
+        const raw = await fsPromises.readFile(join(dir, entryName(filePath)), 'utf8')
+        entry = JSON.parse(raw) as StoredEntry
+      } catch {
+        // Missing, truncated or hand-edited: an unreadable entry is simply a miss.
+        return null
+      }
+
+      if (entry === null || typeof entry !== 'object') return null
       if (!Array.isArray(entry.peaks) || typeof entry.durationMs !== 'number') return null
+      if (entry.version !== version) return null
+      if (entry.sizeBytes !== identity.sizeBytes || entry.mtimeMs !== identity.mtimeMs) return null
       return { peaks: entry.peaks, durationMs: entry.durationMs }
     },
 
-    async put(filePath, entry) {
+    async put(filePath, version, entry) {
       const identity = await identify(filePath)
       if (!identity) return
-      const cache = await read()
-      cache[filePath] = { ...entry, ...identity }
 
-      const keys = Object.keys(cache)
-      if (keys.length > MAX_ENTRIES) {
-        for (const key of keys.slice(0, keys.length - MAX_ENTRIES)) delete cache[key]
-      }
-
+      const stored: StoredEntry = { ...entry, ...identity, version }
+      const target = join(dir, entryName(filePath))
+      // Written beside the target and renamed: a crash or a concurrent write must
+      // not leave a half-written entry that later parses as garbage.
+      const temp = `${target}.${process.pid}.tmp`
       try {
-        await fsPromises.writeFile(cachePath, JSON.stringify(cache), 'utf8')
+        await fsPromises.mkdir(dir, { recursive: true })
+        await fsPromises.writeFile(temp, JSON.stringify(stored), 'utf8')
+        await fsPromises.rename(temp, target)
+        await evict()
       } catch (err) {
+        await fsPromises.rm(temp, { force: true }).catch(() => undefined)
         // A cache that cannot be written is a slow app, not a broken one.
         // eslint-disable-next-line no-console
         console.error('[waveform-cache] write failed:', err)

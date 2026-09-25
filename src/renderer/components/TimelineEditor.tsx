@@ -142,6 +142,22 @@ const WAVEFORM_SAMPLE_RATE = 8000
 const PEAKS_PER_SECOND = 40
 const MAX_WAVEFORM_BUCKETS = 20000
 
+/**
+ * Identifies the settings the peaks were produced with, so cached peaks from an
+ * older release are not drawn at the wrong resolution after these change.
+ */
+const WAVEFORM_VERSION = `v1:${WAVEFORM_SAMPLE_RATE}:${PEAKS_PER_SECOND}:${MAX_WAVEFORM_BUCKETS}`
+
+/**
+ * Peaks are amplitudes drawn into a 60px-tall lane, so a thousandth is already far
+ * below anything visible — and full float precision made a cached entry three
+ * times larger for nothing. Rounded at the source rather than on the way into the
+ * cache, so the freshly decoded and cached lanes are drawn from identical numbers.
+ */
+function roundPeak(value: number): number {
+  return Math.round(value * 1000) / 1000
+}
+
 // During playback the playhead moves every frame, but only its own readout and the
 // overview marker change. Those are painted directly; React state is committed at
 // this interval so playhead-dependent effects still run without a 60fps re-render
@@ -544,7 +560,10 @@ export function TimelineEditor({
       // expensive part — the whole container buffered and decoded — so a hit here
       // is the difference between a multi-second freeze and an instant lane.
       try {
-        const cached = await window.api.mediaPeaks.get(rundownMedia!.filePath)
+        const cached = await window.api.mediaPeaks.get({
+          filePath: rundownMedia!.filePath,
+          version: WAVEFORM_VERSION,
+        })
         if (cancelled) return
         if (cached) {
           setMediaDurationMs(cached.durationMs)
@@ -599,7 +618,7 @@ export function TimelineEditor({
           for (let j = i * bucketSize; j < Math.min((i + 1) * bucketSize, totalSamples); j++) {
             max = Math.max(max, Math.abs(channelData[j]))
           }
-          peaks.push(max)
+          peaks.push(roundPeak(max))
         }
         if (cancelled) return
         setWaveformData(peaks)
@@ -607,6 +626,7 @@ export function TimelineEditor({
         void window.api.mediaPeaks
           .put({
             filePath: rundownMedia!.filePath,
+            version: WAVEFORM_VERSION,
             peaks,
             durationMs: audioBuffer.duration * 1000,
           })
