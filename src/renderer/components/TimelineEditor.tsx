@@ -11,6 +11,7 @@ import {
   pxAtMs,
 } from '../timeline/coordinates'
 import { usePlaybackProbe } from '../timeline/playback-probe'
+import { describeDecodeFailure } from '../timeline/waveform-error'
 import {
   editPlayheadMs,
   livePlayheadMs,
@@ -318,7 +319,7 @@ export function TimelineEditor({
   )
   const [flash, setFlash] = useState(false)
   const [currentScrollLeft, setCurrentScrollLeft] = useState(0)
-  const [waveformError, setWaveformError] = useState(false)
+  const [waveformError, setWaveformError] = useState<string | null>(null)
   const [mediaFileNotFound, setMediaFileNotFound] = useState(false)
   const [containerWidth, setContainerWidth] = useState(800)
   const [overviewWidth, setOverviewWidth] = useState(300)
@@ -510,11 +511,11 @@ export function TimelineEditor({
     if (!rundownMedia?.filePath) {
       setWaveformData(null)
       setMediaDurationMs(0)
-      setWaveformError(false)
+      setWaveformError(null)
       setMediaFileNotFound(false)
       return
     }
-    setWaveformError(false)
+    setWaveformError(null)
     setMediaFileNotFound(false)
     let cancelled = false
 
@@ -545,7 +546,7 @@ export function TimelineEditor({
         // cloned into the renderer and copied again before decoding.
         const response = await fetch(toMediaUrl(rundownMedia!.filePath))
         if (!response.ok) {
-          if (!cancelled) setWaveformError(true)
+          if (!cancelled) setWaveformError(`could not be read (HTTP ${response.status})`)
           return
         }
         const arrayBufferForDecode = await response.arrayBuffer()
@@ -559,7 +560,9 @@ export function TimelineEditor({
           audioBuffer = await audioCtx.decodeAudioData(arrayBufferForDecode)
         } catch (decodeErr) {
           console.error('[TimelineEditor] decodeAudioData error:', decodeErr)
-          if (!cancelled) setWaveformError(true)
+          // The only failure that really does mean the format: the bytes arrived
+          // and Chromium would not decode them.
+          if (!cancelled) setWaveformError(describeDecodeFailure(decodeErr))
           return
         }
         if (cancelled) return
@@ -584,7 +587,7 @@ export function TimelineEditor({
         if (!cancelled) setWaveformData(peaks)
       } catch (err) {
         console.error('[TimelineEditor] waveform decode error:', err)
-        if (!cancelled) setWaveformError(true)
+        if (!cancelled) setWaveformError(describeDecodeFailure(err))
       }
     }
     void decode()
@@ -2434,7 +2437,7 @@ export function TimelineEditor({
                           pointerEvents: 'none',
                         }}
                       >
-                        Failed to load waveform — unsupported format?
+                        {`No waveform: ${waveformError}`}
                       </span>
                     ) : waveformData === null ? (
                       <span
