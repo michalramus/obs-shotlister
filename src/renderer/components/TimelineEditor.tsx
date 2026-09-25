@@ -26,6 +26,7 @@ import {
   isUnassigned,
   announcementProblemsByCallId,
   type AnnouncementSettings,
+  type AnnouncementProblem,
 } from '../timeline/lyrics'
 import { useAppStore } from '../store'
 
@@ -36,7 +37,7 @@ import { useAppStore } from '../store'
  * make obvious. The name is spoken, the Announcement sounds like it worked, and
  * the band simply never hears a count.
  */
-const ANNOUNCEMENT_PROBLEM_TITLE: Record<'dropped' | 'phrase-only', string> = {
+const ANNOUNCEMENT_PROBLEM_TITLE: Record<AnnouncementProblem, string> = {
   dropped: 'too short for its announcement; nothing will be spoken',
   'phrase-only': 'too short for a countdown; only the name will be spoken, with no numbers',
 }
@@ -48,14 +49,14 @@ const ANNOUNCEMENT_PROBLEM_TITLE: Record<'dropped' | 'phrase-only', string> = {
  * are the narrowest blocks on the timeline — the place a subtle mark is least
  * likely to be seen, and the mark most worth seeing.
  */
-const ANNOUNCEMENT_PROBLEM_COLOR: Record<'dropped' | 'phrase-only', string> = {
+const ANNOUNCEMENT_PROBLEM_COLOR: Record<AnnouncementProblem, string> = {
   dropped: '#e74c3c',
   'phrase-only': '#f1c40f',
 }
 
 /** The strip's summary, or null when every Call announces properly. */
 export function announcementProblemLabel(
-  problems: ReadonlyMap<string, 'dropped' | 'phrase-only'>,
+  problems: ReadonlyMap<string, AnnouncementProblem>,
 ): string | null {
   let dropped = 0
   let phraseOnly = 0
@@ -1373,7 +1374,7 @@ export function TimelineEditor({
             (partId) => phraseDurationMsByPartId[partId] ?? null,
             announcementSettings,
           )
-        : new Map<string, 'dropped' | 'phrase-only'>(),
+        : new Map<string, AnnouncementProblem>(),
     [isVoice, shots, phraseDurationMsByPartId, announcementSettings],
   )
 

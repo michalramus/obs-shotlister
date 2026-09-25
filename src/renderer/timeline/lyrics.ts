@@ -156,6 +156,9 @@ function clampMs(value: number, min: number, max: number): number {
  * How an Announcement settings affect what fits. Exactly the fields
  * {@link announcementShape} needs beyond the Call's own timings.
  */
+/** An Announcement shape worth warning about: everything but `full`. */
+export type AnnouncementProblem = Exclude<AnnouncementShape, 'full'>
+
 export interface AnnouncementSettings {
   countdown: number[]
   placement: PhrasePlacement
@@ -190,8 +193,8 @@ export function announcementProblemsByCallId(
   items: Shot[],
   phraseDurationMs: (partId: string) => number | null,
   settings: AnnouncementSettings,
-): Map<string, Exclude<AnnouncementShape, 'full'>> {
-  const problems = new Map<string, Exclude<AnnouncementShape, 'full'>>()
+): Map<string, AnnouncementProblem> {
+  const problems = new Map<string, AnnouncementProblem>()
   let leadMs: number | null = null
   for (const item of items) {
     if (item.hidden === true) continue
