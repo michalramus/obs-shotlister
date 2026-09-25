@@ -1,17 +1,23 @@
 name: Build Piper (macOS arm64)
 
-# Upstream never shipped an arm64 Piper for macOS. Its release workflow builds a
+# A fallback, not the normal path.
+#
+# Upstream never shipped an arm64 Piper for macOS: its release workflow builds a
 # matrix of `[x64, aarch64]` on `macos-latest` but never passes
 # CMAKE_OSX_ARCHITECTURES, so in November 2023 — when `macos-latest` was still
 # Intel — both jobs produced x86_64 and only the filenames differed. The asset
-# named `piper_macos_aarch64.tar.gz` therefore contains x86_64 Mach-O binaries.
+# named `piper_macos_aarch64.tar.gz` therefore contains x86_64 Mach-O binaries,
+# which a machine without Rosetta cannot run at all.
 #
-# That is not merely slow on Apple Silicon: a machine without Rosetta cannot run
-# it at all, and a show machine is exactly where nobody wants to discover that.
-# So we build our own, natively, on an arm64 runner.
+# Apple Silicon normally gets a community arm64 build instead, pinned by
+# checksum in scripts/fetch-piper.mjs. That build is a third-party artifact from
+# a personal repository, and this app runs shows — so this workflow exists to
+# replace it with one we compiled ourselves, should that artifact ever vanish,
+# change hands, or stop being something worth trusting.
 #
-# Run this by hand, then publish the tarball and paste its checksum into the
-# `darwin-arm64` entry of scripts/fetch-piper.mjs.
+# To use it: run it by hand, publish the tarball on this repository, and point
+# the `darwin-arm64` entry of scripts/fetch-piper.mjs at it with its checksum.
+# Note it produces the upstream C++ CLI, so that entry's `cli` becomes `full`.
 
 on:
   workflow_dispatch:

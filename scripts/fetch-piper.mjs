@@ -25,7 +25,17 @@
 
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import {
+  access,
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -55,31 +65,39 @@ const PIPER_RELEASE = '2023.11.14-2'
 const PIPER_RELEASE_BASE = `https://github.com/rhasspy/piper/releases/download/${PIPER_RELEASE}`
 
 /**
- * Where our own macOS arm64 build is published.
+ * Apple Silicon does not get an upstream build.
  *
- * Upstream never shipped one. Its release workflow builds a matrix of
- * `[x64, aarch64]` on `macos-latest` but never passes CMAKE_OSX_ARCHITECTURES,
- * so in November 2023 — when `macos-latest` was still Intel — both jobs
- * produced x86_64 and only the filenames differed. `piper_macos_aarch64.tar.gz`
- * contains x86_64 Mach-O binaries, which a machine without Rosetta cannot run
- * at all. `.github/workflows/build-piper-macos-arm64.yml` builds the real thing
- * on an arm64 runner; publish its tarball here and paste the checksum below.
+ * Upstream's release workflow builds a matrix of `[x64, aarch64]` on
+ * `macos-latest` but never passes CMAKE_OSX_ARCHITECTURES, so in November 2023
+ * — when `macos-latest` was still Intel — both jobs produced x86_64 and only
+ * the filenames differed. `piper_macos_aarch64.tar.gz` contains x86_64 Mach-O,
+ * which a machine without Rosetta cannot run at all.
+ *
+ * So arm64 comes from a community build instead: a PyInstaller bundle of the
+ * current Python Piper, self-contained and genuinely arm64. Verified with
+ * `lipo` on every fetch, and pinned by checksum — it is a third-party artifact,
+ * so the checksum is the only thing vouching for it.
+ *
+ * Its CLI is much smaller than the C++ one's: `--model` and `--output_file`,
+ * nothing else. See `cli` below.
  */
-const OWN_BUILD_BASE =
-  'https://github.com/michalramus/obs-shotlister/releases/download/piper-macos-arm64-2023.11.14-2'
+const ARM64_BUILD =
+  'https://github.com/itsabhishekolkha/piper-arm-build/releases/download/v1.2.0/piper.arm64-no.deps.deps'
 
 const TARGETS = {
   'darwin-arm64': {
-    // Deliberately not upstream's mislabelled asset: see OWN_BUILD_BASE above.
-    url: `${OWN_BUILD_BASE}/piper_macos_aarch64.tar.gz`,
-    asset: 'piper_macos_aarch64.tar.gz',
-    // FILL ME IN from the workflow's job summary once the build has run and the
-    // tarball is published. Left unset on purpose: a placeholder that looked
-    // like a checksum would be worse than a build that refuses to start.
-    sha256: null,
+    // Deliberately not upstream's mislabelled asset: see ARM64_BUILD above.
+    url: ARM64_BUILD,
+    asset: 'piper.arm64-no.deps.deps',
+    sha256: '0b29c479b6633a04293c726312f059af0f2b882fb6852d244feb773c9ef42fec',
     binary: 'piper',
-    // Every Mach-O in the unpacked tree must report this. Upstream shipped a
-    // mislabelled tarball for two years because nothing ever checked.
+    // A bare executable, not an archive: nothing to extract.
+    bare: true,
+    // Takes only --model and --output_file, and has no --sentence_silence, so
+    // its clips carry the trailing pad the engine trims when measuring them.
+    cli: 'minimal',
+    // Upstream shipped a mislabelled tarball for two years because nothing
+    // ever checked; this is exactly the check that would have caught it.
     machoArch: 'arm64',
   },
   'darwin-x64': {
@@ -216,6 +234,15 @@ function extract(archive, into) {
  */
 const STAMP = '.piper-release'
 
+/**
+ * Which command-line dialect the installed binary speaks: `full` or `minimal`.
+ *
+ * Deliberately not a dotfile. This one is read at runtime, so it has to survive
+ * electron-builder's copy into the package; a hidden file that quietly failed
+ * to ship would leave a packaged arm64 build passing flags its Piper rejects.
+ */
+const CLI_STAMP = 'piper-cli.txt'
+
 async function fetchTarget(target, scratch) {
   const spec = TARGETS[target]
   if (!spec) {
@@ -237,11 +264,7 @@ async function fetchTarget(target, scratch) {
   }
 
   if (!spec.sha256) {
-    throw new Error(
-      `${target} has no pinned checksum yet.\n` +
-        '  Run the "Build Piper (macOS arm64)" workflow, publish its tarball, then paste\n' +
-        '  the sha256 from the job summary into TARGETS in this file.',
-    )
+    throw new Error(`${target} has no pinned checksum — refusing to install it unverified.`)
   }
 
   console.log(`[piper] ${target}: downloading ${spec.asset}`)
@@ -250,9 +273,18 @@ async function fetchTarget(target, scratch) {
 
   const staging = join(scratch, `unpack-${target}`)
   await mkdir(staging, { recursive: true })
-  extract(archive, staging)
 
   const unpacked = join(staging, 'piper')
+  if (spec.bare) {
+    // A single self-contained executable. The layout below still has to hold,
+    // so it is placed rather than extracted.
+    await mkdir(unpacked, { recursive: true })
+    await copyFile(archive, join(unpacked, spec.binary))
+    await chmod(join(unpacked, spec.binary), 0o755)
+  } else {
+    extract(archive, staging)
+  }
+
   if (!(await exists(join(unpacked, spec.binary)))) {
     throw new Error(
       `${spec.asset} did not contain piper/${spec.binary} — the pinned release's layout changed`,
@@ -260,6 +292,9 @@ async function fetchTarget(target, scratch) {
   }
   await assertMachoArch(unpacked, spec)
   await writeFile(join(unpacked, STAMP), stamp)
+  // The engine reads this to know which flags the binary accepts. Written
+  // beside it rather than probed at runtime, because the fetch already knows.
+  await writeFile(join(unpacked, CLI_STAMP), `${spec.cli ?? 'full'}\n`)
 
   // Replace the whole directory in one move, so an interrupted run never leaves
   // a half-unpacked engine that looks installed.
