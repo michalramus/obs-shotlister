@@ -98,6 +98,12 @@ global setting with a Project override.
   Project.
 - A stale or missing render warns at Live start; it does not block.
 - Orphaned clips are swept on app start and on app close only, never during a session.
+- The engine is bundled per platform by `scripts/fetch-piper.mjs`, every artifact pinned by
+  checksum. Apple Silicon is the exception: upstream's `aarch64` asset is mislabelled and
+  actually x86_64, so arm64 uses a community build with a smaller command line — `--model`
+  and `--output_file` only. It cannot be told to skip its trailing pad, so the pad is
+  measured away when a clip's duration is recorded, which is the number flush placement
+  schedules against.
 
 ## Playback
 
