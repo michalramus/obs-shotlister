@@ -10,6 +10,8 @@
  */
 
 import type { Lyric, Shot } from '../../shared/types'
+import type { PhrasePlacement } from '../../shared/ipc-contract'
+import { type AnnouncementShape, announcementShape } from '../../shared/announcement'
 import { pxAtMs } from './coordinates'
 
 /** An in/out pair on the timeline, before it is a Lyric. */
@@ -150,34 +152,31 @@ function clampMs(value: number, min: number, max: number): number {
   return Math.round(Math.min(Math.max(value, min), max))
 }
 
-export interface DropPredicateInput {
-  /** How long there is before the Call is due — the previous visible Call's duration. */
-  leadMs: number
-  /** Duration of the Part's rendered phrase clip, "<part name> <connector>". */
-  phraseDurationMs: number
-}
-
 /**
- * Whether a Call's Announcement would be dropped for want of room.
- *
- * `scheduleAnnouncement` in src/shared/announcement.ts returns `null` when the
- * phrase does not fit before the Call starts, whichever placement is in force:
- * `immediate` needs the phrase to finish by then, and `flush` schedules it
- * backwards from an anchor that is at best the Call's own start. So a phrase
- * longer than the lead is dropped under every setting and every countdown — the
- * "too short for even the phrase" case the spec badges. A phrase that fits the
- * lead may still lose numbers to a short Call, which is not a drop and not
- * badged.
+ * How an Announcement settings affect what fits. Exactly the fields
+ * {@link announcementShape} needs beyond the Call's own timings.
  */
-export function announcementWouldBeDropped({
-  leadMs,
-  phraseDurationMs,
-}: DropPredicateInput): boolean {
-  return phraseDurationMs > leadMs
+export interface AnnouncementSettings {
+  countdown: number[]
+  placement: PhrasePlacement
+  transmissionDelayMs: number
 }
 
 /**
- * The Calls whose Announcement would be dropped, by id.
+ * What each Call's Announcement will sound like, by Call id.
+ *
+ * Two outcomes are worth telling the operator about while they are still
+ * editing, and they are not the same problem:
+ *
+ * - `dropped` — nothing is spoken. The Call before this one is too short for
+ *   even the Part's name.
+ * - `phrase-only` — the name is spoken and no countdown is. The band is told
+ *   what is coming and never told when, which is the more insidious of the two:
+ *   it sounds like a working Announcement right up until nobody comes in on
+ *   time.
+ *
+ * Calls that will announce normally are absent from the map rather than marked
+ * `full`, so a caller can treat presence as "worth a badge".
  *
  * An Announcement plays during the Call *before* the one it names, so the lead a
  * Call gets is the duration of the previous visible item — Hidden items extend
@@ -187,21 +186,29 @@ export function announcementWouldBeDropped({
  * `phraseDurationMs` returns `null` for a Part with no rendered clip to measure;
  * nothing is badged on a guess.
  */
-export function droppedAnnouncementCallIds(
+export function announcementProblemsByCallId(
   items: Shot[],
   phraseDurationMs: (partId: string) => number | null,
-): Set<string> {
-  const dropped = new Set<string>()
+  settings: AnnouncementSettings,
+): Map<string, Exclude<AnnouncementShape, 'full'>> {
+  const problems = new Map<string, Exclude<AnnouncementShape, 'full'>>()
   let leadMs: number | null = null
   for (const item of items) {
     if (item.hidden === true) continue
     if (leadMs !== null && item.partId !== null) {
       const phrase = phraseDurationMs(item.partId)
-      if (phrase !== null && announcementWouldBeDropped({ leadMs, phraseDurationMs: phrase })) {
-        dropped.add(item.id)
+      if (phrase !== null) {
+        const shape = announcementShape({
+          leadMs,
+          phraseDurationMs: phrase,
+          countdown: settings.countdown,
+          placement: settings.placement,
+          transmissionDelayMs: settings.transmissionDelayMs,
+        })
+        if (shape !== 'full') problems.set(item.id, shape)
       }
     }
     leadMs = item.durationMs
   }
-  return dropped
+  return problems
 }

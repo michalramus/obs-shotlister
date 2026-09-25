@@ -98,6 +98,7 @@ export default function App(): React.JSX.Element {
   const setRenderSummary = useAppStore((s) => s.setRenderSummary)
   const parts = useAppStore((s) => s.parts)
   const phraseDurations = useAppStore((s) => s.phraseDurations)
+  const effectiveVoiceSettings = useAppStore((s) => s.effectiveVoiceSettings)
   const unrenderedCount = useAppStore((s) => s.renderSummary?.unrenderedCount ?? 0)
   const announcementSinkId = useAppStore((s) => s.audioDevices.announcementSinkId)
   const cueSinkId = useAppStore((s) => s.audioDevices.cueSinkId)
@@ -361,6 +362,7 @@ export default function App(): React.JSX.Element {
     // The media track only applies to edit mode; live mode hides it.
     rundownMedia: uiMode === 'edit' ? rundownMedia : null,
     phraseDurationMsByPartId: phraseDurations,
+    announcementSettings: effectiveVoiceSettings ?? undefined,
     onShotClick: (id: string) => setSelectedShotId(id),
     onSplitShot: (shotId: string, atMs: number, newCameraId: string) => {
       if (atMs <= 0) {

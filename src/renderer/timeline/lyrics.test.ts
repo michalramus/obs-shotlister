@@ -6,8 +6,7 @@ import {
   lyricAtMs,
   lyricBlocks,
   isUnassigned,
-  announcementWouldBeDropped,
-  droppedAnnouncementCallIds,
+  announcementProblemsByCallId,
   resizeLyric,
   MIN_LYRIC_MS,
 } from './lyrics'
@@ -137,31 +136,41 @@ describe('isUnassigned', () => {
   })
 })
 
-describe('announcementWouldBeDropped', () => {
-  it('drops a phrase longer than the lead', () => {
-    expect(announcementWouldBeDropped({ leadMs: 900, phraseDurationMs: 1200 })).toBe(true)
-  })
-
-  it('keeps a phrase that exactly fills the lead', () => {
-    expect(announcementWouldBeDropped({ leadMs: 1200, phraseDurationMs: 1200 })).toBe(false)
-  })
-
-  it('keeps a phrase with room to spare', () => {
-    expect(announcementWouldBeDropped({ leadMs: 10000, phraseDurationMs: 800 })).toBe(false)
-  })
-})
-
-describe('droppedAnnouncementCallIds', () => {
+describe('announcementProblemsByCallId', () => {
   const phrase = (partId: string): number | null => (partId === 'long' ? 3000 : 500)
+  /** A generous countdown, so only the Call's own length decides the outcome. */
+  const settings = {
+    countdown: [10, 5, 3, 2, 1],
+    placement: 'flush' as const,
+    transmissionDelayMs: 0,
+  }
 
-  it('badges the Call whose phrase does not fit the Call before it', () => {
+  it('badges as dropped the Call whose phrase does not fit the Call before it', () => {
     const items = [item('a', 1000, { partId: 'short' }), item('b', 5000, { partId: 'long' })]
-    expect([...droppedAnnouncementCallIds(items, phrase)]).toEqual(['b'])
+    expect([...announcementProblemsByCallId(items, phrase, settings)]).toEqual([['b', 'dropped']])
+  })
+
+  it('badges as phrase-only a Call with room for the name but not for a number', () => {
+    // 1.4s of lead: "1" lands at 400ms, nowhere near enough for 500ms of phrase
+    // and its breath — but the name still fits against the Call's own start.
+    const items = [item('a', 1400, { partId: 'short' }), item('b', 5000, { partId: 'short' })]
+    expect(announcementProblemsByCallId(items, phrase, settings).get('b')).toBe('phrase-only')
+  })
+
+  it('says nothing about a Call that will announce normally', () => {
+    const items = [item('a', 15000, { partId: 'short' }), item('b', 5000, { partId: 'short' })]
+    expect(announcementProblemsByCallId(items, phrase, settings).size).toBe(0)
+  })
+
+  it('badges every Call as phrase-only when the countdown is empty', () => {
+    const items = [item('a', 15000, { partId: 'short' }), item('b', 5000, { partId: 'short' })]
+    const problems = announcementProblemsByCallId(items, phrase, { ...settings, countdown: [] })
+    expect(problems.get('b')).toBe('phrase-only')
   })
 
   it('never badges the first item, which nothing announces', () => {
     const items = [item('a', 1000, { partId: 'long' })]
-    expect(droppedAnnouncementCallIds(items, phrase).size).toBe(0)
+    expect(announcementProblemsByCallId(items, phrase, settings).size).toBe(0)
   })
 
   it('takes the lead from the previous visible item, skipping Hidden ones', () => {
@@ -171,17 +180,24 @@ describe('droppedAnnouncementCallIds', () => {
       item('b', 5000, { partId: 'long' }),
     ]
     // 'b' is announced during 'a', not during the Hidden 'h', so 3000ms fits.
-    expect(droppedAnnouncementCallIds(items, phrase).size).toBe(0)
+    expect(announcementProblemsByCallId(items, phrase, settings).size).toBe(0)
   })
 
   it('badges nothing when no duration is known for the Part', () => {
     const items = [item('a', 100, { partId: 'short' }), item('b', 5000, { partId: 'long' })]
-    expect(droppedAnnouncementCallIds(items, () => null).size).toBe(0)
+    expect(announcementProblemsByCallId(items, () => null, settings).size).toBe(0)
   })
 
   it('ignores an unassigned item, which has no phrase to speak', () => {
     const items = [item('a', 100, { partId: 'short' }), item('b', 5000)]
-    expect(droppedAnnouncementCallIds(items, phrase).size).toBe(0)
+    expect(announcementProblemsByCallId(items, phrase, settings).size).toBe(0)
+  })
+
+  it('accounts for the path delay eating the lead', () => {
+    const items = [item('a', 15000, { partId: 'short' }), item('b', 5000, { partId: 'short' })]
+    const withDelay = { ...settings, transmissionDelayMs: 400 }
+    // Still plenty of room at 15s; the delay only shifts things.
+    expect(announcementProblemsByCallId(items, phrase, withDelay).size).toBe(0)
   })
 })
 

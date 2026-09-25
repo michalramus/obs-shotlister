@@ -24,9 +24,22 @@ import {
   resizeLyric,
   overlappingLyric,
   isUnassigned,
-  droppedAnnouncementCallIds,
+  announcementProblemsByCallId,
+  type AnnouncementSettings,
 } from '../timeline/lyrics'
 import { useAppStore } from '../store'
+
+/**
+ * What each badge means, in the words an operator can act on.
+ *
+ * `phrase-only` is the one worth spelling out: it is not a failure the show will
+ * make obvious. The name is spoken, the Announcement sounds like it worked, and
+ * the band simply never hears a count.
+ */
+const ANNOUNCEMENT_PROBLEM_TITLE: Record<'dropped' | 'phrase-only', string> = {
+  dropped: 'too short for its announcement; nothing will be spoken',
+  'phrase-only': 'too short for a countdown; only the name will be spoken, with no numbers',
+}
 import {
   ADD_PART_KEY,
   AddPartDialog,
@@ -75,6 +88,15 @@ interface TimelineEditorProps {
    * index once the render plumbing reaches the renderer.
    */
   phraseDurationMsByPartId?: Record<string, number>
+  /**
+   * Countdown, placement and path delay for the active Project.
+   *
+   * Needed to say what an Announcement will sound like rather than only whether
+   * it happens at all: a Call can be long enough for the name and still too
+   * short for a single number, and which numbers are even in play is a setting.
+   * Absent means nothing is badged — a guess here is worse than silence.
+   */
+  announcementSettings?: AnnouncementSettings
 }
 
 const TRACK_HEIGHT = 50
@@ -224,6 +246,7 @@ export function TimelineEditor({
   selectedShotId,
   onLabelEdit,
   phraseDurationMsByPartId = {},
+  announcementSettings,
 }: TimelineEditorProps): React.JSX.Element {
   // Parts, Lyrics and the Rundown's Kind are read from the store rather than
   // taken as props: everything above passes one shared `timelineProps` object to
@@ -1311,12 +1334,16 @@ export function TimelineEditor({
     }
   }
 
-  const droppedCallIds = useMemo(
+  const announcementProblems = useMemo(
     () =>
-      isVoice
-        ? droppedAnnouncementCallIds(shots, (partId) => phraseDurationMsByPartId[partId] ?? null)
-        : new Set<string>(),
-    [isVoice, shots, phraseDurationMsByPartId],
+      isVoice && announcementSettings
+        ? announcementProblemsByCallId(
+            shots,
+            (partId) => phraseDurationMsByPartId[partId] ?? null,
+            announcementSettings,
+          )
+        : new Map<string, 'dropped' | 'phrase-only'>(),
+    [isVoice, shots, phraseDurationMsByPartId, announcementSettings],
   )
 
   // The dragged line is drawn where the pointer is, not where it is stored.
@@ -1619,7 +1646,7 @@ export function TimelineEditor({
               shots.map((shot, i) => {
                 const target = itemTarget(shot)
                 const unassigned = isUnassigned(shot, rundownKind)
-                const tooShort = droppedCallIds.has(shot.id)
+                const problem = announcementProblems.get(shot.id)
                 const bgColor = target.color
                 const leftPx = shotOffsets[i]
                 const effectiveDuration = dragOverride[shot.id] ?? shot.durationMs
@@ -1661,9 +1688,9 @@ export function TimelineEditor({
                         setContextMenu({ x: e.clientX, y: e.clientY, shotId: shot.id })
                       }}
                       title={
-                        tooShort
-                          ? `${target.title} — too short for its announcement; it will not be spoken`
-                          : target.title
+                        problem === undefined
+                          ? target.title
+                          : `${target.title} — ${ANNOUNCEMENT_PROBLEM_TITLE[problem]}`
                       }
                     >
                       {widthPx > 20 && (
@@ -1688,10 +1715,16 @@ export function TimelineEditor({
                               whiteSpace: 'nowrap',
                             }}
                           >
-                            {tooShort && (
+                            {problem !== undefined && (
                               <span
-                                title="Too short for its announcement — the Part name will not fit"
-                                style={{ marginRight: '3px' }}
+                                title={ANNOUNCEMENT_PROBLEM_TITLE[problem]}
+                                style={{
+                                  marginRight: '3px',
+                                  // Nothing spoken is worse than a name with no
+                                  // countdown behind it, and the two should not
+                                  // read as the same warning at a glance.
+                                  color: problem === 'dropped' ? '#e74c3c' : '#f1c40f',
+                                }}
                               >
                                 ⚠
                               </span>

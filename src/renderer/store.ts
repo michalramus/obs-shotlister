@@ -22,6 +22,7 @@ import type {
   LyricUpsertInput,
   ProjectRenderSummary,
   AudioDeviceSettings,
+  EffectiveVoiceSettings,
   GlobalVoiceSettings,
   ProjectVoiceSettings,
 } from '../shared/ipc-contract'
@@ -120,6 +121,13 @@ interface AppStore {
   // Voice-over settings
   voiceSettings: GlobalVoiceSettings | null
   projectVoiceSettings: ProjectVoiceSettings | null
+  /**
+   * The Project's settings with its overrides already applied — what the
+   * scheduler will actually use. Edit mode needs these to badge a Call whose
+   * Announcement will come out short, which depends on the countdown, the
+   * placement and the path delay, not just on the clip length.
+   */
+  effectiveVoiceSettings: EffectiveVoiceSettings | null
   loadVoiceSettings: (projectId: string | null) => Promise<void>
   saveVoiceSettings: (settings: GlobalVoiceSettings) => Promise<void>
   saveProjectVoiceSettings: (projectId: string, settings: ProjectVoiceSettings) => Promise<void>
@@ -177,6 +185,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   audioDevices: { cueSinkId: null, announcementSinkId: null },
   voiceSettings: null,
   projectVoiceSettings: null,
+  effectiveVoiceSettings: null,
 
   // Rundown media
   rundownMedia: null,
@@ -583,7 +592,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const voiceSettings = await window.api.voice.getSettings()
     const projectVoiceSettings =
       projectId === null ? null : await window.api.voice.getProjectSettings({ projectId })
-    set({ voiceSettings, projectVoiceSettings })
+    const effectiveVoiceSettings = await window.api.voice.getEffectiveSettings({ projectId })
+    set({ voiceSettings, projectVoiceSettings, effectiveVoiceSettings })
   },
 
   saveVoiceSettings: async (settings) => {
