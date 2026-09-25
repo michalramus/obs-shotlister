@@ -12,10 +12,14 @@
  * filesystem or the Piper binary.
  */
 
+import { readFile } from 'node:fs/promises'
 import type Database from 'better-sqlite3'
 import type { ProjectRenderSummary } from '../../shared/ipc-contract'
 import {
+  clipsNeedingDurations,
+  clipsOnlyUsedBy,
   forgetClips,
+  forgetPartRenders,
   missingClips,
   orphanedClips,
   projectRenderSummary,
@@ -23,8 +27,8 @@ import {
   recordClip,
 } from '../ipc/speech'
 import { getGlobalVoiceSettings } from '../ipc/settings'
-import { ensureClipsDir, listCachedHashes, sweep } from './cache'
-import { renderAll } from './engine'
+import { clipPath, ensureClipsDir, listCachedHashes, sweep } from './cache'
+import { audibleDurationMs, renderAll } from './engine'
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -42,12 +46,37 @@ export interface RenderService {
    */
   renderMissing: (projectId: string) => Promise<ProjectRenderSummary>
   /**
+   * Measures cached clips that have no recorded duration, and records it.
+   *
+   * Repair, not routine: see {@link clipsNeedingDurations}. Cheap when there is
+   * nothing to do — one directory listing and one query — so it runs at every
+   * start rather than behind a flag nobody would know to set.
+   */
+  backfillDurations: () => Promise<number>
+  /**
    * Deletes clips no Project wants any more.
    *
    * Called at app start and app close only, never while a session might be
    * running — nothing may touch the cache directory during a show.
    */
   sweepOrphans: () => Promise<number>
+  /**
+   * The same sweep, asked for by the operator.
+   *
+   * Separate from {@link sweepOrphans} only in how it refuses: the automatic
+   * sweep returns zero at a bad moment because nobody is watching, while
+   * someone who pressed a button is owed the reason nothing happened.
+   */
+  cleanOrphans: (projectId: string) => Promise<number>
+  /**
+   * Deletes the audio belonging to one Project — what an archived Project's
+   * cache costs, reclaimed.
+   *
+   * Only clips no other Project wants: see {@link clipsOnlyUsedBy}. The Parts
+   * survive; they simply read as `missing` afterwards, and a later render
+   * brings the audio back.
+   */
+  deleteProjectClips: (projectId: string) => Promise<number>
   /**
    * Renders shortly after a change, when the operator has asked for that.
    *
@@ -72,6 +101,14 @@ export function createRenderService(
   let rendering = false
   let autoRenderTimer: ReturnType<typeof setTimeout> | null = null
   /**
+   * How far the render in flight has got, or null when none is.
+   *
+   * Reported because a batch is slow enough to look wedged: the Apple Silicon
+   * engine spends about five seconds per clip, so sixty numbers is five minutes
+   * during which a bare "Rendering..." says nothing at all.
+   */
+  let progress: { completed: number; total: number } | null = null
+  /**
    * Set once the engine has proved it cannot run at all. Only an explicit
    * render clears it: the operator has to have done something about the
    * binary, and asking is the signal that they think they have.
@@ -82,7 +119,15 @@ export function createRenderService(
     // Read the cache from the filesystem rather than from `speech_clips`, so a
     // clip deleted behind our back reads as missing rather than as rendered.
     const cached = await listCachedHashes(userDataDir)
-    return projectRenderSummary(db, projectId, cached, rendering)
+    const summary = projectRenderSummary(db, projectId, cached, rendering)
+    return progress === null ? summary : { ...summary, progress }
+  }
+
+  function pushStatus(projectId: string): void {
+    if (!onStatus) return
+    statusFor(projectId)
+      .then(onStatus)
+      .catch((err: unknown) => console.error('[speech] status push failed:', messageOf(err)))
   }
 
   async function renderMissing(projectId: string): Promise<ProjectRenderSummary> {
@@ -95,19 +140,29 @@ export function createRenderService(
     engineBroken = false
     rendering = true
     try {
-      onStatus?.(await statusFor(projectId))
-
       await ensureClipsDir(userDataDir)
       const cached = await listCachedHashes(userDataDir)
       const items = missingClips(db, projectId, cached)
+      progress = { completed: 0, total: items.length }
+      onStatus?.(await statusFor(projectId))
 
       const byHash = new Map(items.map((item) => [item.hash, item]))
-      const result = await renderAll(items, { userDataDir })
+      const result = await renderAll(items, { userDataDir }, (step) => {
+        progress = { completed: step.completed, total: step.total }
+        // Recorded here rather than after the batch, so a render interrupted
+        // halfway leaves every clip it finished with a usable duration. Written
+        // after the file is in place, which `synthesise` guarantees before it
+        // reports the clip.
+        if (step.clip) {
+          const item = byHash.get(step.clip.hash)
+          if (item) recordClip(db, item, step.clip.durationMs)
+        }
+        if (step.error === undefined) {
+          console.log(`[speech] ${step.completed}/${step.total} rendered "${step.item.text}"`)
+        }
+        pushStatus(projectId)
+      })
 
-      for (const clip of result.rendered) {
-        const item = byHash.get(clip.hash)
-        if (item) recordClip(db, item, clip.durationMs)
-      }
       // Written after the clips exist, so a crash mid-render leaves Parts
       // reading as missing rather than as rendered against nothing.
       recordPartRenders(db, projectId)
@@ -126,6 +181,7 @@ export function createRenderService(
       }
     } finally {
       rendering = false
+      progress = null
     }
 
     const status = await statusFor(projectId)
@@ -133,9 +189,85 @@ export function createRenderService(
     return status
   }
 
+  async function sweepNow(): Promise<number> {
+    const cached = await listCachedHashes(userDataDir)
+    const orphans = orphanedClips(db, cached)
+    if (orphans.length === 0) return 0
+
+    // Only what actually went: a clip that could not be deleted still exists
+    // and still answers a cache lookup, so forgetting its row would make the
+    // index disagree with the disk.
+    const swept = await sweep(userDataDir, orphans, (hash, error) =>
+      console.error('[speech] could not sweep', hash, messageOf(error)),
+    )
+    forgetClips(db, swept)
+    return swept.length
+  }
+
   return {
     status: statusFor,
     renderMissing,
+
+    async backfillDurations() {
+      if (isLive() || rendering) return 0
+
+      const cached = await listCachedHashes(userDataDir)
+      const items = clipsNeedingDurations(db, cached)
+      if (items.length === 0) return 0
+
+      let measured = 0
+      const unreadable: string[] = []
+      for (const item of items) {
+        try {
+          recordClip(db, item, audibleDurationMs(await readFile(clipPath(userDataDir, item.hash))))
+          measured++
+        } catch (error) {
+          // A clip that cannot be measured is a clip that was never finished
+          // writing. Deleting it is what puts it back in reach of a render;
+          // left alone it would read as rendered forever and never be spoken.
+          console.error('[speech] unreadable clip, discarding', item.hash, messageOf(error))
+          unreadable.push(item.hash)
+        }
+      }
+      if (unreadable.length > 0) {
+        forgetClips(db, await sweep(userDataDir, unreadable))
+      }
+      console.log(`[speech] recovered the length of ${measured} clip(s) already on disk`)
+      return measured
+    },
+
+    async sweepOrphans() {
+      if (isLive() || rendering) return 0
+      return sweepNow()
+    },
+
+    async cleanOrphans(projectId) {
+      if (isLive()) throw new Error('Cannot clean recordings while a Live session is running')
+      if (rendering) throw new Error('Cannot clean recordings while a render is running')
+
+      const swept = await sweepNow()
+      onStatus?.(await statusFor(projectId))
+      return swept
+    },
+
+    async deleteProjectClips(projectId) {
+      if (isLive()) throw new Error('Cannot delete recordings while a Live session is running')
+      if (rendering) throw new Error('Cannot delete recordings while a render is running')
+
+      const cached = await listCachedHashes(userDataDir)
+      const hashes = clipsOnlyUsedBy(db, projectId, cached)
+      const gone = await sweep(userDataDir, hashes, (hash, error) =>
+        console.error('[speech] could not delete', hash, messageOf(error)),
+      )
+      forgetClips(db, gone)
+      // Dropped whether or not every file went: these rows describe what this
+      // Project rendered, and it no longer claims to have rendered anything.
+      forgetPartRenders(db, projectId)
+      console.log(`[speech] deleted ${gone.length} clip(s) for project ${projectId}`)
+
+      onStatus?.(await statusFor(projectId))
+      return gone.length
+    },
 
     scheduleAutoRender(projectId) {
       if (!getGlobalVoiceSettings(db).autoRender) return
@@ -154,23 +286,6 @@ export function createRenderService(
       }, AUTO_RENDER_DEBOUNCE_MS)
       // Never hold the app open waiting to synthesise.
       autoRenderTimer.unref?.()
-    },
-
-    async sweepOrphans() {
-      if (isLive() || rendering) return 0
-
-      const cached = await listCachedHashes(userDataDir)
-      const orphans = orphanedClips(db, cached)
-      if (orphans.length === 0) return 0
-
-      // Only what actually went: a clip that could not be deleted still exists
-      // and still answers a cache lookup, so forgetting its row would make the
-      // index disagree with the disk.
-      const swept = await sweep(userDataDir, orphans, (hash, error) =>
-        console.error('[speech] could not sweep', hash, messageOf(error)),
-      )
-      forgetClips(db, swept)
-      return swept.length
     },
   }
 }

@@ -397,6 +397,14 @@ function registerIpcHandlers(): void {
     phraseDurations(db, projectId),
   )
 
+  registerIpcHandler('speech:cleanOrphans', ({ projectId }: { projectId: string }) =>
+    render.cleanOrphans(projectId),
+  )
+
+  registerIpcHandler('speech:deleteProjectClips', ({ projectId }: { projectId: string }) =>
+    render.deleteProjectClips(projectId),
+  )
+
   registerIpcHandler('project:setActive', (payload: { projectId: string | null }) => {
     live.setActiveProject(payload.projectId)
     publish.rundownChanged()
@@ -894,9 +902,14 @@ app.whenReady().then(() => {
   // App start is one of the only two moments the cache may be touched (ADR
   // 0005). Deliberately not awaited: a slow sweep must not hold up the window,
   // and a failed one is a disk-space problem, never a reason not to start.
+  // Before the sweep, and for the same reason it is safe here: app start is one
+  // of the two moments the cache may be touched. A clip whose length was lost to
+  // an interrupted render has to be measured before anything counts it as
+  // rendered, or it stays on disk unusable for good.
   render
-    .sweepOrphans()
-    .catch((err: unknown) => console.error('[speech] sweep on start failed:', err))
+    .backfillDurations()
+    .then(() => render?.sweepOrphans())
+    .catch((err: unknown) => console.error('[speech] cache repair on start failed:', err))
   registerIpcHandlers()
   const audioDir = app.isPackaged
     ? join(process.resourcesPath, 'audio')
