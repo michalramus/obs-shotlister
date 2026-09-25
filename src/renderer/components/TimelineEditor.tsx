@@ -10,6 +10,7 @@ import {
   shotStartMs,
   pxAtMs,
 } from '../timeline/coordinates'
+import { usePlaybackProbe } from '../timeline/playback-probe'
 import {
   editPlayheadMs,
   livePlayheadMs,
@@ -602,6 +603,12 @@ export function TimelineEditor({
     [waveformData, waveformSvgWidth],
   )
 
+  // Off unless switched on from the console; see playback-probe.ts. Counting in
+  // the render body is deliberate — it is the only place that sees every render —
+  // so under StrictMode's double render in dev the rate reads 2x.
+  const probe = usePlaybackProbe(isPlaying, getMediaEl)
+  probe.countRender()
+
   const totalMs = useMemo(() => totalDurationMs(shots), [shots])
   const totalPx = useMemo(
     () => Math.max(pxAtMs(totalMs, zoomPxPerSec), 300),
@@ -628,6 +635,7 @@ export function TimelineEditor({
 
   /** Advances the playhead from a RAF tick: paint every frame, commit state rarely. */
   function advancePlayhead(ms: number): void {
+    probe.countFrame()
     paintPlayhead(ms)
     autoScroll(ms)
     const nowMs = performance.now()
