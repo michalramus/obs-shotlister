@@ -486,6 +486,13 @@ export interface RenderProgress {
   completed: number
   total: number
   item: RenderPlanItem
+  /**
+   * The clip, once it is on disk. Reported per item rather than only in the
+   * final result so the caller can persist each duration as it lands — a batch
+   * of sixty clips takes minutes, and a render interrupted halfway must not
+   * leave audio on disk that nothing knows the length of.
+   */
+  clip?: SynthesisedClip
   /** Present when this item failed. */
   error?: string
 }
@@ -540,14 +547,16 @@ export async function renderAll(
     }
     let error: string | undefined
     let fatal = false
+    let clip: SynthesisedClip | undefined
     try {
-      rendered.push(await synthesise(item, opts))
+      clip = await synthesise(item, opts)
+      rendered.push(clip)
     } catch (caught) {
       error = messageOf(caught)
       fatal = isEngineUnusable(caught)
       failed.push({ item, message: error })
     }
-    report({ completed: rendered.length + failed.length, total: items.length, item, error })
+    report({ completed: rendered.length + failed.length, total: items.length, item, clip, error })
 
     // Nothing else in this batch can succeed, and repeating the same message
     // for every remaining clip hides it rather than emphasising it.
