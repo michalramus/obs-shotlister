@@ -127,10 +127,17 @@ const VOICES_REVISION = 'c10ece1aade47bb51c153c893d14e5bf8e5b7117'
 const VOICES_BASE = `https://huggingface.co/rhasspy/piper-voices/resolve/${VOICES_REVISION}`
 
 const VOICES = {
-  // The default Polish voice. `high` rather than `medium`: it is the voice the
-  // band actually hears over Mumble, and a 22kHz model survives that path
-  // noticeably better than a 16kHz one. It costs 114MB against gosia's 63MB,
-  // which is disk on the operator's machine and nothing on show night.
+  // The default Polish voice, and so one that must be on disk before the app has
+  // ever seen a network.
+  'pl_PL-gosia-medium': {
+    path: 'pl/pl_PL/gosia/medium',
+    model: '38f66464240ed74f186e6b7dc13c6e3b22e023426299f25c2b3cc9dfa9373fbc',
+    config: '1aefb31a9d53ffe44a8163ff73ec833acb7a6253848f6bb0403d8a66f9c7510d',
+  },
+  // Not the default, but bundled anyway: it is in use, and a voice that ships
+  // costs an installer once where a voice that does not costs a 114MB download
+  // on the machine that picked it. Drop this entry to make it fetch at runtime
+  // like any other voice.
   'pl_PL-bass-high': {
     path: 'pl/pl_PL/bass/high',
     model: '73b8408967c58118700f21eb2413cd8b666c7844c6136cf674bf5dd56bde72c2',

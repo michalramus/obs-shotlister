@@ -100,7 +100,7 @@ export function savePreviewFirst(db: Database.Database, value: boolean): void {
 // ---------------------------------------------------------------------------
 
 /** What a Project falls back to when it overrides nothing. */
-export const DEFAULT_VOICE = 'pl_PL-bass-high'
+export const DEFAULT_VOICE = 'pl_PL-gosia-medium'
 export const DEFAULT_CONNECTOR = 'za'
 
 // Re-exported so the settings tests read one name, but owned by the scheduler
