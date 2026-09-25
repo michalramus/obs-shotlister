@@ -11,6 +11,7 @@ import {
   defaultPiperCli,
   piperArgs,
   spawnFailureMessage,
+  trimLeadingSilence,
   wavDurationMs,
 } from './engine'
 
@@ -276,5 +277,118 @@ describe('defaultPiperCli', () => {
     expect(defaultPiperCli('darwin', 'x64')).toBe('full')
     expect(defaultPiperCli('linux', 'x64')).toBe('full')
     expect(defaultPiperCli('win32', 'x64')).toBe('full')
+  })
+})
+
+describe('trimLeadingSilence', () => {
+  /** espeak's pad in front of a bare numeral: quiet, then the word. */
+  function padded(sampleRate: number, padSamples: number, speechSamples: number): Buffer {
+    return makeWav(sampleRate, padSamples + speechSamples, (i) => (i < padSamples ? 0 : 8000))
+  }
+
+  it('cuts the silence espeak puts in front of a digit', () => {
+    // 1000Hz makes a sample a millisecond: 260ms of pad, 300ms of speech.
+    const wav = padded(1000, 260, 300)
+    expect(wavDurationMs(wav)).toBe(560)
+
+    // 10ms of pre-roll is kept on purpose, so 300 + 10.
+    expect(wavDurationMs(trimLeadingSilence(wav))).toBe(310)
+  })
+
+  it('gives clips with different pads the same onset, which is the whole point', () => {
+    // "3", "2" and "1" come back from espeak padded by different amounts. Left
+    // alone they are scheduled on exact second marks and heard unevenly.
+    const onsets = [120, 260, 310].map((pad) => {
+      const trimmed = trimLeadingSilence(padded(1000, pad, 300))
+      let first = -1
+      for (let i = 44; i < trimmed.length; i += 2) {
+        if (Math.abs(trimmed.readInt16LE(i)) > 300) {
+          first = (i - 44) / 2
+          break
+        }
+      }
+      return first
+    })
+
+    expect(onsets).toEqual([10, 10, 10])
+  })
+
+  it('makes the clip start speaking when it is played, which is what the scheduler assumes', () => {
+    const trimmed = trimLeadingSilence(padded(1000, 260, 300))
+    expect(trimmed.readInt16LE(44 + 10 * 2)).toBe(8000)
+  })
+
+  it('keeps the audible length intact', () => {
+    expect(audibleDurationMs(trimLeadingSilence(padded(1000, 260, 300)))).toBe(310)
+  })
+
+  it('leaves a clip that already starts on time alone', () => {
+    const wav = makeWav(1000, 300, () => 8000)
+    expect(trimLeadingSilence(wav)).toBe(wav)
+  })
+
+  it('leaves a clip with less silence than the pre-roll alone', () => {
+    const wav = makeWav(1000, 300, (i) => (i < 4 ? 0 : 8000))
+    expect(trimLeadingSilence(wav)).toBe(wav)
+  })
+
+  it('never slices a silent clip down to nothing', () => {
+    // A clip with no audio is a synthesis failure to report, not a buffer to
+    // empty — and an empty one would read as a zero-length Announcement.
+    const wav = makeWav(1000, 300, () => 0)
+    expect(trimLeadingSilence(wav)).toBe(wav)
+  })
+
+  it('keeps the trailing pad, which plays harmlessly under the next clip', () => {
+    const wav = makeWav(1000, 600, (i) => (i >= 100 && i < 400 ? 8000 : 0))
+    const trimmed = trimLeadingSilence(wav)
+    // 90 cut from the front, so 600 - 90.
+    expect(wavDurationMs(trimmed)).toBe(510)
+    expect(audibleDurationMs(trimmed)).toBe(310)
+  })
+
+  it('writes a WAV the duration reader still understands', () => {
+    const trimmed = trimLeadingSilence(padded(22050, 5000, 6000))
+    expect(trimmed.toString('ascii', 0, 4)).toBe('RIFF')
+    expect(trimmed.toString('ascii', 8, 12)).toBe('WAVE')
+    expect(trimmed.readUInt32LE(24)).toBe(22050)
+    expect(trimmed.readUInt32LE(4)).toBe(trimmed.length - 8)
+  })
+
+  it('handles stereo without interleaving the channels wrongly', () => {
+    const sampleRate = 1000
+    const frames = 400
+    const buf = Buffer.alloc(44 + frames * 4)
+    buf.write('RIFF', 0, 'ascii')
+    buf.writeUInt32LE(36 + frames * 4, 4)
+    buf.write('WAVE', 8, 'ascii')
+    buf.write('fmt ', 12, 'ascii')
+    buf.writeUInt32LE(16, 16)
+    buf.writeUInt16LE(1, 20)
+    buf.writeUInt16LE(2, 22)
+    buf.writeUInt32LE(sampleRate, 24)
+    buf.writeUInt32LE(sampleRate * 4, 28)
+    buf.writeUInt16LE(4, 32)
+    buf.writeUInt16LE(16, 34)
+    buf.write('data', 36, 'ascii')
+    buf.writeUInt32LE(frames * 4, 40)
+    for (let i = 0; i < frames; i++) {
+      const v = i < 100 ? 0 : 8000
+      buf.writeInt16LE(v, 44 + i * 4)
+      buf.writeInt16LE(v, 44 + i * 4 + 2)
+    }
+
+    const trimmed = trimLeadingSilence(buf)
+    expect(trimmed.readUInt16LE(22)).toBe(2)
+    // 90 frames cut, both channels, so the body shrinks by 90 * 4 bytes.
+    expect(trimmed.length).toBe(buf.length - 90 * 4)
+  })
+
+  it('leaves anything that is not 16-bit PCM untouched', () => {
+    const wav = riff([
+      fmtChunk({ bitsPerSample: 8 }),
+      chunk({ id: 'data', body: Buffer.alloc(80) }),
+    ])
+    expect(trimLeadingSilence(wav)).toBe(wav)
   })
 })

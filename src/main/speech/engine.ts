@@ -16,7 +16,7 @@
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { access, readFile, rename, rm } from 'node:fs/promises'
+import { access, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { clipHash, type RenderPlanItem } from '../../shared/render-plan'
@@ -277,10 +277,99 @@ export function audibleDurationMs(wav: Buffer): number {
   return Math.min(full, Math.round(((lastAudible + 1) / sampleRate) * 1000))
 }
 
+/**
+ * How much silence to leave in front of the first audible sample, in ms.
+ *
+ * Cutting exactly on the threshold crossing would shave the attack off a
+ * plosive — the "t" of "trzy" is mostly a transient that never reaches the
+ * floor. Ten milliseconds is inaudible against a countdown mark and keeps the
+ * consonant. It is a fixed amount, which is the whole point: every clip then
+ * starts speaking the same distance into itself.
+ */
+const ONSET_PREROLL_MS = 10
+
+/**
+ * Removes the silence espeak puts in front of an utterance.
+ *
+ * Numerals get a couple of hundred milliseconds of it where words get none, and
+ * — the part that actually shows — *not the same amount each time*. Countdown
+ * numbers are scheduled on exact one-second marks, so clips whose speech starts
+ * at different offsets inside themselves are heard at uneven intervals: "3 2 1"
+ * comes out limping even though the schedule is perfect.
+ *
+ * Normalising the onset here is what makes the schedule audible. Measuring the
+ * offset instead and correcting for it would push that correction through the
+ * plan, the database and the renderer; cutting it once, at the point the file is
+ * written, leaves every clip with the property the scheduler already assumes —
+ * that it starts speaking when you play it.
+ *
+ * Only the front. The trailing pad is left alone: it is silence that plays
+ * harmlessly under the next clip, and `audibleDurationMs` already measures past
+ * it.
+ *
+ * Anything not 16-bit PCM, or already tight, comes back untouched.
+ */
+export function trimLeadingSilence(wav: Buffer): Buffer {
+  const view = pcm16View(wav)
+  if (view === null) return wav
+
+  const { start, sampleCount, frameBytes, sampleRate, channels } = view
+  let firstAudible = -1
+  for (let i = 0; i < sampleCount; i++) {
+    if (Math.abs(wav.readInt16LE(start + i * frameBytes)) > SILENCE_FLOOR) {
+      firstAudible = i
+      break
+    }
+  }
+  // Nothing audible at all is left exactly as it is: a clip of pure silence is
+  // a rendering failure to report, not a buffer to slice to nothing.
+  if (firstAudible < 0) return wav
+
+  const preroll = Math.round((ONSET_PREROLL_MS / 1000) * sampleRate)
+  const cutFrames = Math.max(0, firstAudible - preroll)
+  if (cutFrames === 0) return wav
+
+  const body = wav.subarray(start + cutFrames * frameBytes, start + sampleCount * frameBytes)
+  return canonicalWav(body, sampleRate, channels)
+}
+
+/**
+ * A plain 44-byte-header PCM WAV around `body`.
+ *
+ * The trimmed clip is rebuilt rather than patched: the source may carry extra
+ * chunks whose offsets a naive splice would invalidate, and every consumer of
+ * these files only ever wants the samples.
+ */
+function canonicalWav(body: Buffer, sampleRate: number, channels: number): Buffer {
+  const bytesPerSample = 2
+  const byteRate = sampleRate * channels * bytesPerSample
+  const header = Buffer.alloc(44)
+
+  header.write('RIFF', 0, 'ascii')
+  header.writeUInt32LE(36 + body.length, 4)
+  header.write('WAVE', 8, 'ascii')
+  header.write('fmt ', 12, 'ascii')
+  header.writeUInt32LE(16, 16)
+  header.writeUInt16LE(1, 20) // PCM
+  header.writeUInt16LE(channels, 22)
+  header.writeUInt32LE(sampleRate, 24)
+  header.writeUInt32LE(byteRate, 28)
+  header.writeUInt16LE(channels * bytesPerSample, 32)
+  header.writeUInt16LE(8 * bytesPerSample, 34)
+  header.write('data', 36, 'ascii')
+  header.writeUInt32LE(body.length, 40)
+
+  return Buffer.concat([header, body])
+}
+
 /** The `data` chunk of a 16-bit PCM WAV, or null when it is anything else. */
-function pcm16View(
-  wav: Buffer,
-): { start: number; sampleCount: number; frameBytes: number; sampleRate: number } | null {
+function pcm16View(wav: Buffer): {
+  start: number
+  sampleCount: number
+  frameBytes: number
+  sampleRate: number
+  channels: number
+} | null {
   if (wav.length < RIFF_HEADER_BYTES) return null
 
   let channels = 0
@@ -309,7 +398,13 @@ function pcm16View(
 
   if (bitsPerSample !== 16 || channels < 1 || sampleRate <= 0 || start < 0) return null
   const frameBytes = 2 * channels
-  return { start, sampleCount: Math.floor(length / frameBytes), frameBytes, sampleRate }
+  return {
+    start,
+    sampleCount: Math.floor(length / frameBytes),
+    frameBytes,
+    sampleRate,
+    channels,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -505,7 +600,11 @@ export async function synthesise(
       item.text,
       opts,
     )
-    const durationMs = audibleDurationMs(await readFile(temporary))
+    // Trimmed before it is measured, and before it is named: the duration the
+    // scheduler stores has to describe the file that will actually be played.
+    const wav = trimLeadingSilence(await readFile(temporary))
+    await writeFile(temporary, wav)
+    const durationMs = audibleDurationMs(wav)
     await rename(temporary, clipPath(opts.userDataDir, item.hash))
     return { hash: item.hash, durationMs }
   } catch (error) {

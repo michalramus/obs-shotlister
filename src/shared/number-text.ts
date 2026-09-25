@@ -11,11 +11,12 @@
  * language from the first two letters of its id. All of that existed to avoid
  * handing the engine a digit. The engine handles digits.
  *
- * One known consequence, left in place deliberately: espeak pads a bare numeral
- * with roughly a quarter-second of silence at the front, where it pads a spelled
- * word with none. Number n is scheduled to *start* n seconds before its Call, so
- * each one is now spoken about that much after its mark. The clips are otherwise
- * identical — same word, same length of speech — and the pad is not trimmed.
+ * One wrinkle, handled where clips are written rather than here: espeak pads a
+ * bare numeral with a couple of hundred milliseconds of silence at the front,
+ * where it pads a spelled word with none — and not the same amount each time.
+ * Countdown numbers are scheduled on exact one-second marks, so uneven pads are
+ * heard as uneven spacing: "3 2 1" limps despite a perfect schedule. See
+ * `trimLeadingSilence` in main/speech/engine.
  *
  * Numbers 1..60 are rendered once per Voice unconditionally, which is why this
  * covers the whole range rather than just the default countdown set: changing
