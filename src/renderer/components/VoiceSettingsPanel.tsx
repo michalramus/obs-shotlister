@@ -369,6 +369,9 @@ const s = {
     alignItems: 'center',
     gap: '8px',
     marginTop: '10px',
+    // Three buttons, and the middle one has a long label: wrapping beats
+    // squeezing them on a narrow window.
+    flexWrap: 'wrap' as const,
   } satisfies React.CSSProperties,
 
   toggleRow: {
@@ -683,6 +686,7 @@ function RenderStateSection({ projectId }: RenderStateSectionProps): React.JSX.E
   const renderMissing = useAppStore((st) => st.renderMissing)
   const cleanOrphanClips = useAppStore((st) => st.cleanOrphanClips)
   const deleteProjectClips = useAppStore((st) => st.deleteProjectClips)
+  const openAppDataDir = useAppStore((st) => st.openAppDataDir)
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -738,6 +742,16 @@ function RenderStateSection({ projectId }: RenderStateSectionProps): React.JSX.E
     )
   }
 
+  function handleOpenFolder(): void {
+    setError(null)
+    setNote(null)
+    openAppDataDir()
+      .then((dir) => setNote(`Opened ${dir}`))
+      .catch((err: unknown) =>
+        setError(err instanceof Error ? err.message : 'Could not open the app folder.'),
+      )
+  }
+
   const locked = rendering || busy
 
   return (
@@ -782,6 +796,17 @@ function RenderStateSection({ projectId }: RenderStateSectionProps): React.JSX.E
           title="Delete this project's recordings — for an archived project that no longer needs them"
         >
           Delete this project's recordings
+        </button>
+        {/*
+          Never disabled by `locked`: looking at the folder is the one thing that
+          stays useful while a render is running, and it changes nothing.
+        */}
+        <button
+          style={s.smallBtn}
+          onClick={handleOpenFolder}
+          title="Open the app's data folder — the recordings and the database live here"
+        >
+          Open app folder
         </button>
       </div>
       {error !== null && <p style={s.errorText}>{error}</p>}
