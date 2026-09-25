@@ -128,20 +128,13 @@ const VOICES_BASE = `https://huggingface.co/rhasspy/piper-voices/resolve/${VOICE
 
 const VOICES = {
   // The default Polish voice, and so one that must be on disk before the app has
-  // ever seen a network.
-  'pl_PL-gosia-medium': {
-    path: 'pl/pl_PL/gosia/medium',
-    model: '38f66464240ed74f186e6b7dc13c6e3b22e023426299f25c2b3cc9dfa9373fbc',
-    config: '1aefb31a9d53ffe44a8163ff73ec833acb7a6253848f6bb0403d8a66f9c7510d',
-  },
-  // Not the default, but bundled anyway: it is in use, and a voice that ships
-  // costs an installer once where a voice that does not costs a 114MB download
-  // on the machine that picked it. Drop this entry to make it fetch at runtime
-  // like any other voice.
-  'pl_PL-bass-high': {
-    path: 'pl/pl_PL/bass/high',
-    model: '73b8408967c58118700f21eb2413cd8b666c7844c6136cf674bf5dd56bde72c2',
-    config: '7bb41aa14fee87a31cc32264119c09e3553335196d3db15b39b1c18790e13c59',
+  // ever seen a network. Every other voice is fetched on demand — see
+  // src/main/speech/voices.ts — so this list stays at what the app cannot start
+  // without, rather than growing a voice per taste.
+  'pl_PL-mc_speech-medium': {
+    path: 'pl/pl_PL/mc_speech/medium',
+    model: 'a6b043358bc81e6c111a5140606a21959ce7f34969b8b7207f62869787cc3907',
+    config: 'b8bb11228e15c505219846a88fdc129e93f57e774ed7f9bac263156d1aa3d324',
   },
   'en_US-amy-medium': {
     path: 'en/en_US/amy/medium',
