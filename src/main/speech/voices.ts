@@ -27,10 +27,10 @@ import { pipeline } from 'node:stream/promises'
 /**
  * The catalogue revision every voice is taken from.
  *
- * MUST match `VOICES_REVISION` in scripts/fetch-piper.mjs. The two halves of
- * voice installation — build time and runtime — have to agree, or the same
- * voice id would mean different audio depending on how it arrived, and a clip
- * hash says nothing about which.
+ * MUST match `VOICES_REVISION` in scripts/fetch-piper.mjs — a test asserts it,
+ * because the two halves of voice installation, build time and runtime, have to
+ * agree. Were they to drift, the same voice id would mean different audio
+ * depending on how it arrived, and a clip hash says nothing about which.
  *
  * Pinned to a commit rather than `main` for the reason that script gives: the
  * repository is mutable, and a voice that changes under us re-synthesises every

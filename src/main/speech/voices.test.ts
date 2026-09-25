@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { voiceRepoPath } from './voices'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { VOICES_REVISION, voiceRepoPath } from './voices'
 
 describe('voiceRepoPath', () => {
   it('nests a voice the way the catalogue does', () => {
@@ -30,5 +32,19 @@ describe('voiceRepoPath', () => {
   it('rejects a language that is not a language code', () => {
     expect(voiceRepoPath('PL_PL-bass-high')).toBeNull()
     expect(voiceRepoPath('polish_PL-bass-high')).toBeNull()
+  })
+})
+
+describe('VOICES_REVISION', () => {
+  it('matches the revision the build-time fetcher pins', () => {
+    // The two halves of voice installation must agree, or the same voice id
+    // means different audio depending on how it arrived — and a clip hash says
+    // nothing about which. The script is .mjs and cannot be imported from here,
+    // so the constant is read out of its source.
+    const script = readFileSync(join(__dirname, '../../../scripts/fetch-piper.mjs'), 'utf-8')
+    const match = /const VOICES_REVISION = '([0-9a-f]{40})'/.exec(script)
+
+    expect(match, 'VOICES_REVISION not found in scripts/fetch-piper.mjs').not.toBeNull()
+    expect(match?.[1]).toBe(VOICES_REVISION)
   })
 })
