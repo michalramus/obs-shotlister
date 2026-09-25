@@ -272,6 +272,7 @@ export interface TopBarProps {
 
   // Project settings
   onOpenCameraConfig: () => void
+  onOpenPartsConfig: () => void
 }
 
 type OpenMenu = 'audio' | 'file' | 'connections' | null
@@ -297,6 +298,7 @@ export function TopBar({
   onOpenObsPanel,
   onOpenOscPanel,
   onOpenCameraConfig,
+  onOpenPartsConfig,
 }: TopBarProps): React.JSX.Element {
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null)
   const connectionsTitle = connectionsLabel(connections)
@@ -326,7 +328,10 @@ export function TopBar({
         }}
       >
         <span style={styles.appName}>Shotlister</span>
-        <ProjectSelector onOpenCameraConfig={onOpenCameraConfig} />
+        <ProjectSelector
+          onOpenCameraConfig={onOpenCameraConfig}
+          onOpenPartsConfig={onOpenPartsConfig}
+        />
 
         <div style={styles.actions}>
           {/* Audio — mute countdown, mute beep, volume */}

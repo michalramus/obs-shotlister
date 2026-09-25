@@ -58,22 +58,6 @@ const styles = {
     color: '#555',
   } satisfies React.CSSProperties,
 
-  configStrip: {
-    display: 'flex',
-    justifyContent: 'flex-end',
-    padding: '2px 8px',
-    flexShrink: 0,
-  } satisfies React.CSSProperties,
-
-  configStripBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#666',
-    fontSize: '11px',
-    cursor: 'pointer',
-    padding: '2px 4px',
-  } satisfies React.CSSProperties,
-
   warningBanner: {
     background: '#e67e22',
     color: '#fff',
@@ -535,6 +519,7 @@ export default function App(): React.JSX.Element {
         onOpenObsPanel={() => setShowObsPanel(true)}
         onOpenOscPanel={() => setShowOscPanel(true)}
         onOpenCameraConfig={() => setShowCameraConfig(true)}
+        onOpenPartsConfig={() => setShowPartsConfig(true)}
         unrenderedCount={unrenderedCount}
         onOpenVoiceSettings={() => setShowVoicePanel(true)}
       />
@@ -589,21 +574,6 @@ export default function App(): React.JSX.Element {
               decoded waveform — which then had to be decoded from scratch.
             */}
             <div style={styles.center}>
-              {/*
-                Parts sit beside the Cameras panel conceptually, but the Cameras
-                trigger lives in the project menu inside ProjectSelector; until
-                a "Parts…" entry lands there, this strip is the way in, and it
-                shows for every Kind so the panel is where the operator left it.
-              */}
-              <div style={styles.configStrip}>
-                <button
-                  style={styles.configStripBtn}
-                  onClick={() => setShowPartsConfig(true)}
-                  title="Manage parts for this project"
-                >
-                  Parts…
-                </button>
-              </div>
               {activeRundownId !== null && <LiveControls key="live-controls" />}
               <div key="center-content" style={centerContentStyle}>
                 {centerContent}

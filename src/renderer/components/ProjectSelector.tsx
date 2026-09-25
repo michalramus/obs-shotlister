@@ -234,7 +234,11 @@ interface RenameProjectModalProps {
   onClose: () => void
 }
 
-function RenameProjectModal({ projectId, currentName, onClose }: RenameProjectModalProps): React.JSX.Element {
+function RenameProjectModal({
+  projectId,
+  currentName,
+  onClose,
+}: RenameProjectModalProps): React.JSX.Element {
   const [name, setName] = useState(currentName)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -270,7 +274,12 @@ function RenameProjectModal({ projectId, currentName, onClose }: RenameProjectMo
   }
 
   return (
-    <div style={styles.modal} role="dialog" aria-modal="true" aria-labelledby="rename-project-title">
+    <div
+      style={styles.modal}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="rename-project-title"
+    >
       <div style={styles.dialog}>
         <h2 id="rename-project-title" style={styles.dialogTitle}>
           Rename Project
@@ -308,7 +317,11 @@ interface DeleteProjectModalProps {
   onClose: () => void
 }
 
-function DeleteProjectModal({ projectId, projectName, onClose }: DeleteProjectModalProps): React.JSX.Element {
+function DeleteProjectModal({
+  projectId,
+  projectName,
+  onClose,
+}: DeleteProjectModalProps): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const removeProject = useAppStore((s) => s.removeProject)
@@ -326,13 +339,19 @@ function DeleteProjectModal({ projectId, projectName, onClose }: DeleteProjectMo
   }
 
   return (
-    <div style={styles.modal} role="dialog" aria-modal="true" aria-labelledby="delete-project-title">
+    <div
+      style={styles.modal}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="delete-project-title"
+    >
       <div style={styles.dialog}>
         <h2 id="delete-project-title" style={styles.dialogTitle}>
           Delete Project
         </h2>
         <p style={{ margin: 0, color: '#ccc', fontSize: '14px' }}>
-          Delete <strong style={{ color: '#fff' }}>{projectName}</strong> and all its data? This cannot be undone.
+          Delete <strong style={{ color: '#fff' }}>{projectName}</strong> and all its data? This
+          cannot be undone.
         </p>
         {error !== null && <p style={styles.errorText}>{error}</p>}
         <div style={styles.row}>
@@ -354,9 +373,13 @@ function DeleteProjectModal({ projectId, projectName, onClose }: DeleteProjectMo
 
 interface ProjectSelectorProps {
   onOpenCameraConfig: () => void
+  onOpenPartsConfig: () => void
 }
 
-export function ProjectSelector({ onOpenCameraConfig }: ProjectSelectorProps): React.JSX.Element {
+export function ProjectSelector({
+  onOpenCameraConfig,
+  onOpenPartsConfig,
+}: ProjectSelectorProps): React.JSX.Element {
   const projects = useAppStore((s) => s.projects)
   const activeProjectId = useAppStore((s) => s.activeProjectId)
   const setActiveProject = useAppStore((s) => s.setActiveProject)
@@ -432,6 +455,23 @@ export function ProjectSelector({ onOpenCameraConfig }: ProjectSelectorProps): R
                     aria-label="Configure cameras"
                   >
                     Cameras…
+                  </button>
+                  {/*
+                    Beside Cameras because it is the same kind of thing: the
+                    project-wide list of what a Rundown's items can point at,
+                    one list per Kind. Shown for every Kind rather than only for
+                    Voice-over, so a Project can have its Parts set up before it
+                    has a Rundown to use them in.
+                  */}
+                  <button
+                    style={styles.menuItem}
+                    onClick={() => {
+                      setShowProjectMenu(false)
+                      onOpenPartsConfig()
+                    }}
+                    aria-label="Configure parts"
+                  >
+                    Parts…
                   </button>
                   {/*
                     Delete lives behind this menu rather than in the bar row: it
