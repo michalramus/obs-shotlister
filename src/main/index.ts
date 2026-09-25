@@ -206,6 +206,13 @@ function createWindow(): void {
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
+      // Announcements are scheduled with `setTimeout` in the renderer, and
+      // Chromium throttles timers in a window it thinks nobody is looking at —
+      // to once a second, and harder when the window is fully occluded. An
+      // operator who minimises this window, or drags OBS over it, during a show
+      // would get every countdown number late by up to a second. Nothing here
+      // is idle background work; the window is running the show.
+      backgroundThrottling: false,
     },
   })
 
