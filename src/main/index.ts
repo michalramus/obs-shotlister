@@ -103,6 +103,16 @@ import {
   importDatabase as importDatabaseData,
 } from './ipc/exportimport'
 
+/**
+ * Chunk size for streaming Reference media to the renderer.
+ *
+ * Every chunk is one turn of the main-process event loop and one copy in
+ * `toWebStream`, on the same thread that serves IPC, OBS and SQLite. At the
+ * default 64KB a 4K file turns the loop a few hundred times a second for no
+ * benefit — Chromium buffers far ahead of playback either way.
+ */
+const MEDIA_CHUNK_BYTES = 1024 * 1024
+
 // Must be called before app is ready — allows media:// URLs in the renderer
 protocol.registerSchemesAsPrivileged([
   {
@@ -895,13 +905,16 @@ app.whenReady().then(() => {
     const rangeHeader = request.headers.get('range')
 
     if (!rangeHeader) {
-      return new Response(toWebStream(createReadStream(filePath)), {
-        headers: {
-          'Content-Length': fileSize.toString(),
-          'Content-Type': contentType,
-          'Accept-Ranges': 'bytes',
+      return new Response(
+        toWebStream(createReadStream(filePath, { highWaterMark: MEDIA_CHUNK_BYTES })),
+        {
+          headers: {
+            'Content-Length': fileSize.toString(),
+            'Content-Type': contentType,
+            'Accept-Ranges': 'bytes',
+          },
         },
-      })
+      )
     }
 
     const match = rangeHeader.match(/bytes=(\d+)-(\d*)/)
@@ -911,15 +924,18 @@ app.whenReady().then(() => {
     const end = match[2] ? parseInt(match[2], 10) : fileSize - 1
     const chunkSize = end - start + 1
 
-    return new Response(toWebStream(createReadStream(filePath, { start, end })), {
-      status: 206,
-      headers: {
-        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-        'Accept-Ranges': 'bytes',
-        'Content-Length': chunkSize.toString(),
-        'Content-Type': contentType,
+    return new Response(
+      toWebStream(createReadStream(filePath, { start, end, highWaterMark: MEDIA_CHUNK_BYTES })),
+      {
+        status: 206,
+        headers: {
+          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': chunkSize.toString(),
+          'Content-Type': contentType,
+        },
       },
-    })
+    )
   })
 
   _db = getDatabase()
