@@ -320,6 +320,7 @@ export function TimelineEditor({
   const [waveformError, setWaveformError] = useState(false)
   const [mediaFileNotFound, setMediaFileNotFound] = useState(false)
   const [containerWidth, setContainerWidth] = useState(800)
+  const [overviewWidth, setOverviewWidth] = useState(300)
   const [lyricInMs, setLyricInMs] = useState<number | null>(null)
   const [lyricDraft, setLyricDraft] = useState<LyricDraft | null>(null)
   const [selectedLyricId, setSelectedLyricId] = useState<string | null>(null)
@@ -358,6 +359,12 @@ export function TimelineEditor({
   const rundownMediaRef = useRef(rundownMedia)
   const totalMsRef = useRef(0)
   const totalPxRef = useRef(0)
+  // Element widths, mirrored so the per-frame paint functions never read layout.
+  // Reading clientWidth after writing a style or scrollLeft forces a synchronous
+  // layout, and these run on every animation frame. A ResizeObserver is the only
+  // thing that can change them, so a mirror cannot go stale.
+  const overviewWidthRef = useRef(300)
+  const scrollerWidthRef = useRef(800)
   const playheadTimeElRef = useRef<HTMLSpanElement>(null)
   const overviewPlayheadElRef = useRef<HTMLDivElement>(null)
   const viewportRectElRef = useRef<HTMLDivElement>(null)
@@ -612,8 +619,7 @@ export function TimelineEditor({
     if (playheadTimeElRef.current) playheadTimeElRef.current.textContent = formatPlayhead(ms)
     const marker = overviewPlayheadElRef.current
     if (marker && totalMsRef.current > 0) {
-      const ow = overviewRef.current?.clientWidth ?? 300
-      marker.style.left = `${(ms / totalMsRef.current) * ow}px`
+      marker.style.left = `${(ms / totalMsRef.current) * overviewWidthRef.current}px`
     }
   }
 
@@ -631,11 +637,13 @@ export function TimelineEditor({
   /** Keeps the overview viewport rect in sync without a React render. */
   function paintViewportRect(scrollLeft: number): void {
     const rect = viewportRectElRef.current
-    const scroller = scrollContainerRef.current
-    if (!rect || !scroller || totalPxRef.current <= 0) return
-    const ow = overviewRef.current?.clientWidth ?? 300
+    if (!rect || totalPxRef.current <= 0) return
+    const ow = overviewWidthRef.current
     const vpLeft = (scrollLeft / totalPxRef.current) * ow
-    const vpRight = Math.min(ow, vpLeft + (scroller.clientWidth / totalPxRef.current) * ow)
+    const vpRight = Math.min(
+      ow,
+      vpLeft + (scrollerWidthRef.current / totalPxRef.current) * ow,
+    )
     rect.style.left = `${vpLeft}px`
     rect.style.width = `${Math.max(4, vpRight - vpLeft)}px`
   }
@@ -792,11 +800,25 @@ export function TimelineEditor({
   useLayoutEffect(() => {
     const el = scrollContainerRef.current
     if (!el) return
-    const ro = new ResizeObserver(() => {
-      setContainerWidth(el.clientWidth)
-    })
+    const overview = overviewRef.current
+
+    // The single place either width is read. Everything else — the per-frame
+    // paint functions and the render body alike — uses the mirrors.
+    function measure(): void {
+      if (el) {
+        scrollerWidthRef.current = el.clientWidth
+        setContainerWidth(el.clientWidth)
+      }
+      if (overview) {
+        overviewWidthRef.current = overview.clientWidth
+        setOverviewWidth(overview.clientWidth)
+      }
+    }
+
+    const ro = new ResizeObserver(measure)
     ro.observe(el)
-    setContainerWidth(el.clientWidth)
+    if (overview) ro.observe(overview)
+    measure()
     return () => ro.disconnect()
   }, [])
 
@@ -2482,7 +2504,7 @@ export function TimelineEditor({
       >
         {/* Shot blocks in overview */}
         {shots.map((shot, i) => {
-          const ow = overviewRef.current?.clientWidth ?? 300
+          const ow = overviewWidth
           const left = (shotOffsets[i] / totalPx) * ow
           const width =
             pxAtMs(dragOverride[shot.id] ?? shot.durationMs, zoomPxPerSec) * (ow / totalPx)
@@ -2507,7 +2529,7 @@ export function TimelineEditor({
             ref={overviewPlayheadElRef}
             style={{
               position: 'absolute',
-              left: (playheadMs / totalMs) * (overviewRef.current?.clientWidth ?? 300),
+              left: (playheadMs / totalMs) * overviewWidth,
               top: 0,
               width: 1,
               height: OVERVIEW_HEIGHT,
@@ -2521,8 +2543,7 @@ export function TimelineEditor({
         {/* Viewport rect */}
         {totalPx > 0 &&
           (() => {
-            const ow = overviewRef.current?.clientWidth ?? 300
-            const containerWidth = scrollContainerRef.current?.clientWidth ?? 200
+            const ow = overviewWidth
             const vpLeft = (currentScrollLeft / totalPx) * ow
             const vpRight = Math.min(ow, vpLeft + (containerWidth / totalPx) * ow)
             const vpWidth = Math.max(4, vpRight - vpLeft)
