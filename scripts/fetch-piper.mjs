@@ -126,22 +126,23 @@ const TARGETS = {
 const VOICES_REVISION = 'c10ece1aade47bb51c153c893d14e5bf8e5b7117'
 const VOICES_BASE = `https://huggingface.co/rhasspy/piper-voices/resolve/${VOICES_REVISION}`
 
-const VOICES = {
-  // The default Polish voice, and so one that must be on disk before the app has
-  // ever seen a network. Every other voice is fetched on demand — see
-  // src/main/speech/voices.ts — so this list stays at what the app cannot start
-  // without, rather than growing a voice per taste.
-  'pl_PL-mc_speech-medium': {
-    path: 'pl/pl_PL/mc_speech/medium',
-    model: 'a6b043358bc81e6c111a5140606a21959ce7f34969b8b7207f62869787cc3907',
-    config: 'b8bb11228e15c505219846a88fdc129e93f57e774ed7f9bac263156d1aa3d324',
-  },
-  'en_US-amy-medium': {
-    path: 'en/en_US/amy/medium',
-    model: 'b3a6e47b57b8c7fbe6a0ce2518161a50f59a9cdd8a50835c02cb02bdd6206c18',
-    config: '95a23eb4d42909d38df73bb9ac7f45f597dbfcde2d1bf9526fdeaf5466977d77',
-  },
-}
+/**
+ * Voices bundled with the app. Deliberately empty.
+ *
+ * Every voice is fetched on demand at runtime instead — see
+ * src/main/speech/voices.ts — because one model is 60-110MB, there are hundreds
+ * of them, and whichever we guessed would land in every installer for a voice
+ * most operators change anyway.
+ *
+ * The machinery below still works. To bundle one again, put it back here with
+ * its checksums and run this script; anything no longer listed is pruned, so
+ * the shipped set is always exactly this object.
+ *
+ * Checksums are SHA-256 of the file's own bytes. For a model, Hugging Face's
+ * `lfs.oid` is already that; a config is a small git blob, so its `oid` is a
+ * SHA-1 and cannot be used — hash the downloaded file instead.
+ */
+const VOICES = {}
 
 // ---------------------------------------------------------------------------
 // Download and verification
