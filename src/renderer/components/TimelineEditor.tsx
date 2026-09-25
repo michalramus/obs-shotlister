@@ -337,7 +337,6 @@ export function TimelineEditor({
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const isPlayingRef = useRef(isPlaying)
   const runningRef = useRef(running)
-  const isAutoScrollingRef = useRef(false)
   const dragStateRef = useRef<DragState | null>(null)
   const markerDragStateRef = useRef<MarkerDragState | null>(null)
   const mediaDragStateRef = useRef<MediaDragState | null>(null)
@@ -690,6 +689,7 @@ export function TimelineEditor({
       advancePlayhead(newMs)
       if (newMs >= totalMs) {
         commitPlayhead()
+        commitScrollLeft()
         setIsPlaying(false)
         vid?.pause()
         return
@@ -703,6 +703,7 @@ export function TimelineEditor({
         editRafRef.current = null
       }
       commitPlayhead()
+      commitScrollLeft()
     }
   }, [isPlaying, running, totalMs, zoomPxPerSec, rundownMedia]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -739,6 +740,7 @@ export function TimelineEditor({
         liveRafRef.current = null
       }
       commitPlayhead()
+      commitScrollLeft()
     }
   }, [running, liveIndex, startedAt, zoomPxPerSec]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -755,8 +757,16 @@ export function TimelineEditor({
     function onScroll(): void {
       if (!el) return
       const sl = el.scrollLeft
-      // Auto-scroll fires this every frame; autoScroll() already painted the rect.
-      if (isAutoScrollingRef.current) return
+      // While the playhead is moving, every one of these events is the echo of
+      // our own `autoScroll` write, and `autoScroll` has already painted the
+      // viewport rect imperatively. Committing `sl` to state here would re-render
+      // the whole timeline once per frame — which is exactly what defeated the
+      // 10Hz commit budget. It cannot be guarded with a flag cleared in a
+      // `setTimeout(0)`: Chromium dispatches `scroll` during the *next* frame's
+      // rendering steps, long after that task has run, so the flag was always
+      // back to false by the time this fired. `commitScrollLeft` catches the
+      // final position when playback stops.
+      if (isPlayingRef.current || runningRef.current) return
       setCurrentScrollLeft(sl)
       if (
         !isPlayingRef.current &&
@@ -804,12 +814,24 @@ export function TimelineEditor({
     if (!isPlayingRef.current && !runningRef.current) return
     const el = scrollContainerRef.current
     if (!el) return
-    isAutoScrollingRef.current = true
-    el.scrollLeft = pxAtMs(ms, zoomRef.current)
-    paintViewportRect(el.scrollLeft)
-    setTimeout(() => {
-      isAutoScrollingRef.current = false
-    }, 0)
+    // Pass the value we just wrote rather than reading `scrollLeft` back:
+    // reading it immediately after writing forces a synchronous layout, and this
+    // runs on every animation frame.
+    const px = pxAtMs(ms, zoomRef.current)
+    el.scrollLeft = px
+    paintViewportRect(px)
+  }
+
+  /**
+   * Pushes the scroll position into React state when playback stops.
+   *
+   * `onScroll` ignores everything while the playhead drives the scroller, so
+   * without this the overview's viewport rect would snap back to wherever the
+   * timeline was when playback started, on the next render after it ends.
+   */
+  function commitScrollLeft(): void {
+    const el = scrollContainerRef.current
+    if (el) setCurrentScrollLeft(el.scrollLeft)
   }
 
   function getMediaEl(): HTMLVideoElement | HTMLAudioElement | null {
@@ -2450,12 +2472,11 @@ export function TimelineEditor({
               totalPx -
             containerWidth / 2
           if (scrollContainerRef.current) {
-            const el2 = scrollContainerRef.current
-            isAutoScrollingRef.current = true
-            el2.scrollLeft = Math.max(0, targetScrollLeft)
-            setTimeout(() => {
-              isAutoScrollingRef.current = false
-            }, 0)
+            // No suppression of the resulting `scroll` event: the playhead is
+            // pinned to a fixed screen position, so scroll position *is* playhead
+            // position while stopped. Letting `onScroll` move the playhead and
+            // seek the media is what keeps the two in step.
+            scrollContainerRef.current.scrollLeft = Math.max(0, targetScrollLeft)
           }
         }}
       >
