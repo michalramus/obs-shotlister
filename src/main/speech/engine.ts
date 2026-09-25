@@ -15,12 +15,13 @@
 
 import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { access, readFile, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { clipHash, type RenderPlanItem } from '../../shared/render-plan'
 import { clipPath, ensureClipsDir } from './cache'
+import type { VoiceFiles } from './voices'
 
 export { CLIP_EXTENSION, clipPath, clipsDir, listCachedHashes, sweep } from './cache'
 
@@ -58,10 +59,25 @@ function piperDir(): string {
     : join(app.getAppPath(), 'resources', 'piper', `${process.platform}-${process.arch}`)
 }
 
-function voicesDir(): string {
+/**
+ * The two voices that ship with the app. Read-only in a packaged build, which
+ * is why it cannot also be where a downloaded voice lands.
+ */
+export function bundledVoicesDir(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'piper-voices')
     : join(app.getAppPath(), 'resources', 'piper-voices')
+}
+
+/**
+ * Where a voice fetched at runtime is kept.
+ *
+ * Under userData rather than in the app bundle, for the same reason the clip
+ * cache is: a packaged app's resources are read-only, and this is per-operator
+ * anyway — one machine's set of voices is not a property of the install.
+ */
+export function downloadedVoicesDir(userDataDir: string): string {
+  return join(userDataDir, 'piper-voices')
 }
 
 export function piperBinaryPath(): string {
@@ -138,14 +154,27 @@ export function piperArgs(
   ]
 }
 
-export function voiceModelPath(voice: string): string {
+/**
+ * Where a voice's model and config are, if they are anywhere.
+ *
+ * The bundled directory wins over the downloaded one: a voice that shipped with
+ * the app is the one that was verified at build time, and an operator should
+ * never end up running a different copy of it because something once wrote into
+ * userData.
+ *
+ * Piper's own convention puts the config beside the model as `<model>.json`, so
+ * a directory holding one and not the other is a half-installed voice and does
+ * not count.
+ */
+export function resolveVoice(voice: string, userDataDir: string): VoiceFiles | null {
   if (!VOICE_PATTERN.test(voice)) throw new Error(`invalid voice id ${JSON.stringify(voice)}`)
-  return join(voicesDir(), `${voice}.onnx`)
-}
 
-/** Piper's own convention: the config sits beside the model as `<model>.json`. */
-export function voiceConfigPath(voice: string): string {
-  return `${voiceModelPath(voice)}.json`
+  for (const dir of [bundledVoicesDir(), downloadedVoicesDir(userDataDir)]) {
+    const model = join(dir, `${voice}.onnx`)
+    const config = `${model}.json`
+    if (existsSync(model) && existsSync(config)) return { model, config }
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -351,11 +380,19 @@ function engineUnusable(error: NodeJS.ErrnoException): EngineUnusableError {
   return new EngineUnusableError(spawnFailureMessage(error, piperBinaryPath()))
 }
 
+/**
+ * Missing here is an engine problem, not a clip problem.
+ *
+ * A binary or a voice that is not on disk will be just as absent for the sixty
+ * clips behind this one, so this is raised as unusable: the batch stops after
+ * one line instead of repeating the same sentence sixty-one times, which is how
+ * a missing voice used to fill a terminal and hide everything above it.
+ */
 async function assertReadable(path: string, what: string): Promise<void> {
   try {
     await access(path)
   } catch {
-    throw new Error(`${what} is missing: ${path} — run \`yarn fetch:piper\``)
+    throw new EngineUnusableError(`${what} is missing: ${path} — run \`yarn fetch:piper\``)
   }
 }
 
@@ -448,11 +485,16 @@ export async function synthesise(
   if (/[\r\n]/.test(item.text)) throw new Error('cannot synthesise text containing a newline')
 
   const binary = piperBinaryPath()
-  const model = voiceModelPath(item.voice)
-  const config = voiceConfigPath(item.voice)
   await assertReadable(binary, 'the Piper binary')
-  await assertReadable(model, `voice ${item.voice}`)
-  await assertReadable(config, `the config for voice ${item.voice}`)
+
+  // Installing it is the caller's job, done once per batch before any of this —
+  // downloading a model in here would do it per clip. By now it is either on
+  // disk or the batch should already have stopped.
+  const voiceFiles = resolveVoice(item.voice, opts.userDataDir)
+  if (!voiceFiles) {
+    throw new EngineUnusableError(`voice ${item.voice} is not installed, and could not be fetched`)
+  }
+  const { model, config } = voiceFiles
 
   const dir = await ensureClipsDir(opts.userDataDir)
   const temporary = join(dir, `.${item.hash}.${randomBytes(6).toString('hex')}.part`)
