@@ -654,7 +654,29 @@ export function TimelineEditor({
     setPlayheadMs(playheadMsRef.current)
   }
 
-  // Edit-mode RAF loop
+  // Edit-mode transport. Separate from the RAF loop below so that zooming or
+  // editing a Shot duration mid-playback cannot restart the media element.
+  useEffect(() => {
+    if (!isPlaying || running) return
+    const vid = getMediaEl()
+    if (!vid) return
+    // currentTime is already synced by the stopped-state useEffect.
+    // Reset wallMs to now so elapsed starts from when play() is actually called.
+    if (playStartRef.current) playStartRef.current.wallMs = performance.now()
+    void vid.play().catch((err: unknown) => {
+      console.error('[TimelineEditor] play() failed:', err)
+    })
+    // Pausing is not this effect's job: every caller that clears `isPlaying`
+    // already pauses and re-seeks, and the `running` effect pauses on going live.
+  }, [isPlaying, running]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Edit-mode RAF loop.
+  //
+  // Deps are only what starts and stops it. Everything the tick reads that can
+  // change during playback — the total duration, the zoom, the Reference media
+  // offset — comes from a ref, because re-running this effect would cancel and
+  // restart the loop and reset the playback origin on every zoom step and every
+  // Shot edit.
   useEffect(() => {
     if (!isPlaying || running) {
       if (editRafRef.current !== null) {
@@ -663,35 +685,17 @@ export function TimelineEditor({
       }
       return
     }
-    // currentTime is already synced by the stopped-state useEffect.
-    // Reset wallMs to now so elapsed starts from when play() is actually called.
-    if (playStartRef.current) playStartRef.current.wallMs = performance.now()
-    const vid = getMediaEl()
-    console.log(
-      '[TimelineEditor] play() on:',
-      vid?.nodeName,
-      vid?.src,
-      'readyState:',
-      vid?.readyState,
-      'currentTime:',
-      vid?.currentTime,
-    )
-    if (vid) {
-      void vid.play().catch((err: unknown) => {
-        console.error('[TimelineEditor] play() failed:', err)
-      })
-    }
     function tick(): void {
       const origin = playStartRef.current
       if (!origin) return
       const vid = getMediaEl()
+      const media = rundownMediaRef.current
+      const totalMs = totalMsRef.current
       const newMs = editPlayheadMs({
         origin,
         nowMs: performance.now(),
         media:
-          vid && rundownMedia
-            ? { currentTimeSec: vid.currentTime, offsetMs: rundownMedia.offsetMs }
-            : null,
+          vid && media ? { currentTimeSec: vid.currentTime, offsetMs: media.offsetMs } : null,
         totalMs,
       })
       advancePlayhead(newMs)
@@ -713,7 +717,7 @@ export function TimelineEditor({
       commitPlayhead()
       commitScrollLeft()
     }
-  }, [isPlaying, running, totalMs, zoomPxPerSec, rundownMedia]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isPlaying, running]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live-mode RAF loop
   useEffect(() => {
@@ -750,7 +754,10 @@ export function TimelineEditor({
       commitPlayhead()
       commitScrollLeft()
     }
-  }, [running, liveIndex, startedAt, zoomPxPerSec]) // eslint-disable-line react-hooks/exhaustive-deps
+    // `zoomPxPerSec` is deliberately absent: the tick reaches it through
+    // `zoomRef` inside `autoScroll`, and listing it here would cancel and
+    // restart the loop on every zoom step during a Live session.
+  }, [running, liveIndex, startedAt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // When liveIndex changes, scroll to the new shot's start position
   useEffect(() => {
