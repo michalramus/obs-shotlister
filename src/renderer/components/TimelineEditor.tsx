@@ -540,6 +540,23 @@ export function TimelineEditor({
         audioPlayRef.current = audio
       }
 
+      // Peaks remembered from a previous load of this exact file. Decoding is the
+      // expensive part — the whole container buffered and decoded — so a hit here
+      // is the difference between a multi-second freeze and an instant lane.
+      try {
+        const cached = await window.api.mediaPeaks.get(rundownMedia!.filePath)
+        if (cancelled) return
+        if (cached) {
+          setMediaDurationMs(cached.durationMs)
+          setWaveformData(cached.peaks)
+          return
+        }
+      } catch (err) {
+        // A cache miss and a broken cache must look the same: carry on and decode.
+        console.error('[TimelineEditor] peaks cache read failed:', err)
+        if (cancelled) return
+      }
+
       try {
         // Stream the bytes through the media:// protocol rather than pulling the
         // whole file across IPC — a multi-GB video would otherwise be structured-
@@ -584,7 +601,18 @@ export function TimelineEditor({
           }
           peaks.push(max)
         }
-        if (!cancelled) setWaveformData(peaks)
+        if (cancelled) return
+        setWaveformData(peaks)
+        // Remember them so the next load of this file skips all of the above.
+        void window.api.mediaPeaks
+          .put({
+            filePath: rundownMedia!.filePath,
+            peaks,
+            durationMs: audioBuffer.duration * 1000,
+          })
+          .catch((err: unknown) => {
+            console.error('[TimelineEditor] peaks cache write failed:', err)
+          })
       } catch (err) {
         console.error('[TimelineEditor] waveform decode error:', err)
         if (!cancelled) setWaveformError(describeDecodeFailure(err))

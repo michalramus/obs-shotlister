@@ -446,6 +446,18 @@ export interface IpcContract {
   'rundown:media:clear': { payload: { rundownId: string }; result: void }
   'rundown:media:open-dialog': { payload: NoPayload; result: FileDialogResult }
   'media:file-exists': { payload: string; result: boolean }
+  /**
+   * Waveform peaks remembered for a media file, or null when there is nothing
+   * fresh for it. Saves re-decoding a whole 4K container on every Rundown switch.
+   */
+  'media:peaks:get': {
+    payload: string
+    result: { peaks: number[]; durationMs: number } | null
+  }
+  'media:peaks:put': {
+    payload: { filePath: string; peaks: number[]; durationMs: number }
+    result: void
+  }
 
   // --- OSC ---
   'osc:settings:get': { payload: NoPayload; result: { enabled: boolean; port: number } }
@@ -641,6 +653,10 @@ export interface ElectronApi {
     setMode: Request<'ui:setMode'>
   }
   mediaFileExists: Request<'media:file-exists'>
+  mediaPeaks: {
+    get: Request<'media:peaks:get'>
+    put: Request<'media:peaks:put'>
+  }
   exportImport: {
     exportProject: Request<'export:project'>
     exportRundown: Request<'export:rundown'>
@@ -751,6 +767,8 @@ export const IPC_CHANNELS = [
   'rundown:media:clear',
   'rundown:media:open-dialog',
   'media:file-exists',
+  'media:peaks:get',
+  'media:peaks:put',
   'osc:settings:get',
   'osc:settings:save',
   'ui:setMode',

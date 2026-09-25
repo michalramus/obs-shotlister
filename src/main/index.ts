@@ -4,6 +4,7 @@ import { readFileSync, existsSync, createReadStream, promises as fsPromises } fr
 import { extname } from 'path'
 import { fromMediaUrl } from '../shared/media-url'
 import { toWebStream } from './media-stream'
+import { createWaveformCache } from './waveform-cache'
 import { startServer } from './server'
 import { createVirtualSinkManager, loopbackHints } from './audio/virtual-sink'
 import { registerIpcHandler, pushToWindow } from './ipc/register'
@@ -136,6 +137,10 @@ let render: RenderService
 let obsAutoReconnect = false
 let obsReconnectTimer: ReturnType<typeof setTimeout> | null = null
 let currentUiMode: 'edit' | 'live' = 'edit'
+
+// Peaks live beside the rest of this operator's state, not in the project
+// database: they are derived from a file on this machine. See waveform-cache.ts.
+const waveformCache = createWaveformCache(app.getPath('userData'))
 
 // --- Global error handlers ---------------------------------------------------
 // These must never crash the process — log and continue.
@@ -729,6 +734,17 @@ function registerIpcHandlers(): void {
       return false
     }
   })
+
+  registerIpcHandler('media:peaks:get', (filePath: string) => waveformCache.get(filePath))
+
+  registerIpcHandler(
+    'media:peaks:put',
+    (payload: { filePath: string; peaks: number[]; durationMs: number }) =>
+      waveformCache.put(payload.filePath, {
+        peaks: payload.peaks,
+        durationMs: payload.durationMs,
+      }),
+  )
 
   registerIpcHandler('rundown:media:open-dialog', async () => {
     const result = await dialog.showOpenDialog({

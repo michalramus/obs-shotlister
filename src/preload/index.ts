@@ -152,6 +152,10 @@ const api: ElectronApi = {
     setMode: request('ui:setMode'),
   },
   mediaFileExists: request('media:file-exists'),
+  mediaPeaks: {
+    get: request('media:peaks:get'),
+    put: request('media:peaks:put'),
+  },
   exportImport: {
     exportProject: request('export:project'),
     exportRundown: request('export:rundown'),
