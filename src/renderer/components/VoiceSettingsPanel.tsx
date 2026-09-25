@@ -1174,16 +1174,19 @@ export function VoiceSettingsPanel({ onClose }: VoiceSettingsPanelProps): React.
               style={s.toggleTrack(voiceSettings?.autoRender === true)}
               onClick={() => saveGlobal({ autoRender: !(voiceSettings?.autoRender === true) })}
               aria-label={
-                voiceSettings?.autoRender === true ? 'Disable auto-render' : 'Enable auto-render'
+                voiceSettings?.autoRender === true
+                  ? 'Disable auto rendering'
+                  : 'Enable auto rendering'
               }
             >
               <span style={s.toggleThumb(voiceSettings?.autoRender === true)} />
             </button>
-            <span>Render on change</span>
+            <span>Auto rendering</span>
           </div>
           <p style={s.hint}>
-            On, edits are synthesised in the background shortly after you make them. Off, nothing is
-            synthesised until you ask - which is what a slow machine wants while you are editing.
+            On, anything unrendered is synthesised in the background shortly after it appears —
+            after an edit, a voice change, opening a project, or starting the app. Off, nothing is
+            synthesised until you ask, which is what a slow machine wants while you are editing.
           </p>
         </div>
 
