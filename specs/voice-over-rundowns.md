@@ -69,8 +69,10 @@ Hidden and Skipped Calls extend the countdown exactly as they do for the Cue Tra
   - **flush** (default): the phrase is scheduled backwards from the first number using the
     clip's stored duration, so phrase and countdown form one continuous utterance.
   - **immediate**: the phrase plays the moment the previous Call goes live.
-- A Call too short for the full countdown plays from the largest number that still fits. A
-  Call too short for even the phrase drops its Announcement and is badged in Edit mode.
+- Every Announcement is classified as **full** (phrase plus every number), **phrase-only** (the
+  Call fits the name but no number) or **dropped** (not even the phrase fits). A Call too short
+  for the full countdown plays from the largest number that still fits; phrase-only and dropped
+  are badged on the timeline and warned about in Edit mode.
 - On overrun nothing is played. The Announcement fires once per Call and never repeats,
   matching ADR 0002.
 - Collisions: an Announcement starting while another is in flight cuts the old one off.
@@ -86,18 +88,27 @@ Hidden and Skipped Calls extend the countdown exactly as they do for the Cue Tra
 
 ## Rendering
 
-See ADR 0005. Clips live under `userData/tts/<hash>.opus`, hashed on (text, Voice, engine),
-with `duration_ms` stored alongside each. Engine is Piper, bundled per platform; Voice is a
-global setting with a Project override.
+See ADR 0005. Clips live under `<userData>/speech/<hash>.wav`, hashed on (text, Voice, engine),
+each recorded in the `speech_clips` table with its `duration_ms`. Engine is Piper, bundled per
+platform; Voice is a global setting with a Project override.
 
-- Numbers 1..60 are rendered once per Voice.
-- Phrase clips are rendered once per Part.
+- Numbers 1..60 are rendered once per Voice, synthesised from the digits rather than from
+  spelled-out words, so a Voice needs no per-language number list.
+- Phrase clips are rendered once per Part. `part_renders` records which clip a Part was last
+  rendered to, so a renamed Part reads as stale rather than as never rendered.
 - Render state per Part: rendered / stale / never rendered.
-- Settings toggle: auto-render on change (debounced) or manual only.
+- Settings toggle **Auto rendering**: on, anything unrendered is synthesised in the background
+  shortly after it appears — after an edit, a Voice change, opening a Project, or app start. Off,
+  nothing is synthesised until asked.
 - Project-wide status with one **Render all missing** action covering every Rundown in the
-  Project.
-- A stale or missing render warns at Live start; it does not block.
+  Project, reporting each clip as it lands. Beside it, **Clean unused** deletes clips no Project
+  points at, **Delete this project's recordings** clears an archived Project, and **Open app
+  folder** reveals the cache.
+- A stale or missing render warns at Live start and in a top-bar strip; it does not block.
 - Orphaned clips are swept on app start and on app close only, never during a session.
+- Voice models are not bundled (ADR 0007). One is fetched the first time a render needs it, into
+  `<userData>/piper-voices`, verified against a pinned catalogue revision. A missing binary or
+  voice is reported as one engine failure, not as a failure per clip.
 - The engine is bundled per platform by `scripts/fetch-piper.mjs`, every artifact pinned by
   checksum. Apple Silicon is the exception: upstream's `aarch64` asset is mislabelled and
   actually x86_64, so arm64 uses a community build with a smaller command line — `--model`
@@ -118,7 +129,10 @@ Parts are assigned exactly as Cameras are: keys **1-9** then **q w e r t y u i o
 the first nineteen Parts in scope, plus a button bar and a type-to-filter picker. Calls are
 split, resized and reordered against Reference media identically to Shots.
 
-An **Add new description** button and hotkey opens a one-field dialog; Enter creates the
+Parts are managed from **⚙ Project → Parts…**, beside Cameras, and are shown for every Kind so a
+Project can have its Parts set up before it has a Voice-over Rundown to use them in.
+
+An **Add new description** button and the **N** hotkey open a one-field dialog; Enter creates the
 Part at **Rundown** scope, to be promoted later from the Parts panel.
 
 Parts carry a colour and the timeline colour-codes Calls by it. Grouping is convention only:

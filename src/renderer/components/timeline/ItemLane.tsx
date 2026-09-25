@@ -176,9 +176,13 @@ function ItemLaneImpl({
                       fontSize: '10px',
                       fontWeight: 700,
                       lineHeight: 1,
-                      borderRadius: '2px',
-                      pointerEvents: 'all',
-                      zIndex: 6,
+                      borderRadius: '0 0 3px 0',
+                      // Must not take the pointer: the block behind it carries the
+                      // full tooltip (name, duration *and* the warning), and a flag
+                      // that swallowed hover would show only half of it — on
+                      // exactly the sliver-wide Calls this warning is about.
+                      pointerEvents: 'none',
+                      zIndex: 3,
                     }}
                   >
                     ⚠

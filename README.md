@@ -2,6 +2,8 @@
 
 Camera shot queue manager for live productions(something like cuepilot but without the timecode). Runs as an Electron desktop app with an embedded web server so phone browsers on the same LAN can monitor the live shot list.
 
+A rundown is one of two Kinds. A **Camera Rundown** holds Shots and switches OBS. A **Voice-over Rundown** holds Calls and, instead of switching anything, speaks the next song part and a countdown to the band.
+
 ## Screenshots
 
 ### Edit mode
@@ -14,16 +16,21 @@ Camera shot queue manager for live productions(something like cuepilot but witho
 
 ## Features
 
-- **Shot list & rundowns** — organize shots into rundowns with per-camera color coding
-- **Timeline editor** — visual timeline with drag-to-resize shots, split at playhead, camera assignment
-- **Live mode** — advance through shots with progress tracking; skipped shots are hidden in-memory (no DB writes)
-- **OBS integration** — switches scenes via obs-websocket; validates studio mode and scene names
-- **Phone monitor** — embedded Express + Socket.io server pushes state to LAN browsers in real time
+- **Shot list & rundowns** — organize shots into rundowns and folders, with per-camera color coding
+- **Two rundown kinds** — Camera Rundowns (Shots, OBS) and Voice-over Rundowns (Calls, spoken announcements). Convertible either way; assignments for both kinds are kept, so converting back restores them
+- **Timeline editor** — drag-to-resize items, split at playhead, camera or part assignment, markers, and a **Lyrics track** for orientation in the song
+- **Reference media** — align an audio/video file to a rundown and edit against its waveform. Files stream in 1 MB chunks, so multi-gigabyte media loads, and decoded peaks are cached between loads
+- **Live mode** — advance through items with progress tracking; skipped items are hidden in-memory (no DB writes)
+- **Spoken announcements** — a Voice-over Rundown says the part name and a countdown ("gitara za 10, 5, 3, 2, 1") from clips synthesised ahead of the show; nothing is synthesised while a session runs
+- **Speech that installs itself** — the Piper engine ships with the app, voice models are downloaded on first use against a pinned catalogue
+- **OBS integration** — switches scenes via obs-websocket; validates studio mode and scene names. Never contacted for a Voice-over Rundown
+- **Phone monitor** — embedded Express + Socket.io server pushes state to LAN browsers in real time; a Voice-over Rundown shows unfiltered, named by its parts
 - **Cue Tray** — small companion app for the video switching computer that plays the countdown and beep over the LAN
 - **OSC server** — accept `/obsque/next` and `/obsque/skip` commands from external controllers
 - **Intercom output** — plays a copy of every cue and announcement into a loopback device, so Mumble (or any voice client) can carry the show to an intercom
 - **DaVinci Resolve import** — import shot list from Resolve CSV marker export
-- **Export / Import** — rundown, project, or full database in JSON
+- **Export / Import** — rundown, project, or full database in JSON, carrying kinds, parts, calls and lyrics
+- **Separate audio routes** — operator cues and announcements each play on their own output device, so announcements can feed a virtual cable into Mumble
 
 ## Tech stack
 
@@ -37,6 +44,7 @@ Camera shot queue manager for live productions(something like cuepilot but witho
 | OBS | `obs-websocket-js` |
 | Web server | Express + Socket.io + `ws` |
 | OSC | `node-osc` |
+| Speech synthesis | Piper (engine bundled per platform, voices fetched at runtime) |
 
 ## Getting started
 
@@ -92,15 +100,76 @@ All settings are stored in SQLite and configured from the app UI.
 
 | Setting | Where |
 |---|---|
-| OBS WebSocket host/port/password | Header → OBS button |
-| OSC server port | Header → OSC button |
-| Intercom output (device, on/off) | Header → speaker icon → Voice & audio settings… |
-| Camera names, colors, OBS scene mappings | Header → project name → Cameras |
+| OBS WebSocket url/password, scene mappings | Header → **Connections** → OBS |
+| OSC server port | Header → **Connections** → OSC |
+| Mute countdown, mute beep, cue volume | Header → speaker icon |
+| Voice, connector, countdown numbers, phrase placement, auto rendering, output devices, announcement delay | Header → speaker icon → **Voice & audio settings…** |
+| Intercom output (device, on/off) | Header → speaker icon → **Voice & audio settings…** |
+| Camera names, colors, OBS scene mappings | Header → **⚙ Project** → Cameras… |
+| Parts (voice-over) | Header → **⚙ Project** → Parts… |
+| Rename / delete project | Header → **⚙ Project** |
+| Import / export, Resolve CSV | Header → **File** |
 | Web server port | `src/main/server/index.ts` (default `3000`) |
 
 ### Phone monitor
 
 Open `http://<machine-ip>:3000` in any browser on the same LAN. The page auto-connects and shows the live shot list with timers.
+
+## Voice-over rundowns
+
+A Voice-over Rundown announces song **parts** to musicians instead of switching cameras. The
+operator drives it exactly as a Camera Rundown — Next and Skip, timers advisory — but the side
+effect of Next is a spoken **announcement**, not a scene change. Switch a rundown's kind from the
+rundown sidebar; both camera and part assignments survive a conversion, so converting away and
+back restores the original.
+
+Parts are the voice-over counterpart of cameras: defined once with a number, a name and a colour,
+then referenced by many calls. Define them under **⚙ Project → Parts…**, at project, folder or
+rundown scope — scope is additive, so a rundown sees the union of all three (ADR 0006).
+
+### What is spoken
+
+`"<part name> <connector>"` then the countdown numbers — "gitara za 10, 5, 3, 2, 1". The connector
+is a per-project word. A call's label is never spoken; it stays a note for the operator.
+
+| Setting | Effect |
+|---|---|
+| Countdown numbers | Whole numbers 1–60, comma separated. Default `10, 5, 3, 2, 1`. Global, with a per-project override |
+| Phrase placement | **Flush** (default) schedules the phrase backwards from the first number so phrase and countdown form one utterance; **Immediate** plays the phrase the moment the previous call goes live |
+| Announcement delay (ms) | How long the output route to the band buffers — Mumble adds latency, so the whole utterance is scheduled that much earlier |
+
+A call too short for the full countdown plays from the largest number that still fits; one too
+short for even the phrase drops its announcement and is badged on the timeline. Skip cuts an
+in-flight announcement off immediately.
+
+### Rendering
+
+All announcement audio is synthesised **ahead of the show** into a content-addressed cache keyed on
+(text, voice, engine); a live session only plays existing files (ADR 0005). Clips live in
+`speech/` under the app data folder, the downloaded voice models in `piper-voices/` — **Open app
+folder** in the settings panel opens it.
+
+Each part reports a render state — rendered, stale or never rendered. With **Auto rendering** on,
+anything unrendered is synthesised in the background shortly after it appears: after an edit, a
+voice change, opening a project, or app start. Off, nothing is synthesised until asked, which is
+what a slow machine wants mid-edit. Unrendered parts raise a warning strip in the top bar; a
+session still starts, and those parts stay silent (ADR 0002).
+
+The **Render status** section offers *Render all missing* for the whole project, *Clean unused* for
+clips no project points at, and *Delete this project's recordings* for an archived project.
+
+No voice ships inside the app (ADR 0007). A model is fetched the first time a render needs it,
+verified against a pinned Hugging Face revision. Default is `pl_PL-mc_speech-medium`; the voice is
+a global setting with a per-project override.
+
+### Elsewhere
+
+- **Phone view** shows a Voice-over Rundown unfiltered — there are no cameras to filter by
+- **Cue Tray** goes silent for a Voice-over Rundown; the announcement is the cue
+- **OBS** is never contacted, and **Resolve CSV import** is refused
+- **OSC** is unchanged — Next and Skip behave identically
+
+See `specs/voice-over-rundowns.md` and `specs/lyrics-track.md` for the full behaviour.
 
 ## Cue Tray
 
@@ -110,7 +179,8 @@ this app over the LAN and plays the same audio cues the operator window plays �
 "three / two / one" countdown and the beep at shot expiry.
 
 It is read-only. It never sends anything back, and this app needs no configuration to
-support it. Source lives in `tray/`; it is a Rust program built with cargo, not part of the
+support it. It stays silent for a Voice-over Rundown, whose announcements are played by the
+app itself. Source lives in `tray/`; it is a Rust program built with cargo, not part of the
 Electron bundle. Release builds ship as `shotlister-tray-*` assets alongside the app.
 
 ### Running it
@@ -250,19 +320,35 @@ client.send_message("/obsque/skip", [])
 
 | Key | Action |
 |---|---|
-| `Space` | Play / pause video |
-| `1`–`9` | Split at playhead and assign camera number |
-| `L` | Stop playback and open label edit for current shot |
+| `Space` | Play / pause reference media |
+| `←` / `→` | Nudge playhead 1 s (`Shift` for 10 s) |
+| `Ctrl`/`Cmd` `+` / `-` | Zoom in / out |
+| `M` | Add marker at playhead |
+| `[` / `]` | Lyrics: set In / Out at the playhead — opens a new line, or corrects the selected one |
+| `L` | Stop playback and open label edit for the current item |
+| `1`–`9` | Camera Rundown: split at playhead and assign camera number |
+| `1`–`9`, `q w e r t y u i o p` | Voice-over Rundown: split at playhead and assign one of the first nineteen parts in scope |
+| `N` | Voice-over Rundown: add a new part (rundown scope) |
+
+Nothing on this list edits the rundown while a live session is running, and modified keys
+(`Cmd`/`Ctrl`/`Alt` combinations) are left to the OS. A lyric's edges can also be dragged, clamped
+against their neighbours.
 
 ## Data model
 
 ```
 Project
-  └── Camera[]  (number, name, color, OBS scene)
-  └── Rundown[]
-        └── Shot[]  (camera, duration, label, transition)
+  ├── Camera[]   (number, name, color, OBS scene)
+  ├── Part[]     (number, name, color; project / folder / rundown scope)
+  └── Rundown[]  (kind: camera | voice)
+        ├── Shot[] / Call[]  (camera or part, duration, label, transition)
+        ├── Lyric[]          (in, out, text — disjoint, never spoken)
         └── Marker[]
 ```
+
+Shots and calls share one table; the rundown's kind decides which target column is read.
+Rendered announcement clips are recorded in `speech_clips`, keyed by the hash of (text, voice,
+engine).
 
 Live progress (current shot index, started-at timestamp) is kept **in memory only** and never written to the database. Stopping live mode discards all progress.
 
@@ -270,44 +356,42 @@ Live progress (current shot index, started-at timestamp) is kept **in memory onl
 
 ```
 OBS ←→ obs-websocket ←→ Electron main ←→ SQLite
-                               ↕ IPC
-                         Electron renderer (React)
-                               ↕ Socket.io / WebSocket
-                         Phone browsers (LAN)
+                          │    ↕ IPC     └→ speech cache (Piper renders, voice models)
+                          │  Electron renderer (React) → cue + announcement output devices
+                          │         ↕ Socket.io / WebSocket
+                          └──→ Phone browsers (LAN), Cue Tray
 ```
+
+Reference media reaches the renderer over a `media://` protocol handler that streams in 1 MB
+chunks and honours range requests, so a multi-gigabyte file plays without being read into memory.
+Decoded waveform peaks are cached per file in the app data folder, not in the database — they are
+derived from a file on this machine.
+
+## Diagnostics
+
+Playback feeling laggy has three different causes that feel identical. The playback probe
+separates them; it is off unless switched on from the renderer console, so a packaged build can
+report:
+
+```js
+localStorage.setItem('obs-queuer-playback-probe', '1')  // then reload
+```
+
+It logs renders/s, frames/s and dropped video frames once a second: renders/s far above the commit
+rate means the React budget is blown, low frames/s means the main thread is saturated, climbing
+dropped frames means the media pipeline cannot keep up.
 ## TODO
 
-
 1. add casparcg support
-2. add proxy for phones to avoid overstressing video switcher or app which will play audio comunicates 
+2. add proxy for phones to avoid overstressing video switcher or app which will play audio comunicates
 3. camera filter selector should persists because this is based on the current project not rundown
-4.  export specific rundown, project or whole db
-5. checkbox do aktualizacji preview
+4. checkbox do aktualizacji preview
+5. Checkbox for reexecuting preview doesn't work
 6. Edytor shotów powinien zniknąć i zamiast niego powinien być inspektor z lewej
-7. 14. kafelek ustawień
-8. 13. niektóre transitions w obs maja fixed duration. domyslnie tylko cut i fade
-9. Odtwarzanie video niewydajne - video loading and video managing should be in await or diffrent thread not to harm the main app
-10. Usuwanie rundownów/projektów w innym miejscu
-
-11. Checkbox for reexecuting preview doesn't work
-
-12. sometimes audio fires at the same time
-13. add audio counting 20, 15, 10, 5
-
-14. editing timeline in live mode should be forgidden
-15. waveform generation and video playback on large files
-16. When OBS IP is provided, there is no possibility to change it
-17. when creating new cameras, automatically assign correct camera colors
-18. when switching projects, folders are not refreshed
-```
-Error occurred in handler for 'media:read-file': RangeError [ERR_FS_FILE_TOO_LARGE]: File size (3180545949) is greater than 2 GiB
-    at new NodeError (node:internal/errors:406:5)
-    at tryCreateBuffer (node:fs:406:13)
-    at Object.readFileSync (node:fs:456:14)
-    at t.readFileSync (node:electron/js2c/node_init:2:9771)
-    at /Users/michal/IT/obs-queuer/out/main/index.js:1380:15
-    at WebContents.<anonymous> (node:electron/js2c/browser_init:2:78397)
-    at WebContents.emit (node:events:514:28) {
-  code: 'ERR_FS_FILE_TOO_LARGE'
-}
-```
+7. kafelek ustawień
+8. niektóre transitions w obs maja fixed duration. domyslnie tylko cut i fade
+9. Usuwanie rundownów w innym miejscu
+10. sometimes audio fires at the same time
+11. When OBS IP is provided, there is no possibility to change it (only editable while disconnected)
+12. when creating new cameras, automatically assign correct camera colors
+13. when switching projects, folders are not refreshed

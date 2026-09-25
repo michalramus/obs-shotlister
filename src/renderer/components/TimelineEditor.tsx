@@ -12,6 +12,7 @@ import {
 } from '../timeline/coordinates'
 import { usePlaybackProbe } from '../timeline/playback-probe'
 import { describeDecodeFailure } from '../timeline/waveform-error'
+import { isEchoScroll } from '../timeline/scroll-sync'
 import { RulerLane } from './timeline/RulerLane'
 import { OverviewBar } from './timeline/OverviewBar'
 import { ItemLane, type ItemLaneHandlers } from './timeline/ItemLane'
@@ -349,12 +350,18 @@ export function TimelineEditor({
   const audioPlayRef = useRef<HTMLAudioElement | null>(null)
   const pendingDragClearRef = useRef(false)
   const rundownMediaRef = useRef(rundownMedia)
+  // Assigned during render; lets the async media-load effect start playback for
+  // an element that did not exist when the transport effect last ran.
+  const startEditPlaybackRef = useRef<() => void>(() => {})
   const totalMsRef = useRef(0)
   const totalPxRef = useRef(0)
   // Element widths, mirrored so the per-frame paint functions never read layout.
   // Reading clientWidth after writing a style or scrollLeft forces a synchronous
   // layout, and these run on every animation frame. A ResizeObserver is the only
   // thing that can change them, so a mirror cannot go stale.
+  // The last scrollLeft this code wrote, so `onScroll` can tell its own echo
+  // from the operator. Null once the operator has scrolled.
+  const expectedScrollLeftRef = useRef<number | null>(null)
   const overviewWidthRef = useRef(300)
   const scrollerWidthRef = useRef(800)
   const playheadTimeElRef = useRef<HTMLSpanElement>(null)
@@ -528,6 +535,9 @@ export function TimelineEditor({
         const audio = new Audio(audioSrc)
         audio.preload = 'auto'
         audioPlayRef.current = audio
+        // This element is created after the transport effect has already run for
+        // this file, so if playback is underway nothing else will start it.
+        if (isPlayingRef.current && !runningRef.current) startEditPlaybackRef.current()
       }
 
       // Peaks remembered from a previous load of this exact file. Decoding is the
@@ -686,10 +696,20 @@ export function TimelineEditor({
     setPlayheadMs(playheadMsRef.current)
   }
 
-  // Edit-mode transport. Separate from the RAF loop below so that zooming or
-  // editing a Shot duration mid-playback cannot restart the media element.
-  useEffect(() => {
-    if (!isPlaying || running) return
+  /**
+   * Starts the Reference media for edit playback.
+   *
+   * Separate from the RAF loop below so that zooming or editing a Shot duration
+   * mid-playback cannot restart the media element — but it must still re-run when
+   * the media itself changes. Attaching media while the playhead is already
+   * running on the wall clock hands `editPlayheadMs` a media clock sitting at
+   * zero, which it treats as authoritative: without a `play()` here the playhead
+   * snaps to the media offset and stays there.
+   *
+   * Keyed on the path rather than on `rundownMedia`, so dragging the offset — which
+   * changes the object every mousemove — does not restart playback.
+   */
+  function startEditPlayback(): void {
     const vid = getMediaEl()
     if (!vid) return
     // currentTime is already synced by the stopped-state useEffect.
@@ -698,9 +718,15 @@ export function TimelineEditor({
     void vid.play().catch((err: unknown) => {
       console.error('[TimelineEditor] play() failed:', err)
     })
+  }
+  startEditPlaybackRef.current = startEditPlayback
+
+  useEffect(() => {
+    if (!isPlaying || running) return
+    startEditPlayback()
     // Pausing is not this effect's job: every caller that clears `isPlaying`
     // already pauses and re-seeks, and the `running` effect pauses on going live.
-  }, [isPlaying, running]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isPlaying, running, rundownMedia?.filePath]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Edit-mode RAF loop.
   //
@@ -803,16 +829,13 @@ export function TimelineEditor({
     function onScroll(): void {
       if (!el) return
       const sl = el.scrollLeft
-      // While the playhead is moving, every one of these events is the echo of
-      // our own `autoScroll` write, and `autoScroll` has already painted the
-      // viewport rect imperatively. Committing `sl` to state here would re-render
-      // the whole timeline once per frame — which is exactly what defeated the
-      // 10Hz commit budget. It cannot be guarded with a flag cleared in a
-      // `setTimeout(0)`: Chromium dispatches `scroll` during the *next* frame's
-      // rendering steps, long after that task has run, so the flag was always
-      // back to false by the time this fired. `commitScrollLeft` catches the
-      // final position when playback stops.
-      if (isPlayingRef.current || runningRef.current) return
+      // Our own auto-scroll fires this every frame, and it has already painted the
+      // viewport rect imperatively; committing `sl` here as well would re-render the
+      // whole timeline once per frame. See scroll-sync.ts for why this is a value
+      // comparison rather than a flag or a "playing" check — an overrunning Live
+      // Shot freezes the playhead, so real scrolling still happens while running.
+      if (isEchoScroll(sl, expectedScrollLeftRef.current)) return
+      expectedScrollLeftRef.current = null
       setCurrentScrollLeft(sl)
       if (
         !isPlayingRef.current &&
@@ -885,6 +908,7 @@ export function TimelineEditor({
     // reading it immediately after writing forces a synchronous layout, and this
     // runs on every animation frame.
     const px = pxAtMs(ms, zoomRef.current)
+    expectedScrollLeftRef.current = px
     el.scrollLeft = px
     paintViewportRect(px)
   }

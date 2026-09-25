@@ -97,9 +97,15 @@ function installFrameClock(scroller: () => Element | null): { step: (frames: num
   }
 }
 
-function renderTimeline(onCommit: () => void): void {
+function renderTimeline(
+  onCommit: () => void,
+  overrides: Partial<{
+    rundownMedia: { filePath: string; offsetMs: number } | null
+    mediaVideoRef: React.RefObject<HTMLVideoElement | null>
+  }> = {},
+): { rerender: (next: typeof overrides) => void } {
   const noop = (): void => {}
-  render(
+  const tree = (o: typeof overrides): React.JSX.Element => (
     <Profiler id="timeline" onRender={onCommit}>
       <TimelineEditor
         shots={shots}
@@ -115,18 +121,20 @@ function renderTimeline(onCommit: () => void): void {
         onAddMarker={noop}
         onUpdateMarker={noop}
         onDeleteMarker={noop}
-        rundownMedia={null}
+        rundownMedia={o.rundownMedia ?? null}
         onImportMedia={noop}
         onUpdateMediaOffset={noop}
         onClearMedia={noop}
         onDeleteShot={noop}
         onChangeShotCamera={noop}
-        mediaVideoRef={{ current: null }}
+        mediaVideoRef={o.mediaVideoRef ?? { current: null }}
         selectedShotId={null}
         onLabelEdit={noop}
       />
-    </Profiler>,
+    </Profiler>
   )
+  const result = render(tree(overrides))
+  return { rerender: (next) => result.rerender(tree(next)) }
 }
 
 describe('edit-mode playback frame budget', () => {
@@ -186,6 +194,36 @@ describe('edit-mode playback frame budget', () => {
     })
 
     expect(marker()?.style.left).not.toBe(before)
+  })
+
+  it('starts Reference media attached while the playhead is already running', () => {
+    // editPlayheadMs treats a media clock as authoritative the moment one exists.
+    // Attaching media mid-playback therefore hands it a clock sitting at zero: with
+    // nothing to start that element, the playhead snaps to the media offset and
+    // freezes there. The transport effect has to re-run when the media changes, not
+    // only when playback starts.
+    const clock = installFrameClock(() => document.querySelector('.timeline-scroll'))
+    const video = document.createElement('video')
+    const play = vi.spyOn(video, 'play')
+    const videoRef = { current: video }
+
+    const { rerender } = renderTimeline(() => {}, { mediaVideoRef: videoRef })
+
+    act(() => {
+      screen.getByTitle('Play/Pause (Space)').click()
+    })
+    clock.step(10)
+    play.mockClear()
+
+    // The operator imports Reference media without stopping.
+    act(() => {
+      rerender({
+        mediaVideoRef: videoRef,
+        rundownMedia: { filePath: '/tmp/reference.mp3', offsetMs: 5_000 },
+      })
+    })
+
+    expect(play).toHaveBeenCalled()
   })
 
   it('never reads layout from the per-frame paint path', () => {

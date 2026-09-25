@@ -9,6 +9,10 @@
 
 A read-only phone-optimised browser UI (`src/web/`) that mirrors the active rundown shotlist in real time via Socket.io. Supports filtering by camera.
 
+The payload carries the Rundown's Kind and the Project's Parts. A Voice-over Rundown is shown
+unfiltered and named by its Parts — there are no Cameras to filter by. See
+`specs/voice-over-rundowns.md`.
+
 ## Server: replace `ws` with Socket.io
 
 Replace `src/main/server/ws.ts` (bare `ws`) with Socket.io server.

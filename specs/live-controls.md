@@ -9,6 +9,10 @@
 
 Five live operations on a rundown: start, stop, next, skip, restart. When a rundown is live (`running === true`), editing it is forbidden. State is broadcast to phone browsers (camera operators) and is the foundation for future video mixer (OBS) control.
 
+In a Voice-over Rundown, Next's side effect is a spoken Announcement instead of an OBS scene
+switch, and starting is refused while any item is unassigned. See
+`specs/voice-over-rundowns.md`.
+
 ## UI layout
 
 Controls rendered in the renderer, above the shotlist.
