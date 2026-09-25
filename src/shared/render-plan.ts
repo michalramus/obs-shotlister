@@ -16,11 +16,11 @@
 import { createHash } from 'node:crypto'
 import type { PartRenderState, RenderState } from './ipc-contract'
 import type { Part } from './types'
-import { NUMBER_CLIP_RANGE } from './number-words'
+import { NUMBER_CLIP_RANGE } from './number-text'
 
-// Re-exported so the render path keeps one import, but owned by number-words:
+// Re-exported so the render path keeps one import, but owned by number-text:
 // that module has no Node dependencies, and the settings UI needs these bounds.
-export { NUMBER_CLIP_RANGE } from './number-words'
+export { NUMBER_CLIP_RANGE } from './number-text'
 
 /**
  * Joins the hashed fields with NUL, which cannot occur in a Part name, a voice id
@@ -86,8 +86,8 @@ export interface RenderPlanInput {
    * hashes, so the caller's choice of rows decides which of the two it reports.
    */
   lastRendered: Map<string, string>
-  /** The spoken word for each countdown number, e.g. 7 -> 'siedem'. */
-  countdownNumberWords: Map<number, string>
+  /** The text each countdown number is synthesised from, e.g. 7 -> '7'. */
+  countdownNumberTexts: Map<number, string>
 }
 
 /** One clip the caller still has to synthesise. */
@@ -144,7 +144,7 @@ function partRenderState(
  * was called.
  */
 export function computeRenderPlan(input: RenderPlanInput): RenderPlan {
-  const { parts, connector, voice, engine, lastRendered, countdownNumberWords } = input
+  const { parts, connector, voice, engine, lastRendered, countdownNumberTexts } = input
   const cached = new Set(input.cachedHashes)
 
   // Every hash the cache is entitled to keep. Whatever is left over is an orphan.
@@ -175,12 +175,12 @@ export function computeRenderPlan(input: RenderPlanInput): RenderPlan {
   })
 
   for (let number = NUMBER_CLIP_RANGE.first; number <= NUMBER_CLIP_RANGE.last; number++) {
-    const word = countdownNumberWords.get(number)
-    // A number with no word supplied is skipped rather than throwing: an
-    // incomplete word list is a settings problem, not a reason to refuse to
-    // render everything else.
-    if (word === undefined || word.trim().length === 0) continue
-    want(word)
+    const text = countdownNumberTexts.get(number)
+    // A number with no text supplied is skipped rather than throwing: an
+    // incomplete list is a settings problem, not a reason to refuse to render
+    // everything else.
+    if (text === undefined || text.trim().length === 0) continue
+    want(text)
   }
 
   return {

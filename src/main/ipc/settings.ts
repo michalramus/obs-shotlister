@@ -4,7 +4,7 @@ import {
   TRANSMISSION_DELAY_MAX_MS,
   TRANSMISSION_DELAY_MIN_MS,
 } from '../../shared/announcement'
-import { NUMBER_CLIP_MAX, NUMBER_CLIP_MIN } from '../../shared/number-words'
+import { NUMBER_CLIP_MAX, NUMBER_CLIP_MIN } from '../../shared/number-text'
 import type {
   AudioDeviceSettings,
   EffectiveVoiceSettings,

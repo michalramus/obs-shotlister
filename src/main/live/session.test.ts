@@ -5,7 +5,7 @@ import { applyMigrations } from '../db/index'
 import { createLiveSession, type LiveSession } from './session'
 import type { AnnouncementPlan } from '../../shared/ipc-contract'
 import { clipHash } from '../../shared/render-plan'
-import { languageOfVoice, numberWords } from '../../shared/number-words'
+import { numberTexts } from '../../shared/number-text'
 import { toMediaUrl } from '../../shared/media-url'
 import { PHRASE_GAP_MS } from '../../shared/announcement'
 import { DEFAULT_VOICE } from '../ipc/settings'
@@ -372,7 +372,7 @@ function clipUrl(text: string): string {
 
 /** The `media://` url of the clip for one countdown number. */
 function numberUrl(n: number): string {
-  return clipUrl(numberWords(languageOfVoice(VOICE)).get(n) as string)
+  return clipUrl(numberTexts().get(n) as string)
 }
 
 function insertClip(db: Database.Database, text: string, durationMs: number): string {
@@ -427,7 +427,7 @@ function seedVoice(db: Database.Database, opts: VoiceSeedOptions = {}): string[]
   })
 
   // Numbers are rendered 1..60 per Voice regardless of the countdown in use.
-  const words = numberWords(languageOfVoice(VOICE))
+  const words = numberTexts()
   for (const word of words.values()) insertClip(db, word, 400)
 
   return ids

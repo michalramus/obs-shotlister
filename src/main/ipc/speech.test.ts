@@ -16,7 +16,7 @@ import {
 import { DEFAULT_VOICE, saveProjectVoiceSettings, saveGlobalVoiceSettings } from './settings'
 import { upsertPart } from './parts'
 import { ENGINE_ID, clipHash, partPhrase } from '../../shared/render-plan'
-import { languageOfVoice, numberWords } from '../../shared/number-words'
+import { numberTexts } from '../../shared/number-text'
 
 function openMemoryDb(): Database.Database {
   const db = new Database(':memory:')
@@ -36,9 +36,7 @@ const VOICE = DEFAULT_VOICE
 
 /** Every number clip a Voice needs, so tests can distinguish them from phrases. */
 function numberHashes(voice: string): string[] {
-  return [...numberWords(languageOfVoice(voice)).values()].map((word) =>
-    clipHash(word, voice, ENGINE_ID),
-  )
+  return [...numberTexts().values()].map((text) => clipHash(text, voice, ENGINE_ID))
 }
 
 function phraseHash(name: string, connector: string, voice = VOICE): string {

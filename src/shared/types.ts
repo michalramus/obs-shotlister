@@ -50,7 +50,7 @@ export interface Shot {
   orderIndex: number
   hidden?: boolean
   transitionName: string | null
-  transitionMs: number  // 0 = cut / no transition
+  transitionMs: number // 0 = cut / no transition
 }
 
 export interface Marker {

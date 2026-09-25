@@ -20,7 +20,7 @@ import type { Shot } from '../../shared/types'
 import type { AnnouncementPlan } from '../../shared/ipc-contract'
 import { type AnnouncementClip, scheduleAnnouncement } from '../../shared/announcement'
 import { ENGINE_ID, clipHash, partPhrase } from '../../shared/render-plan'
-import { languageOfVoice, numberWords } from '../../shared/number-words'
+import { numberTexts } from '../../shared/number-text'
 import { toMediaUrl } from '../../shared/media-url'
 import { getEffectiveVoiceSettings } from '../ipc/settings'
 import { getPart } from '../ipc/parts'
@@ -84,12 +84,12 @@ export function createAnnouncementBuilder(
           clipHash(partPhrase(part.name, settings.connector), settings.voice, ENGINE_ID),
         )
 
-        const words = numberWords(languageOfVoice(settings.voice))
+        const texts = numberTexts()
         const numbers = new Map<number, AnnouncementClip>()
         for (const n of settings.countdown) {
-          const word = words.get(n)
-          if (!word) continue
-          const clip = clipByHash(clipHash(word, settings.voice, ENGINE_ID))
+          const text = texts.get(n)
+          if (!text) continue
+          const clip = clipByHash(clipHash(text, settings.voice, ENGINE_ID))
           if (clip) numbers.set(n, clip)
         }
 

@@ -23,7 +23,7 @@ import {
   computeRenderPlan,
   partPhrase,
 } from '../../shared/render-plan'
-import { languageOfVoice, numberWords } from '../../shared/number-words'
+import { numberTexts } from '../../shared/number-text'
 import { listParts } from './parts'
 import { getEffectiveVoiceSettings } from './settings'
 
@@ -68,7 +68,7 @@ export function projectRenderPlan(
     engine: ENGINE_ID,
     cachedHashes,
     lastRendered: lastRenderedByPart(db, settings.voice),
-    countdownNumberWords: numberWords(languageOfVoice(settings.voice)),
+    countdownNumberTexts: numberTexts(),
   })
 }
 

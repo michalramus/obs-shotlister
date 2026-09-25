@@ -24,14 +24,14 @@ function part(id: string, name: string): Part {
   }
 }
 
-/** The Polish words for every number a full 1..60 render needs. */
-const NUMBER_WORDS = new Map<number, string>(
+/** Stand-in text for every number a full 1..60 render needs. */
+const NUMBER_TEXTS = new Map<number, string>(
   Array.from({ length: NUMBER_CLIP_RANGE.last }, (_, i) => [i + 1, `number-${i + 1}`]),
 )
 
 /** Every hash a complete 1..60 render leaves in the cache, for a given voice. */
 function numberHashes(voice = VOICE, engine = ENGINE): string[] {
-  return [...NUMBER_WORDS.values()].map((word) => clipHash(word, voice, engine))
+  return [...NUMBER_TEXTS.values()].map((word) => clipHash(word, voice, engine))
 }
 
 function phraseHash(name: string, connector = CONNECTOR, voice = VOICE, engine = ENGINE): string {
@@ -46,7 +46,7 @@ function input(overrides: Partial<RenderPlanInput> = {}): RenderPlanInput {
     engine: ENGINE,
     cachedHashes: [],
     lastRendered: new Map(),
-    countdownNumberWords: NUMBER_WORDS,
+    countdownNumberTexts: NUMBER_TEXTS,
     ...overrides,
   }
 }
@@ -206,9 +206,9 @@ describe('computeRenderPlan — number clips', () => {
   })
 
   it('skips a number with no word supplied rather than throwing', () => {
-    const words = new Map(NUMBER_WORDS)
+    const words = new Map(NUMBER_TEXTS)
     words.delete(42)
-    const plan = computeRenderPlan(input({ countdownNumberWords: words }))
+    const plan = computeRenderPlan(input({ countdownNumberTexts: words }))
     expect(plan.toRender).toHaveLength(NUMBER_CLIP_RANGE.last - 1)
     expect(plan.toRender.map((item) => item.text)).not.toContain('number-42')
   })
@@ -267,7 +267,7 @@ describe('computeRenderPlan — duplicates', () => {
   it('queues one clip when a Part phrase collides with a number word', () => {
     const words = new Map([[1, 'jeden za']])
     const plan = computeRenderPlan(
-      input({ parts: [part('a', 'jeden')], countdownNumberWords: words }),
+      input({ parts: [part('a', 'jeden')], countdownNumberTexts: words }),
     )
     expect(plan.toRender).toHaveLength(1)
   })
@@ -275,7 +275,7 @@ describe('computeRenderPlan — duplicates', () => {
   it('does not report a hash listed twice in the cache twice in toSweep', () => {
     const stray = clipHash('orphan', VOICE, ENGINE)
     const plan = computeRenderPlan(
-      input({ cachedHashes: [stray, stray], countdownNumberWords: new Map() }),
+      input({ cachedHashes: [stray, stray], countdownNumberTexts: new Map() }),
     )
     expect(plan.toSweep).toEqual([stray])
   })
@@ -288,7 +288,7 @@ describe('computeRenderPlan — the wanted list', () => {
       input({
         parts: [part('a', 'gitara')],
         cachedHashes: cached,
-        countdownNumberWords: new Map(),
+        countdownNumberTexts: new Map(),
       }),
     )
 
@@ -309,7 +309,7 @@ describe('computeRenderPlan — the wanted list', () => {
 
   it('lists two Parts sharing a name once', () => {
     const plan = computeRenderPlan(
-      input({ parts: [part('a', 'gitara'), part('b', 'gitara')], countdownNumberWords: new Map() }),
+      input({ parts: [part('a', 'gitara'), part('b', 'gitara')], countdownNumberTexts: new Map() }),
     )
 
     expect(plan.wanted).toHaveLength(1)
