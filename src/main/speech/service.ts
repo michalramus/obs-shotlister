@@ -19,6 +19,7 @@ import {
   clipsNeedingDurations,
   clipsOnlyUsedBy,
   forgetClips,
+  vanishedClips,
   forgetPartRenders,
   missingClips,
   orphanedClips,
@@ -226,6 +227,13 @@ export function createRenderService(
 
   async function sweepNow(): Promise<number> {
     const cached = await listCachedHashes(userDataDir)
+
+    // Rows first, and unconditionally: a clip whose file went without the sweep
+    // taking it is invisible to `orphanedClips`, so its row would otherwise
+    // survive every sweep there will ever be. Not counted in the return value —
+    // the caller reports clips deleted, and no clip was.
+    forgetClips(db, vanishedClips(db, cached))
+
     const orphans = orphanedClips(db, cached)
     if (orphans.length === 0) return 0
 

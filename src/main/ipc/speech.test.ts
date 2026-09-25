@@ -9,6 +9,7 @@ import {
   recordPartRenders,
   forgetClips,
   forgetPartRenders,
+  vanishedClips,
   clipsNeedingDurations,
   clipsOnlyUsedBy,
   phraseDurations,
@@ -462,5 +463,52 @@ describe('forgetPartRenders', () => {
   it('is a no-op for a Project that never rendered', () => {
     upsertPart(db, { projectId: 'p1', name: 'gitara' })
     expect(() => forgetPartRenders(db, 'p1')).not.toThrow()
+  })
+})
+
+describe('vanishedClips', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openMemoryDb()
+    insertProject(db, 'p1')
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  function record(text: string, hash: string): void {
+    recordClip(db, { hash, text, voice: VOICE, engine: ENGINE_ID }, 500)
+  }
+
+  it('finds a row whose file is no longer on disk', () => {
+    const hash = phraseHash('gitara', 'za')
+    record('gitara za', hash)
+    expect(vanishedClips(db, [])).toEqual([hash])
+  })
+
+  it('leaves alone a row whose file is still there', () => {
+    const hash = phraseHash('gitara', 'za')
+    record('gitara za', hash)
+    expect(vanishedClips(db, [hash])).toEqual([])
+  })
+
+  it('catches what the sweep structurally cannot', () => {
+    // The real case: the countdown changed from spelled words to digits, so
+    // "siedem" is hashed by nothing. Its file went, and because orphanedClips
+    // only ever considers hashes read off the disk, the row was invisible to
+    // every sweep that followed.
+    const stale = clipHash('siedem', VOICE, ENGINE_ID)
+    record('siedem', stale)
+    const live = clipHash('7', VOICE, ENGINE_ID)
+    record('7', live)
+
+    expect(orphanedClips(db, [live])).toEqual([])
+    expect(vanishedClips(db, [live])).toEqual([stale])
+  })
+
+  it('reports nothing for an empty table', () => {
+    expect(vanishedClips(db, [])).toEqual([])
   })
 })

@@ -1,11 +1,12 @@
 /**
- * Turning the render plan into files on disk, and back into a status the
- * operator can act on.
+ * The render plan against SQLite: what is wanted, what was rendered, what is
+ * junk.
  *
  * Two pure modules already decided everything interesting: `shared/render-plan`
  * says which clips are wanted and which are orphans, and `main/speech/engine`
- * knows how to spawn Piper. This is the seam between them and SQLite — it reads
- * the cache, records what was rendered, and never decides anything itself.
+ * knows how to spawn Piper. This is the seam between them and the database. It
+ * touches no files — the caller hands it the cache listing and performs every
+ * deletion (`main/speech/service`); this module only ever reads and writes rows.
  *
  * Nothing here may run during a Live session (ADR 0005). Rendering is something
  * the operator asks for before a show; sweeping happens at app start and app
@@ -19,9 +20,8 @@ import {
   ENGINE_ID,
   type RenderPlan,
   type RenderPlanItem,
-  clipHash,
   computeRenderPlan,
-  partPhrase,
+  partClipHash,
 } from '../../shared/render-plan'
 import { numberTexts } from '../../shared/number-text'
 import { listParts } from './parts'
@@ -239,11 +239,30 @@ export function recordPartRenders(db: Database.Database, projectId: string): voi
   )
   const apply = db.transaction(() => {
     for (const part of parts) {
-      const hash = clipHash(partPhrase(part.name, settings.connector), settings.voice, ENGINE_ID)
+      const hash = partClipHash(part, settings)
       upsert.run(part.id, settings.voice, ENGINE_ID, hash)
     }
   })
   apply()
+}
+
+/**
+ * Rows describing clips that are not on disk any more.
+ *
+ * The sweep alone never collects these. `orphanedClips` reasons about hashes it
+ * was handed from the cache directory, so a clip whose file disappeared by some
+ * other route — an operator clearing the folder, a failed write, a re-pin that
+ * changed what every Part hashes to — leaves a row that nothing will ever look
+ * at again and nothing will ever delete. They accumulate quietly.
+ *
+ * Worse than untidy: `announcer` resolves a clip by reading this table and
+ * hands the renderer a URL for whatever it finds. A row here is a promise that
+ * a file exists.
+ */
+export function vanishedClips(db: Database.Database, cachedHashes: Iterable<string>): string[] {
+  const cached = new Set(cachedHashes)
+  const rows = db.prepare('SELECT hash FROM speech_clips').all() as { hash: string }[]
+  return rows.map((row) => row.hash).filter((hash) => !cached.has(hash))
 }
 
 /** Drops the rows for clips that have been deleted from disk. */
@@ -271,7 +290,7 @@ export function phraseDurations(db: Database.Database, projectId: string): Recor
 
   const durations: Record<string, number> = {}
   for (const part of listParts(db, projectId)) {
-    const hash = clipHash(partPhrase(part.name, settings.connector), settings.voice, ENGINE_ID)
+    const hash = partClipHash(part, settings)
     const row = lookup.get(hash) as { duration_ms: number } | undefined
     if (row) durations[part.id] = row.duration_ms
   }
