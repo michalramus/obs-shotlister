@@ -19,7 +19,7 @@ import type Database from 'better-sqlite3'
 import type { Shot } from '../../shared/types'
 import type { AnnouncementPlan } from '../../shared/ipc-contract'
 import { type AnnouncementClip, scheduleAnnouncement } from '../../shared/announcement'
-import { ENGINE_ID, clipHash, partPhrase } from '../../shared/render-plan'
+import { ENGINE_ID, clipHash, partClipHash } from '../../shared/render-plan'
 import { numberTexts } from '../../shared/number-text'
 import { toMediaUrl } from '../../shared/media-url'
 import { getEffectiveVoiceSettings } from '../ipc/settings'
@@ -80,9 +80,7 @@ export function createAnnouncementBuilder(
         // The same text and the same hash the renderer wrote under: a renamed
         // Part misses here and its Announcement is dropped, which is exactly
         // what "stale" means — better silent than speaking the old name.
-        const phrase = clipByHash(
-          clipHash(partPhrase(part.name, settings.connector), settings.voice, ENGINE_ID),
-        )
+        const phrase = clipByHash(partClipHash(part, settings))
 
         const texts = numberTexts()
         const numbers = new Map<number, AnnouncementClip>()

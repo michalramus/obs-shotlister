@@ -68,6 +68,23 @@ export function partPhrase(name: string, connector: string): string {
   return [name.trim(), connector.trim()].filter((piece) => piece.length > 0).join(' ')
 }
 
+/**
+ * The clip a Part's name currently resolves to.
+ *
+ * Three callers need this exact composition — the render log, the duration
+ * lookup and the announcer — and each one spelling it out is three chances to
+ * hash something slightly different. A Part that hashes differently in the
+ * announcer than in the render log is a Part that renders fine and never speaks,
+ * which is the quietest possible way to break a show.
+ */
+export function partClipHash(
+  part: { name: string },
+  settings: { connector: string; voice: string },
+  engine: string = ENGINE_ID,
+): string {
+  return clipHash(partPhrase(part.name, settings.connector), settings.voice, engine)
+}
+
 export interface RenderPlanInput {
   /** Every Part in scope for the Project, in whatever order the caller wants reported. */
   parts: Part[]
