@@ -377,11 +377,11 @@ async function fetchVoice(voice, scratch) {
 /**
  * Deletes voices this manifest no longer pins.
  *
- * electron-builder copies the whole voices directory into the package, so a
- * voice dropped from the manifest would keep shipping — a hundred megabytes of
- * a model nothing selects, in every installer, forever. Re-pinning a voice is
- * the normal reason this runs, and it is exactly when the old one stops being
- * wanted.
+ * The shipped set has to be exactly this manifest. Nothing is bundled today
+ * (ADR 0007), so the usual effect is to empty the directory; but if a voice is
+ * ever pinned here again, electron-builder copies whatever sits beside it too,
+ * and a voice dropped from the manifest would keep shipping — a hundred
+ * megabytes of a model nothing selects, in every installer, forever.
  *
  * Only files that look like voice files go; anything else in there was put
  * there by someone who meant it.

@@ -1,10 +1,10 @@
 /**
  * Getting a Voice model onto disk.
  *
- * Two voices ship with the app, fetched at build time by `scripts/fetch-piper.mjs`.
- * Any other voice the operator names has to be obtained at runtime, because
- * there are hundreds of them and a desktop app cannot bundle a gigabyte of ONNX
- * on the chance that one is wanted.
+ * No voice ships with the app (ADR 0007). Every one the operator names is
+ * obtained at runtime, because a model is 60-110MB, there are hundreds of them,
+ * and whichever were bundled would land in every installer for a voice most
+ * operators change anyway.
  *
  * This does not weaken ADR 0005. What that decision forbids is a show depending
  * on a network: synthesis never happens during a Live session, and playback
