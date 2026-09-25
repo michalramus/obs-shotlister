@@ -43,7 +43,9 @@ const cameras: Camera[] = [
     projectId: 'p1',
     number: 1,
     name: 'Wide',
-    color: '#e74c3c',
+    // Deliberately not the playhead's red, so a test can tell a Shot block in the
+    // overview apart from the playhead marker.
+    color: '#3498db',
     resolveColor: null,
     obsScene: null,
   },
@@ -159,6 +161,31 @@ describe('edit-mode playback frame budget', () => {
     expect(commits).toBeLessThanOrEqual(expected + 1)
     // The regression this guards: a commit on every single frame.
     expect(commits).toBeLessThan(frames / 2)
+  })
+
+  it('moves the overview playhead marker on a discrete jump, not only during playback', () => {
+    // The marker's position is painted imperatively rather than rendered, so that
+    // a 60Hz paint is not overwritten by a 10Hz commit carrying a staler value.
+    // The cost of that choice is that anything moving the playhead must paint —
+    // a discrete step used to be React's job and would otherwise silently stop
+    // moving the marker.
+    installFrameClock(() => document.querySelector('.timeline-scroll'))
+    renderTimeline(() => {})
+
+    // Scoped to the overview strip: the sticky playhead line is the same red, and
+    // a document-wide query finds that one first.
+    const marker = (): HTMLElement | null => {
+      const overview = document.querySelector('div[style*="rgb(17, 17, 17)"]')
+      return overview?.querySelector('[style*="rgb(231, 76, 60)"]') ?? null
+    }
+    const before = marker()?.style.left
+    expect(before).toBeDefined()
+
+    act(() => {
+      screen.getByTitle('Step forward 1s (→)').click()
+    })
+
+    expect(marker()?.style.left).not.toBe(before)
   })
 
   it('never reads layout from the per-frame paint path', () => {

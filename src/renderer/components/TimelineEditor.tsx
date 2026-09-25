@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Shot, Camera, Marker, Part, Lyric } from '../../shared/types'
 import { toMediaUrl } from '../../shared/media-url'
 import {
@@ -13,6 +13,7 @@ import {
 import { usePlaybackProbe } from '../timeline/playback-probe'
 import { describeDecodeFailure } from '../timeline/waveform-error'
 import { RulerLane } from './timeline/RulerLane'
+import { OverviewBar } from './timeline/OverviewBar'
 import {
   editPlayheadMs,
   livePlayheadMs,
@@ -651,7 +652,10 @@ export function TimelineEditor({
 
   /** Moves the playhead in response to a discrete interaction (click, drag, key). */
   function setPlayhead(ms: number): void {
-    playheadMsRef.current = ms
+    // Paints as well as commits: the overview marker's position is written
+    // imperatively and is no longer rendered from `playheadMs`, so a discrete
+    // move that only set state would leave the marker where it was.
+    paintPlayhead(ms)
     setPlayheadMs(ms)
   }
 
@@ -868,6 +872,13 @@ export function TimelineEditor({
     return () => ro.disconnect()
   }, [])
 
+  // The overview marker's position is painted, not rendered, so React will not
+  // reposition it when the geometry it is derived from changes. Repaint on the
+  // two inputs that matter, and on mount.
+  useEffect(() => {
+    paintPlayhead(playheadMsRef.current)
+  }, [totalMs, overviewWidth]) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const el = scrollContainerRef.current
     if (!el) return
@@ -889,6 +900,14 @@ export function TimelineEditor({
     el.scrollLeft = px
     paintViewportRect(px)
   }
+
+  /** Scrolls the timeline, clamped at zero. Stable, so the overview can memoise. */
+  const scrollTimelineTo = useCallback((scrollLeftPx: number): void => {
+    const el = scrollContainerRef.current
+    if (el) el.scrollLeft = Math.max(0, scrollLeftPx)
+  }, [])
+
+  const readScrollLeft = useCallback((): number => scrollContainerRef.current?.scrollLeft ?? 0, [])
 
   /**
    * Pushes the scroll position into React state when playback stops.
@@ -2511,118 +2530,24 @@ export function TimelineEditor({
       </div>
 
       {/* Row 6: Mini overview */}
-      <div
-        ref={overviewRef}
-        style={{
-          height: OVERVIEW_HEIGHT,
-          background: '#111',
-          flexShrink: 0,
-          position: 'relative',
-          borderTop: '1px solid #333',
-          cursor: 'pointer',
-          overflow: 'hidden',
-        }}
-        onClick={(e) => {
-          const ow = overviewRef.current?.clientWidth ?? 1
-          const containerWidth = scrollContainerRef.current?.clientWidth ?? 0
-          const targetScrollLeft =
-            ((e.clientX - (overviewRef.current?.getBoundingClientRect().left ?? 0)) / ow) *
-              totalPx -
-            containerWidth / 2
-          if (scrollContainerRef.current) {
-            // No suppression of the resulting `scroll` event: the playhead is
-            // pinned to a fixed screen position, so scroll position *is* playhead
-            // position while stopped. Letting `onScroll` move the playhead and
-            // seek the media is what keeps the two in step.
-            scrollContainerRef.current.scrollLeft = Math.max(0, targetScrollLeft)
-          }
-        }}
-      >
-        {/* Shot blocks in overview */}
-        {shots.map((shot, i) => {
-          const ow = overviewWidth
-          const left = (shotOffsets[i] / totalPx) * ow
-          const width =
-            pxAtMs(dragOverride[shot.id] ?? shot.durationMs, zoomPxPerSec) * (ow / totalPx)
-          return (
-            <div
-              key={shot.id}
-              style={{
-                position: 'absolute',
-                left,
-                top: 0,
-                width: Math.max(1, width),
-                height: OVERVIEW_HEIGHT,
-                background: itemTarget(shot).color,
-              }}
-            />
-          )
-        })}
-
-        {/* Playhead line in overview */}
-        {totalMs > 0 && (
-          <div
-            ref={overviewPlayheadElRef}
-            style={{
-              position: 'absolute',
-              left: (playheadMs / totalMs) * overviewWidth,
-              top: 0,
-              width: 1,
-              height: OVERVIEW_HEIGHT,
-              background: '#e74c3c',
-              pointerEvents: 'none',
-              zIndex: 5,
-            }}
-          />
-        )}
-
-        {/* Viewport rect */}
-        {totalPx > 0 &&
-          (() => {
-            const ow = overviewWidth
-            const vpLeft = (currentScrollLeft / totalPx) * ow
-            const vpRight = Math.min(ow, vpLeft + (containerWidth / totalPx) * ow)
-            const vpWidth = Math.max(4, vpRight - vpLeft)
-            return (
-              <div
-                ref={viewportRectElRef}
-                style={{
-                  position: 'absolute',
-                  left: vpLeft,
-                  top: 0,
-                  width: vpWidth,
-                  height: OVERVIEW_HEIGHT,
-                  border: '2px solid white',
-                  background: 'rgba(255,255,255,0.1)',
-                  boxSizing: 'border-box',
-                  cursor: 'ew-resize',
-                  zIndex: 10,
-                }}
-                onMouseDown={(e) => {
-                  e.stopPropagation()
-                  const startX = e.clientX
-                  const origScroll = scrollContainerRef.current?.scrollLeft ?? 0
-                  const ow2 = overviewRef.current?.clientWidth ?? 300
-                  function onMM(ev: MouseEvent): void {
-                    const delta = ev.clientX - startX
-                    if (scrollContainerRef.current) {
-                      scrollContainerRef.current.scrollLeft = Math.max(
-                        0,
-                        origScroll + (delta * totalPx) / ow2,
-                      )
-                    }
-                  }
-                  function onMU(): void {
-                    window.removeEventListener('mousemove', onMM)
-                    window.removeEventListener('mouseup', onMU)
-                  }
-                  window.addEventListener('mousemove', onMM)
-                  window.addEventListener('mouseup', onMU)
-                }}
-              />
-            )
-          })()}
-      </div>
+      <OverviewBar
+        shots={shots}
+        shotOffsets={shotOffsets}
+        dragOverride={dragOverride}
+        itemTargets={itemTargets}
+        zoomPxPerSec={zoomPxPerSec}
+        totalPx={totalPx}
+        totalMs={totalMs}
+        overviewWidth={overviewWidth}
+        scrollerWidth={containerWidth}
+        scrollLeft={currentScrollLeft}
+        height={OVERVIEW_HEIGHT}
+        overviewRef={overviewRef}
+        playheadElRef={overviewPlayheadElRef}
+        viewportRectElRef={viewportRectElRef}
+        onScrollTo={scrollTimelineTo}
+        readScrollLeft={readScrollLeft}
+      />
 
       {/* Row 7: assignment buttons — Cameras, or Parts in a Voice-over Rundown */}
       <div

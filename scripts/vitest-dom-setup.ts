@@ -17,6 +17,20 @@ if (typeof window !== 'undefined') {
     ;(window as unknown as Record<string, unknown>).ResizeObserver = ResizeObserverStub
   }
 
+  // jsdom has no layout, so every element reports clientWidth 0. Components that
+  // size themselves from a measurement then compute every position as zero, which
+  // makes any position assertion vacuous. Report a plausible viewport width
+  // instead. Defined on Element rather than HTMLElement so a test that wants to
+  // count reads can shadow it on the same prototype and restore it afterwards.
+  if (typeof Element !== 'undefined') {
+    Object.defineProperty(Element.prototype, 'clientWidth', {
+      configurable: true,
+      get(): number {
+        return 1000
+      },
+    })
+  }
+
   // Media elements are inert in jsdom: play() is undefined rather than a
   // promise-returning no-op, which the transport effect awaits.
   if (typeof HTMLMediaElement !== 'undefined') {
