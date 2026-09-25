@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_COUNTDOWN, scheduleAnnouncement } from './announcement'
+import { DEFAULT_COUNTDOWN, PHRASE_GAP_MS, scheduleAnnouncement } from './announcement'
 import type { AnnouncementClip, ScheduleInput } from './announcement'
 
 // ---------------------------------------------------------------------------
@@ -118,11 +118,11 @@ describe('scheduleAnnouncement — countdown', () => {
 // ---------------------------------------------------------------------------
 
 describe('scheduleAnnouncement — flush placement', () => {
-  it('ends the phrase exactly where the first number begins', () => {
+  it('leaves one breath between the end of the phrase and the first number', () => {
     const plan = scheduleAnnouncement(makeInput({ leadMs: 15000 }))
 
     expect(plan!.clips).toEqual([
-      { url: 'phrase.opus', atMs: 4200 }, // 5000 - 800
+      { url: 'phrase.opus', atMs: 3900 }, // 5000 - 800 - 300
       { url: '10.opus', atMs: 5000 },
       { url: '5.opus', atMs: 10000 },
       { url: '3.opus', atMs: 12000 },
@@ -132,10 +132,12 @@ describe('scheduleAnnouncement — flush placement', () => {
   })
 
   it('works backwards from the first number that actually fits', () => {
+    // "5" lands at 1000ms, which leaves no room for 800ms of phrase plus its
+    // breath, so the utterance begins at "3".
     const plan = scheduleAnnouncement(makeInput({ leadMs: 6000 }))
 
-    expect(plan!.clips[0]).toEqual({ url: 'phrase.opus', atMs: 200 }) // 1000 - 800
-    expect(plan!.clips[1]).toEqual({ url: '5.opus', atMs: 1000 })
+    expect(plan!.clips[0]).toEqual({ url: 'phrase.opus', atMs: 1900 }) // 3000 - 800 - 300
+    expect(plan!.clips[1]).toEqual({ url: '3.opus', atMs: 3000 })
   })
 
   it('works backwards from the first number that has a clip', () => {
@@ -144,19 +146,19 @@ describe('scheduleAnnouncement — flush placement', () => {
       makeInput({ numbers: makeNumbers([5, 3, 2, 1]), leadMs: 15000 }),
     )
 
-    expect(plan!.clips[0]).toEqual({ url: 'phrase.opus', atMs: 9200 }) // 10000 - 800
+    expect(plan!.clips[0]).toEqual({ url: 'phrase.opus', atMs: 8900 }) // 10000 - 800 - 300
     expect(plan!.clips[1]).toEqual({ url: '5.opus', atMs: 10000 })
   })
 
   it('drops a number the phrase cannot fit in front of, rather than falling silent', () => {
-    // 5.2s of lead: "5" starts at 200ms, leaving 200ms for an 800ms phrase — so
-    // the utterance begins at "3" instead. The Call is too short for the full
-    // countdown, which the spec answers with the largest number that still
-    // fits, not with silence.
+    // 5.2s of lead: "5" starts at 200ms, nowhere near enough for an 800ms
+    // phrase and its breath — so the utterance begins at "3" instead. The Call
+    // is too short for the full countdown, which the spec answers with the
+    // largest number that still fits, not with silence.
     const plan = scheduleAnnouncement(makeInput({ leadMs: 5200 }))
 
     expect(plan!.clips).toEqual([
-      { url: 'phrase.opus', atMs: 1400 }, // 2200 - 800
+      { url: 'phrase.opus', atMs: 1100 }, // 2200 - 800 - 300
       { url: '3.opus', atMs: 2200 },
       { url: '2.opus', atMs: 3200 },
       { url: '1.opus', atMs: 4200 },
@@ -176,11 +178,31 @@ describe('scheduleAnnouncement — flush placement', () => {
     expect(scheduleAnnouncement(makeInput({ leadMs: 700 }))).toBeNull()
   })
 
-  it('keeps the Announcement when the phrase fits exactly at 0', () => {
-    const plan = scheduleAnnouncement(makeInput({ leadMs: 5800 }))
+  it('keeps the Announcement when the phrase and its breath fit exactly at 0', () => {
+    const plan = scheduleAnnouncement(makeInput({ leadMs: 6100 }))
 
     expect(plan!.clips[0]).toEqual({ url: 'phrase.opus', atMs: 0 })
-    expect(plan!.clips[1]).toEqual({ url: '5.opus', atMs: 800 })
+    expect(plan!.clips[1]).toEqual({ url: '5.opus', atMs: 1100 })
+  })
+
+  it('honours a caller that asks for no breath at all', () => {
+    const plan = scheduleAnnouncement(makeInput({ leadMs: 15000, phraseGapMs: 0 }))
+
+    expect(plan!.clips[0]).toEqual({ url: 'phrase.opus', atMs: 4200 }) // 5000 - 800
+  })
+
+  it('spends the breath out of the lead, not out of the numbers', () => {
+    const plan = scheduleAnnouncement(makeInput({ leadMs: 15000 }))
+    const numbers = plan!.clips.filter((c) => c.url !== 'phrase.opus')
+
+    // Every number still lands on its own second; only the phrase moved.
+    expect(numbers).toEqual([
+      { url: '10.opus', atMs: 5000 },
+      { url: '5.opus', atMs: 10000 },
+      { url: '3.opus', atMs: 12000 },
+      { url: '2.opus', atMs: 13000 },
+      { url: '1.opus', atMs: 14000 },
+    ])
   })
 
   it('falls back to the Calls own start when no number is spoken', () => {
@@ -279,7 +301,7 @@ describe('scheduleAnnouncement — transmission delay', () => {
     const plan = scheduleAnnouncement(makeInput({ leadMs: 15000, transmissionDelayMs: 300 }))
 
     expect(plan!.clips).toEqual([
-      { url: 'phrase.opus', atMs: 3900 }, // 4700 - 800
+      { url: 'phrase.opus', atMs: 3600 }, // 4700 - 800 - 300
       { url: '10.opus', atMs: 4700 }, // 5000 - 300
       { url: '5.opus', atMs: 9700 },
       { url: '3.opus', atMs: 11700 },
@@ -329,14 +351,14 @@ describe('scheduleAnnouncement — transmission delay', () => {
     expect(fits!.clips).toContainEqual({ url: 'phrase.opus', atMs: 0 })
   })
 
-  it('keeps the phrase flush against the first number it is heard before', () => {
-    // The gap between phrase end and first number must stay zero whatever the
-    // delay: both shift together, which is the whole point of flush.
+  it('keeps the phrase the same breath ahead of the first number it is heard before', () => {
+    // The gap between phrase end and first number must stay exactly one breath
+    // whatever the delay: both shift together, which is the whole point of flush.
     for (const transmissionDelayMs of [0, 250, 900]) {
       const clips = scheduleAnnouncement(makeInput({ leadMs: 15000, transmissionDelayMs }))!.clips
       const phrase = clips.find((c) => c.url === 'phrase.opus')!
       const first = clips.find((c) => c.url === '10.opus')!
-      expect(phrase.atMs + 800).toBe(first.atMs)
+      expect(phrase.atMs + 800 + PHRASE_GAP_MS).toBe(first.atMs)
     }
   })
 })

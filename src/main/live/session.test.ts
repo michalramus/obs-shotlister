@@ -7,6 +7,7 @@ import type { AnnouncementPlan } from '../../shared/ipc-contract'
 import { clipHash } from '../../shared/render-plan'
 import { languageOfVoice, numberWords } from '../../shared/number-words'
 import { toMediaUrl } from '../../shared/media-url'
+import { PHRASE_GAP_MS } from '../../shared/announcement'
 
 function openMemoryDb(): Database.Database {
   const db = new Database(':memory:')
@@ -479,12 +480,12 @@ describe('LiveSession announcements', () => {
       session.start('rd-1')
 
       // leadMs is the live Call's own duration, so number n starts n seconds
-      // before the next Call is due, and the phrase runs flush into the first.
+      // before the next Call is due, and the phrase lands one breath before the first.
       expect(plans).toEqual([
         {
           callId: 'call-1',
           clips: [
-            { url: clipUrl('wokal za'), atMs: 2000 - PHRASE_MS },
+            { url: clipUrl('wokal za'), atMs: 2000 - PHRASE_MS - PHRASE_GAP_MS },
             { url: numberUrl(10), atMs: 2000 },
             { url: numberUrl(5), atMs: 7000 },
             { url: numberUrl(3), atMs: 9000 },
@@ -544,7 +545,7 @@ describe('LiveSession announcements', () => {
       expect(plans[1]).toEqual({
         callId: 'call-2',
         clips: [
-          { url: clipUrl('refren za'), atMs: 13000 - PHRASE_MS },
+          { url: clipUrl('refren za'), atMs: 13000 - PHRASE_MS - PHRASE_GAP_MS },
           { url: numberUrl(10), atMs: 13000 },
           { url: numberUrl(5), atMs: 18000 },
           { url: numberUrl(3), atMs: 20000 },
@@ -573,7 +574,7 @@ describe('LiveSession announcements', () => {
       session.start('rd-1')
 
       expect(plans[0]!.clips).toEqual([
-        { url: clipUrl('wokal za'), atMs: 1600 - PHRASE_MS },
+        { url: clipUrl('wokal za'), atMs: 1600 - PHRASE_MS - PHRASE_GAP_MS },
         { url: numberUrl(10), atMs: 1600 },
         { url: numberUrl(5), atMs: 6600 },
         { url: numberUrl(3), atMs: 8600 },

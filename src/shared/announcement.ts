@@ -35,6 +35,24 @@ export const DEFAULT_COUNTDOWN: number[] = [10, 5, 3, 2, 1]
 export const TRANSMISSION_DELAY_MIN_MS = -5000
 export const TRANSMISSION_DELAY_MAX_MS = 5000
 
+/**
+ * The breath between the name and the first number, in milliseconds.
+ *
+ * Flush placement used to mean *exactly* flush: the phrase was scheduled to end
+ * on the sample the first number started on. Two clips butted together with
+ * nothing between them do not sound like one sentence, they sound like one
+ * word — "Wokal za trzy" arrives as "Wokal zatrzy". The clips make it worse than
+ * it looks on paper, because their duration is measured to the last audible
+ * sample (see `audibleDurationMs`), so even the synthesiser's own trailing pad
+ * is not between them.
+ *
+ * 300ms is about the length of a comma in speech: clearly a boundary, still
+ * clearly one utterance. It costs the same 300ms of lead, which only matters on
+ * a Call already too short for the full countdown — and there the scheduler
+ * already drops the highest number rather than crowding two together.
+ */
+export const PHRASE_GAP_MS = 300
+
 /** A rendered clip: where the renderer loads it from and how long it runs. */
 export interface AnnouncementClip {
   url: string
@@ -64,6 +82,11 @@ export interface ScheduleInput {
    * Defaults to 0, which is the behaviour of a local speaker.
    */
   transmissionDelayMs?: number
+  /**
+   * Silence between the end of the phrase and the first number, under `flush`
+   * placement. Defaults to {@link PHRASE_GAP_MS}.
+   */
+  phraseGapMs?: number
 }
 
 /**
@@ -80,6 +103,7 @@ export interface ScheduleInput {
 export function scheduleAnnouncement(input: ScheduleInput): AnnouncementPlan | null {
   const { callId, leadMs, phrase, numbers, countdown, placement } = input
   const delayMs = input.transmissionDelayMs ?? 0
+  const gapMs = input.phraseGapMs ?? PHRASE_GAP_MS
 
   // Number n lands n seconds before the Call starts: the musician hears the word
   // as that mark passes, so the clip *starts* there rather than ending there.
@@ -107,7 +131,7 @@ export function scheduleAnnouncement(input: ScheduleInput): AnnouncementPlan | n
     return numberClips.length > 0 ? { callId, clips: sortByTime(numberClips) } : null
   }
 
-  const placed = placePhrase(placement, phrase, numberClips, leadMs, delayMs)
+  const placed = placePhrase(placement, phrase, numberClips, leadMs, delayMs, gapMs)
   // Too short for even the phrase: the whole Announcement goes, numbers
   // included. A countdown with no name in front of it tells the band when but
   // never what, which is worse than staying quiet. Edit mode badges this.
@@ -130,8 +154,9 @@ function sortByTime(clips: ScheduledClip[]): ScheduledClip[] {
  * very short Call; the renderer, not the schedule, decides what that sounds
  * like. "Fits" there means the phrase finishes at or before the Call starts.
  *
- * Under `flush` the phrase ends exactly where the first spoken number begins,
- * so name and countdown are one continuous utterance. When the phrase will not
+ * Under `flush` the phrase ends one {@link PHRASE_GAP_MS} breath before the
+ * first spoken number begins, so name and countdown are one utterance with a
+ * boundary in it rather than one run-together word. When the phrase will not
  * fit before the highest number, that number is dropped and the utterance
  * begins at the next one down — the Call is simply "too short for the full
  * countdown", and the spec's answer to that is to start from the largest number
@@ -144,6 +169,7 @@ function placePhrase(
   numberClips: ScheduledClip[],
   leadMs: number,
   delayMs: number,
+  gapMs: number,
 ): { phraseAtMs: number; numbers: ScheduledClip[] } | null {
   if (placement === 'immediate') {
     // Nothing can be played before now, so the delay cannot be compensated
@@ -153,13 +179,18 @@ function placePhrase(
 
   const ascending = sortByTime(numberClips)
   for (let i = 0; i < ascending.length; i++) {
-    const phraseAtMs = ascending[i].atMs - phrase.durationMs
+    const phraseAtMs = ascending[i].atMs - phrase.durationMs - gapMs
     if (phraseAtMs >= 0) return { phraseAtMs, numbers: ascending.slice(i) }
   }
 
   // No number left to anchor against — an empty countdown, or every one of them
   // dropped. Flush against the Call's own start, which is the next thing that
   // happens and keeps the name as late, and so as actionable, as possible.
+  //
+  // No breath here: the thing being flushed against is the downbeat, not another
+  // clip, so there is nothing for the name to run into. Keeping this branch at
+  // the phrase's own length is also what holds "too short to announce" at the
+  // threshold Edit mode badges.
   const phraseAtMs = leadMs - phrase.durationMs - delayMs
   return phraseAtMs >= 0 ? { phraseAtMs, numbers: [] } : null
 }
