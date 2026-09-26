@@ -12,18 +12,11 @@ import {
 } from '../timeline/coordinates'
 import { usePlaybackProbe } from '../timeline/playback-probe'
 import { describeDecodeFailure } from '../timeline/waveform-error'
-import { isEchoScroll } from '../timeline/scroll-sync'
 import { RulerLane } from './timeline/RulerLane'
 import { OverviewBar } from './timeline/OverviewBar'
 import { ItemLane, type ItemLaneHandlers } from './timeline/ItemLane'
 import { MediaLane } from './timeline/MediaLane'
-import {
-  editPlayheadMs,
-  livePlayheadMs,
-  isOverrunning,
-  mediaTimeSecFor,
-  shouldCommit,
-} from '../timeline/playhead-clock'
+import { createPlayhead, type Playhead } from '../timeline/playhead'
 import {
   lyricRange,
   lyricBlocks,
@@ -351,12 +344,8 @@ export function TimelineEditor({
   const markerDragStateRef = useRef<MarkerDragState | null>(null)
   const mediaDragStateRef = useRef<MediaDragState | null>(null)
   const zoomRef = useRef(zoomPxPerSec)
-  const playStartRef = useRef<{ wallMs: number; headMs: number } | null>(null)
-  const liveRafRef = useRef<number | null>(null)
-  const editRafRef = useRef<number | null>(null)
   const overviewRef = useRef<HTMLDivElement>(null)
   const extendDragRef = useRef<{ startX: number; origDur: number } | null>(null)
-  const playheadMsRef = useRef(playheadMs)
   const onAddMarkerRef = useRef(onAddMarker)
   const onLabelEditRef = useRef(onLabelEdit)
   const selectedShotIdRef = useRef(selectedShotId)
@@ -366,24 +355,9 @@ export function TimelineEditor({
   const audioPlayRef = useRef<HTMLAudioElement | null>(null)
   const pendingDragClearRef = useRef(false)
   const rundownMediaRef = useRef(rundownMedia)
-  // Assigned during render; lets the async media-load effect start playback for
-  // an element that did not exist when the transport effect last ran.
-  const startEditPlaybackRef = useRef<() => void>(() => {})
-  const totalMsRef = useRef(0)
-  const totalPxRef = useRef(0)
-  // Element widths, mirrored so the per-frame paint functions never read layout.
-  // Reading clientWidth after writing a style or scrollLeft forces a synchronous
-  // layout, and these run on every animation frame. A ResizeObserver is the only
-  // thing that can change them, so a mirror cannot go stale.
-  // The last scrollLeft this code wrote, so `onScroll` can tell its own echo
-  // from the operator. Null once the operator has scrolled.
-  const expectedScrollLeftRef = useRef<number | null>(null)
-  const overviewWidthRef = useRef(300)
-  const scrollerWidthRef = useRef(800)
   const playheadTimeElRef = useRef<HTMLSpanElement>(null)
   const overviewPlayheadElRef = useRef<HTMLDivElement>(null)
   const viewportRectElRef = useRef<HTMLDivElement>(null)
-  const lastPlayheadCommitRef = useRef(0)
   const shotsRef = useRef(shots)
   const camerasRef = useRef(cameras)
   // The key handler is bound once; N must stay free in a Camera Rundown.
@@ -450,7 +424,7 @@ export function TimelineEditor({
   // Sync media currentTime to playhead while stopped
   useEffect(() => {
     if (isPlaying || running) return
-    seekMediaToMs(playheadMs)
+    playhead.seekMedia(playheadMs)
   }, [playheadMs, isPlaying, running]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Clear dragOverride only after shots prop has updated from IPC response
@@ -553,7 +527,7 @@ export function TimelineEditor({
         audioPlayRef.current = audio
         // This element is created after the transport effect has already run for
         // this file, so if playback is underway nothing else will start it.
-        if (isPlayingRef.current && !runningRef.current) startEditPlaybackRef.current()
+        if (isPlayingRef.current && !runningRef.current) playhead.playEdit()
       }
 
       // Peaks remembered from a previous load of this exact file. Decoding is the
@@ -660,238 +634,160 @@ export function TimelineEditor({
   const probe = usePlaybackProbe(isPlaying, getMediaEl)
   probe.countRender()
 
+  /**
+   * Where the playhead is, what moves it, and when it paints rather than commits.
+   *
+   * Built once and fed the values that change through `setGeometry` and
+   * `setWidths`, never rebuilt: the loop inside it has to survive a zoom step, a
+   * Shot edit and Reference media appearing mid-playback without restarting or
+   * moving its origin, and rebuilding it is exactly what used to break that.
+   * `isPlaying` stays here — a glyph, several disabled buttons and two effects
+   * read it — and everything else about the playhead lives in playhead.ts.
+   */
+  const playheadRef = useRef<Playhead | null>(null)
+  if (playheadRef.current === null) {
+    playheadRef.current = createPlayhead({
+      now: () => performance.now(),
+      scheduleFrame: (cb) => requestAnimationFrame(cb),
+      cancelFrame: (handle) => cancelAnimationFrame(handle),
+      targets: {
+        readout: () => playheadTimeElRef.current,
+        overviewMarker: () => overviewPlayheadElRef.current,
+        viewportRect: () => viewportRectElRef.current,
+        scroller: () => scrollContainerRef.current,
+      },
+      media: {
+        currentTimeSec: () => getMediaEl()?.currentTime ?? null,
+        // Null unless there is both a file on the timeline and an element playing
+        // it: a media clock the module can see but not drive would freeze the
+        // playhead at the offset.
+        offsetMs: () =>
+          getMediaEl() !== null && rundownMediaRef.current !== null
+            ? rundownMediaRef.current.offsetMs
+            : null,
+        play: () => {
+          const el = getMediaEl()
+          if (!el) return
+          void el.play().catch((err: unknown) => {
+            console.error('[TimelineEditor] play() failed:', err)
+          })
+        },
+        pause: () => {
+          getMediaEl()?.pause()
+        },
+        seekSec: (sec) => {
+          const el = getMediaEl()
+          if (el) el.currentTime = sec
+        },
+      },
+      formatPosition: formatPlayhead,
+      onCommitPosition: setPlayheadMs,
+      onCommitScrollLeft: setCurrentScrollLeft,
+      onEditEnded: () => setIsPlaying(false),
+      onFrame: () => probe.countFrame(),
+      commitIntervalMs: PLAYHEAD_COMMIT_INTERVAL_MS,
+    })
+  }
+  const playhead = playheadRef.current
+
   const totalMs = useMemo(() => totalDurationMs(shots), [shots])
   const totalPx = useMemo(
     () => Math.max(pxAtMs(totalMs, zoomPxPerSec), 300),
     [totalMs, zoomPxPerSec],
   )
-  totalMsRef.current = totalMs
-  totalPxRef.current = totalPx
+  // Mirrored into the playhead so its per-frame path never measures anything.
+  playhead.setGeometry({ totalMs, totalPx, zoomPxPerSec })
 
-  /** Moves the playhead in response to a discrete interaction (click, drag, key). */
-  function setPlayhead(ms: number): void {
-    // Paints as well as commits: the overview marker's position is written
-    // imperatively and is no longer rendered from `playheadMs`, so a discrete
-    // move that only set state would leave the marker where it was.
-    paintPlayhead(ms)
-    setPlayheadMs(ms)
-  }
-
-  /** Paints playhead-dependent DOM directly, bypassing React. */
-  function paintPlayhead(ms: number): void {
-    playheadMsRef.current = ms
-    if (playheadTimeElRef.current) playheadTimeElRef.current.textContent = formatPlayhead(ms)
-    const marker = overviewPlayheadElRef.current
-    if (marker && totalMsRef.current > 0) {
-      marker.style.left = `${(ms / totalMsRef.current) * overviewWidthRef.current}px`
-    }
-  }
-
-  /** Advances the playhead from a RAF tick: paint every frame, commit state rarely. */
-  function advancePlayhead(ms: number): void {
-    probe.countFrame()
-    paintPlayhead(ms)
-    autoScroll(ms)
-    const nowMs = performance.now()
-    if (shouldCommit(nowMs, lastPlayheadCommitRef.current, PLAYHEAD_COMMIT_INTERVAL_MS)) {
-      lastPlayheadCommitRef.current = nowMs
-      setPlayheadMs(ms)
-    }
-  }
-
-  /** Keeps the overview viewport rect in sync without a React render. */
-  function paintViewportRect(scrollLeft: number): void {
-    const rect = viewportRectElRef.current
-    if (!rect || totalPxRef.current <= 0) return
-    const ow = overviewWidthRef.current
-    const vpLeft = (scrollLeft / totalPxRef.current) * ow
-    const vpRight = Math.min(ow, vpLeft + (scrollerWidthRef.current / totalPxRef.current) * ow)
-    rect.style.left = `${vpLeft}px`
-    rect.style.width = `${Math.max(4, vpRight - vpLeft)}px`
-  }
-
-  /** Pushes the last painted position into React state when playback stops. */
-  function commitPlayhead(): void {
-    lastPlayheadCommitRef.current = 0
-    setPlayheadMs(playheadMsRef.current)
-  }
-
-  /**
-   * Starts the Reference media for edit playback.
-   *
-   * Separate from the RAF loop below so that zooming or editing a Shot duration
-   * mid-playback cannot restart the media element — but it must still re-run when
-   * the media itself changes. Attaching media while the playhead is already
-   * running on the wall clock hands `editPlayheadMs` a media clock sitting at
-   * zero, which it treats as authoritative: without a `play()` here the playhead
-   * snaps to the media offset and stays there.
-   *
-   * Keyed on the path rather than on `rundownMedia`, so dragging the offset — which
-   * changes the object every mousemove — does not restart playback.
-   */
-  function startEditPlayback(): void {
-    const vid = getMediaEl()
-    if (!vid) return
-    // currentTime is already synced by the stopped-state useEffect.
-    // Reset wallMs to now so elapsed starts from when play() is actually called.
-    if (playStartRef.current) playStartRef.current.wallMs = performance.now()
-    void vid.play().catch((err: unknown) => {
-      console.error('[TimelineEditor] play() failed:', err)
-    })
-  }
-  startEditPlaybackRef.current = startEditPlayback
-
+  // Edit-mode transport. Deps are only what starts and stops playback: everything
+  // the loop reads that can change while it runs comes through the mirrors above,
+  // because re-running this effect would cancel the loop and reset its origin on
+  // every zoom step and every Shot edit.
+  //
+  // Pausing on stop is `stopEdit`'s job through the media port; the `running`
+  // effect pauses on going live.
   useEffect(() => {
     if (!isPlaying || running) return
-    startEditPlayback()
-    // Pausing is not this effect's job: every caller that clears `isPlaying`
-    // already pauses and re-seeks, and the `running` effect pauses on going live.
-  }, [isPlaying, running, rundownMedia?.filePath]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Edit-mode RAF loop.
-  //
-  // Deps are only what starts and stops it. Everything the tick reads that can
-  // change during playback — the total duration, the zoom, the Reference media
-  // offset — comes from a ref, because re-running this effect would cancel and
-  // restart the loop and reset the playback origin on every zoom step and every
-  // Shot edit.
-  useEffect(() => {
-    if (!isPlaying || running) {
-      if (editRafRef.current !== null) {
-        cancelAnimationFrame(editRafRef.current)
-        editRafRef.current = null
-      }
-      return
-    }
-    function tick(): void {
-      const origin = playStartRef.current
-      if (!origin) return
-      const vid = getMediaEl()
-      const media = rundownMediaRef.current
-      const totalMs = totalMsRef.current
-      const newMs = editPlayheadMs({
-        origin,
-        nowMs: performance.now(),
-        media: vid && media ? { currentTimeSec: vid.currentTime, offsetMs: media.offsetMs } : null,
-        totalMs,
-      })
-      advancePlayhead(newMs)
-      if (newMs >= totalMs) {
-        commitPlayhead()
-        commitScrollLeft()
-        setIsPlaying(false)
-        vid?.pause()
-        return
-      }
-      editRafRef.current = requestAnimationFrame(tick)
-    }
-    editRafRef.current = requestAnimationFrame(tick)
-    return () => {
-      if (editRafRef.current !== null) {
-        cancelAnimationFrame(editRafRef.current)
-        editRafRef.current = null
-      }
-      commitPlayhead()
-      commitScrollLeft()
-    }
+    playhead.playEdit()
+    return () => playhead.stopEdit()
   }, [isPlaying, running]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Live-mode RAF loop
+  /**
+   * Starts Reference media that appeared or changed while playback was underway.
+   *
+   * Deliberately a second effect: putting the media path in the transport effect's
+   * deps would restart the loop, and `playEdit` on an already-running loop only
+   * re-issues `play()`. It has to be told, though — `editPlayheadMs` treats a media
+   * clock as authoritative the moment one exists, so media attached mid-playback
+   * hands it a clock sitting at zero and, with nothing starting that element, the
+   * playhead freezes at the media offset.
+   *
+   * Keyed on the path rather than on `rundownMedia`, so dragging the offset — which
+   * changes the object on every mousemove — does not touch playback.
+   */
   useEffect(() => {
-    if (!running || liveIndex === null || startedAt === null) {
-      if (liveRafRef.current !== null) {
-        cancelAnimationFrame(liveRafRef.current)
-        liveRafRef.current = null
-      }
-      return
-    }
-    // Constant for the whole shot — computing it per frame allocated a slice
-    // and re-summed every preceding shot 60 times a second.
-    const startMs = shotStartMs(shots, liveIndex)
-    const shotDurationMs = shots[liveIndex]?.durationMs ?? 0
+    if (!isPlaying || running) return
+    playhead.playEdit()
+  }, [rundownMedia?.filePath, isPlaying, running]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    function tick(): void {
-      const elapsedMs = Date.now() - startedAt!
-      const position = { shotStartMs: startMs, shotDurationMs, elapsedMs }
-      const newMs = livePlayheadMs(position)
-      // An overrunning shot holds the playhead; stop dragging the view with it.
-      if (isOverrunning(position)) {
-        paintPlayhead(newMs)
-      } else {
-        advancePlayhead(newMs)
-      }
-      liveRafRef.current = requestAnimationFrame(tick)
-    }
-    liveRafRef.current = requestAnimationFrame(tick)
-    return () => {
-      if (liveRafRef.current !== null) {
-        cancelAnimationFrame(liveRafRef.current)
-        liveRafRef.current = null
-      }
-      commitPlayhead()
-      commitScrollLeft()
-    }
-    // `zoomPxPerSec` is deliberately absent: the tick reaches it through
-    // `zoomRef` inside `autoScroll`, and listing it here would cancel and
-    // restart the loop on every zoom step during a Live session.
+  // Live-mode loop. One run per live Shot.
+  useEffect(() => {
+    if (!running || liveIndex === null || startedAt === null) return
+    // The Shot's start and duration are resolved here rather than per frame:
+    // computing the start in the tick allocated a slice and re-summed every
+    // preceding Shot 60 times a second.
+    playhead.runLive({
+      startMs: shotStartMs(shots, liveIndex),
+      durationMs: shots[liveIndex]?.durationMs ?? 0,
+      startedAt,
+    })
+    return () => playhead.stopLive()
+    // `zoomPxPerSec` and `totalMs` are deliberately absent for the same reason as
+    // above: the loop reads both through the mirrors, and listing them here would
+    // restart it on every zoom step during a Live session.
   }, [running, liveIndex, startedAt]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // When liveIndex changes, scroll to the new shot's start position
   useEffect(() => {
     if (!running || liveIndex === null) return
-    autoScroll(shotStartMs(shots, liveIndex))
+    playhead.bringIntoView(shotStartMs(shots, liveIndex))
   }, [liveIndex]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Scroll sync for overview
+  // Scroll sync for the overview. Whether an event is the operator's or the echo
+  // of our own auto-scroll is the playhead's call; all this decides is whether the
+  // operator's scroll is allowed to drag the playhead, which it is not while
+  // something else owns it.
   useEffect(() => {
     const el = scrollContainerRef.current
     if (!el) return
     function onScroll(): void {
       if (!el) return
-      const sl = el.scrollLeft
-      // Our own auto-scroll fires this every frame, and it has already painted the
-      // viewport rect imperatively; committing `sl` here as well would re-render the
-      // whole timeline once per frame. See scroll-sync.ts for why this is a value
-      // comparison rather than a flag or a "playing" check — an overrunning Live
-      // Shot freezes the playhead, so real scrolling still happens while running.
-      if (isEchoScroll(sl, expectedScrollLeftRef.current)) return
-      expectedScrollLeftRef.current = null
-      setCurrentScrollLeft(sl)
-      if (
-        !isPlayingRef.current &&
-        !runningRef.current &&
-        !dragStateRef.current &&
-        !markerDragStateRef.current &&
-        !mediaDragStateRef.current
-      ) {
-        const ms = Math.max(0, msAtPx(sl, zoomRef.current))
-        setPlayhead(ms)
-        // Seek media directly — bypasses React render cycle for immediate response
-        const media = rundownMediaRef.current
-        const vid = (mediaVideoRef?.current as HTMLVideoElement | null) ?? audioPlayRef.current
-        if (media && vid) {
-          vid.currentTime = mediaTimeSecFor(ms, media.offsetMs)
-        }
-      }
+      const ownsPlayhead =
+        isPlayingRef.current ||
+        runningRef.current ||
+        dragStateRef.current !== null ||
+        markerDragStateRef.current !== null ||
+        mediaDragStateRef.current !== null
+      playhead.handleScroll(el.scrollLeft, !ownsPlayhead)
     }
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
-  }, [])
+    // `playhead` is built once and never replaced, so listing it re-runs nothing.
+  }, [playhead])
 
   useLayoutEffect(() => {
     const el = scrollContainerRef.current
     if (!el) return
     const overview = overviewRef.current
 
-    // The single place either width is read. Everything else — the per-frame
-    // paint functions and the render body alike — uses the mirrors.
+    // The single place either width is read. Everything else — the playhead's
+    // per-frame paint path and the render body alike — uses these mirrors.
     function measure(): void {
       if (el) {
-        scrollerWidthRef.current = el.clientWidth
+        playhead.setWidths({ scrollerPx: el.clientWidth })
         setContainerWidth(el.clientWidth)
       }
       if (overview) {
-        overviewWidthRef.current = overview.clientWidth
+        playhead.setWidths({ overviewPx: overview.clientWidth })
         setOverviewWidth(overview.clientWidth)
       }
     }
@@ -901,13 +797,13 @@ export function TimelineEditor({
     if (overview) ro.observe(overview)
     measure()
     return () => ro.disconnect()
-  }, [])
+  }, [playhead])
 
   // The overview marker's position is painted, not rendered, so React will not
   // reposition it when the geometry it is derived from changes. Repaint on the
   // two inputs that matter, and on mount.
   useEffect(() => {
-    paintPlayhead(playheadMsRef.current)
+    playhead.repaint()
   }, [totalMs, overviewWidth]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -920,19 +816,6 @@ export function TimelineEditor({
     return () => el.removeEventListener('wheel', onWheel)
   }, [])
 
-  function autoScroll(ms: number): void {
-    if (!isPlayingRef.current && !runningRef.current) return
-    const el = scrollContainerRef.current
-    if (!el) return
-    // Pass the value we just wrote rather than reading `scrollLeft` back:
-    // reading it immediately after writing forces a synchronous layout, and this
-    // runs on every animation frame.
-    const px = pxAtMs(ms, zoomRef.current)
-    expectedScrollLeftRef.current = px
-    el.scrollLeft = px
-    paintViewportRect(px)
-  }
-
   /** Scrolls the timeline, clamped at zero. Stable, so the overview can memoise. */
   const scrollTimelineTo = useCallback((scrollLeftPx: number): void => {
     const el = scrollContainerRef.current
@@ -941,27 +824,8 @@ export function TimelineEditor({
 
   const readScrollLeft = useCallback((): number => scrollContainerRef.current?.scrollLeft ?? 0, [])
 
-  /**
-   * Pushes the scroll position into React state when playback stops.
-   *
-   * `onScroll` ignores everything while the playhead drives the scroller, so
-   * without this the overview's viewport rect would snap back to wherever the
-   * timeline was when playback started, on the next render after it ends.
-   */
-  function commitScrollLeft(): void {
-    const el = scrollContainerRef.current
-    if (el) setCurrentScrollLeft(el.scrollLeft)
-  }
-
   function getMediaEl(): HTMLVideoElement | HTMLAudioElement | null {
     return (mediaVideoRef.current as HTMLVideoElement | null) ?? audioPlayRef.current
-  }
-
-  function seekMediaToMs(ms: number): void {
-    if (!rundownMedia) return
-    const vid = getMediaEl()
-    if (!vid) return
-    vid.currentTime = mediaTimeSecFor(ms, rundownMedia.offsetMs)
   }
 
   function zoomIn(): void {
@@ -972,10 +836,9 @@ export function TimelineEditor({
   }
 
   function movePlayhead(deltaMs: number): void {
-    const n = Math.max(0, Math.min(playheadMsRef.current + deltaMs, totalMs))
-    setPlayhead(n)
-    autoScroll(n)
-    if (!isPlayingRef.current) seekMediaToMs(n)
+    const n = Math.max(0, Math.min(playhead.positionMs() + deltaMs, totalMs))
+    playhead.moveTo(n)
+    if (!isPlayingRef.current) playhead.seekMedia(n)
   }
 
   // Keyboard shortcuts
@@ -987,12 +850,12 @@ export function TimelineEditor({
       if (e.code === 'Space' && !running) {
         e.preventDefault()
         setIsPlaying((prev) => {
-          if (!prev) {
-            playStartRef.current = { wallMs: performance.now(), headMs: playheadMsRef.current }
-            // RAF effect handles seek + play()
-          } else {
+          // Only stopping is handled here. Starting is the transport effect's
+          // job: `playEdit` takes the playback origin there, at the moment the
+          // loop actually begins, rather than leaving a stamp here to go stale.
+          if (prev) {
             getMediaEl()?.pause()
-            seekMediaToMs(playheadMsRef.current)
+            playhead.seekMedia(playhead.positionMs())
           }
           return !prev
         })
@@ -1006,7 +869,7 @@ export function TimelineEditor({
         movePlayhead(e.shiftKey ? 10000 : 1000)
       }
       if (e.code === 'KeyM' && !running) {
-        onAddMarkerRef.current?.(playheadMsRef.current)
+        onAddMarkerRef.current?.(playhead.positionMs())
       }
       if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
         e.preventDefault()
@@ -1058,7 +921,7 @@ export function TimelineEditor({
         e.preventDefault()
         // Use selected shot, or fall back to shot under playhead
         const shotId =
-          selectedShotIdRef.current ?? shotIdAtMs(shotsRef.current, playheadMsRef.current)
+          selectedShotIdRef.current ?? shotIdAtMs(shotsRef.current, playhead.positionMs())
         if (shotId) {
           // Stop playback so the label input can retain focus
           setIsPlaying((prev) => {
@@ -1077,9 +940,8 @@ export function TimelineEditor({
   function handleTrackClick(e: React.MouseEvent<HTMLDivElement>): void {
     const rect = e.currentTarget.getBoundingClientRect()
     const clamped = timelinePosMs(e.clientX, rect.left, zoomPxPerSec, totalMs)
-    setPlayhead(clamped)
-    autoScroll(clamped)
-    if (!isPlayingRef.current) seekMediaToMs(clamped)
+    playhead.moveTo(clamped)
+    if (!isPlayingRef.current) playhead.seekMedia(clamped)
   }
 
   function handleBlockClick(e: React.MouseEvent, shotId: string): void {
@@ -1088,12 +950,13 @@ export function TimelineEditor({
   }
 
   function handleCamButtonClick(camera: Camera): void {
+    const positionMs = playhead.positionMs()
     let accumulated = 0
     for (const shot of shotsRef.current) {
       const shotStart = accumulated
       const shotEnd = accumulated + shot.durationMs
-      if (playheadMsRef.current >= shotStart && playheadMsRef.current < shotEnd) {
-        const atMs = playheadMsRef.current - shotStart
+      if (positionMs >= shotStart && positionMs < shotEnd) {
+        const atMs = positionMs - shotStart
         onSplitShot(shot.id, atMs, camera.id)
         return
       }
@@ -1110,14 +973,15 @@ export function TimelineEditor({
    * is the Shot code path untouched.
    */
   function assignPartAtPlayhead(part: Part): void {
+    const positionMs = playhead.positionMs()
     let accumulated = 0
     for (const shot of shotsRef.current) {
       const shotEnd = accumulated + shot.durationMs
-      if (playheadMsRef.current >= accumulated && playheadMsRef.current < shotEnd) {
+      if (positionMs >= accumulated && positionMs < shotEnd) {
         // Rounded before the comparison: a playhead a fraction of a millisecond
         // into a Call would otherwise take the split branch and then round to
         // 0, which splitShot rejects outright.
-        const atMs = Math.round(playheadMsRef.current - accumulated)
+        const atMs = Math.round(positionMs - accumulated)
         const assigned =
           atMs <= 0
             ? editShot({ id: shot.id, partId: part.id })
@@ -1167,7 +1031,7 @@ export function TimelineEditor({
    * have to know whether they are correcting or creating.
    */
   function setLyricIn(): void {
-    const ms = Math.round(playheadMsRef.current)
+    const ms = Math.round(playhead.positionMs())
     const selected = lyrics.find((l) => l.id === selectedLyricId)
     if (selected !== undefined) {
       const range = lyricRange(ms, selected.endMs)
@@ -1184,7 +1048,7 @@ export function TimelineEditor({
 
   /** Set Out: closes the selected line, or the line being authored. */
   function setLyricOut(): void {
-    const ms = Math.round(playheadMsRef.current)
+    const ms = Math.round(playhead.positionMs())
     const selected = lyrics.find((l) => l.id === selectedLyricId)
     if (selected !== undefined) {
       const range = lyricRange(selected.startMs, ms)
@@ -1518,9 +1382,8 @@ export function TimelineEditor({
     function onMM(ev: MouseEvent): void {
       const deltaMs = msAtPx(ev.clientX - startX, zoomRef.current)
       const newMs = Math.max(0, Math.min(origMs + deltaMs, totalMs))
-      setPlayhead(newMs)
-      autoScroll(newMs)
-      if (!isPlayingRef.current) seekMediaToMs(newMs)
+      playhead.moveTo(newMs)
+      if (!isPlayingRef.current) playhead.seekMedia(newMs)
     }
     function onMU(): void {
       window.removeEventListener('mousemove', onMM)
@@ -1689,11 +1552,10 @@ export function TimelineEditor({
             if (isPlaying) {
               setIsPlaying(false)
               getMediaEl()?.pause()
-              seekMediaToMs(playheadMsRef.current)
+              playhead.seekMedia(playhead.positionMs())
             } else {
-              playStartRef.current = { wallMs: performance.now(), headMs: playheadMs }
+              // The transport effect takes the origin and starts the media.
               setIsPlaying(true)
-              // RAF effect handles seek + play()
             }
           }}
           title="Play/Pause (Space)"
