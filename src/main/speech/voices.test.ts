@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { VOICES_REVISION, voiceRepoPath } from './voices'
+import { VOICES_REVISION, voiceRepoPath, streamingDigest } from './voices'
 
 describe('voiceRepoPath', () => {
   it('nests a voice the way the catalogue does', () => {
@@ -46,5 +47,59 @@ describe('VOICES_REVISION', () => {
 
     expect(match, 'VOICES_REVISION not found in scripts/fetch-piper.mjs').not.toBeNull()
     expect(match?.[1]).toBe(VOICES_REVISION)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// streamingDigest
+// ---------------------------------------------------------------------------
+
+describe('streamingDigest', () => {
+  const body = Buffer.from('a voice model, in miniature')
+
+  /** How the digests were computed before, over the whole file at once. */
+  function wholeBuffer(entry: {
+    size: number
+    oid: string
+    lfs?: { oid: string; size: number }
+  }): string {
+    if (entry.lfs) return createHash('sha256').update(body).digest('hex')
+    const header = Buffer.concat([Buffer.from(`blob ${body.length}`, 'utf-8'), Buffer.from([0])])
+    return createHash('sha1').update(header).update(body).digest('hex')
+  }
+
+  it('matches the whole-buffer git blob digest, chunk by chunk', () => {
+    const entry = { path: 'model.onnx', size: body.length, oid: 'expected-oid' }
+    const digest = streamingDigest(entry)
+    // Split arbitrarily: the result must not depend on how the bytes arrive.
+    digest.update(body.subarray(0, 5))
+    digest.update(body.subarray(5, 6))
+    digest.update(body.subarray(6))
+    const { actual, expected, bytes } = digest.finish()
+    expect(actual).toBe(wholeBuffer(entry))
+    expect(expected).toBe('expected-oid')
+    expect(bytes).toBe(body.length)
+  })
+
+  it('matches the whole-buffer sha256 for an LFS entry', () => {
+    const entry = {
+      path: 'model.onnx',
+      size: body.length,
+      oid: 'git-oid',
+      lfs: { oid: 'lfs-oid', size: body.length },
+    }
+    const digest = streamingDigest(entry)
+    digest.update(body)
+    const { actual, expected } = digest.finish()
+    expect(actual).toBe(wholeBuffer(entry))
+    // An LFS entry is verified against its LFS oid, not its git one.
+    expect(expected).toBe('lfs-oid')
+  })
+
+  it('reports the byte count, so a truncated download cannot pass as complete', () => {
+    const entry = { path: 'model.onnx', size: body.length, oid: 'expected-oid' }
+    const digest = streamingDigest(entry)
+    digest.update(body.subarray(0, 4))
+    expect(digest.finish().bytes).toBe(4)
   })
 })

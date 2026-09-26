@@ -38,7 +38,6 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
-import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
@@ -415,7 +414,12 @@ async function main() {
       ? requested
       : [`${process.platform}-${process.arch}`]
 
-  const scratch = await mkdtemp(join(tmpdir(), 'shotlister-piper-'))
+  // Beside the destination, not in tmpdir(): everything staged here is moved into
+  // place with `rename`, and `rename` cannot cross filesystems. On any host where
+  // /tmp is a tmpfs — the systemd default on much of Linux — staging there made
+  // every install fail with EXDEV.
+  await mkdir(join(ROOT, 'resources'), { recursive: true })
+  const scratch = await mkdtemp(join(ROOT, 'resources', '.piper-staging-'))
   try {
     for (const target of targets) await fetchTarget(target, scratch)
     for (const voice of Object.keys(VOICES)) await fetchVoice(voice, scratch)

@@ -91,27 +91,47 @@ export function voiceRepoPath(voice: string): string | null {
  * the config. Checking the wrong one would pass on anything, so the entry says
  * which it is.
  */
-interface TreeEntry {
+export interface TreeEntry {
   path: string
   size: number
   oid: string
   lfs?: { oid: string; size: number }
 }
 
-function sha256(body: Buffer): string {
-  return createHash('sha256').update(body).digest('hex')
-}
-
-/** SHA-1 over `blob <size>` + NUL + content, which is how git names a blob. */
-function gitBlobSha1(body: Buffer): string {
-  const header = Buffer.concat([Buffer.from(`blob ${body.length}`, 'utf-8'), Buffer.from([0])])
-  return createHash('sha1').update(header).update(body).digest('hex')
-}
-
-function digestOf(entry: TreeEntry, body: Buffer): { actual: string; expected: string } {
-  return entry.lfs
-    ? { actual: sha256(body), expected: entry.lfs.oid }
-    : { actual: gitBlobSha1(body), expected: entry.oid }
+/**
+ * A digest computed as the bytes go past, rather than over the whole file at once.
+ *
+ * A voice model is around 110MB, and hashing it in one piece meant holding it in
+ * memory alongside the copy being written to disk — a ~220MB spike in the main
+ * process, the one that also serves IPC, OBS and SQLite.
+ *
+ * The git-blob form needs `blob <size>` and a NUL before the content, so the
+ * declared size is used to prime the hash and the bytes actually seen are checked
+ * against it afterwards. A wrong size therefore fails as a checksum mismatch,
+ * which is the outcome it deserves.
+ */
+export function streamingDigest(entry: TreeEntry): {
+  update: (chunk: Buffer) => void
+  finish: () => { actual: string; expected: string; bytes: number }
+} {
+  const hash = entry.lfs ? createHash('sha256') : createHash('sha1')
+  if (!entry.lfs) {
+    hash.update(Buffer.concat([Buffer.from(`blob ${entry.size}`, 'utf-8'), Buffer.from([0])]))
+  }
+  let bytes = 0
+  return {
+    update(chunk) {
+      bytes += chunk.length
+      hash.update(chunk)
+    },
+    finish() {
+      return {
+        actual: hash.digest('hex'),
+        expected: entry.lfs ? entry.lfs.oid : entry.oid,
+        bytes,
+      }
+    },
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -152,13 +172,19 @@ async function downloadVerified(
   }
 
   const temporary = `${destination}.part`
-  const chunks: Buffer[] = []
+  const digest = streamingDigest(entry)
   const source = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0])
-  source.on('data', (chunk: Buffer) => chunks.push(chunk))
+  source.on('data', (chunk: Buffer) => digest.update(chunk))
 
   try {
     await pipeline(source, createWriteStream(temporary))
-    const { actual, expected } = digestOf(entry, Buffer.concat(chunks))
+    const { actual, expected, bytes } = digest.finish()
+    if (bytes !== entry.size) {
+      throw new Error(
+        `size mismatch for ${entry.path}: expected ${entry.size} bytes, got ${bytes}. ` +
+          'Nothing was installed.',
+      )
+    }
     if (actual !== expected) {
       throw new Error(
         `checksum mismatch for ${entry.path}\n  expected ${expected}\n  actual   ${actual}\n` +

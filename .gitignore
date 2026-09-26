@@ -3,6 +3,10 @@ out/
 dist/
 .DS_Store
 
+# Piper install staging (renamed into place, so it must share a filesystem
+# with resources/ rather than live in /tmp)
+resources/.piper-staging-*
+
 # Editor swap files
 *.swp
 *.swo
