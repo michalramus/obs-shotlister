@@ -387,6 +387,11 @@ export function ShotlistWidget({
       let toIntercom = intercomPoolRef.current.get(filename)
       if (!toIntercom) {
         toIntercom = new Audio(`${audioBaseUrl}/${filename}`)
+        // Muted until routing resolves, which it has not when an element is made
+        // here rather than by the preload effect: `setSinkId` is async, so an
+        // unmuted new element would sound its first Cue on the default device —
+        // in the operator's ear, doubled. It unmutes itself on success.
+        toIntercom.muted = true
         intercomPoolRef.current.set(filename, toIntercom)
         routeToSink(toIntercom, intercomSinkId, true)
       }
