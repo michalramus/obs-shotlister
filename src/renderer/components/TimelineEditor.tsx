@@ -16,6 +16,8 @@ import { RulerLane } from './timeline/RulerLane'
 import { OverviewBar } from './timeline/OverviewBar'
 import { ItemLane, type ItemLaneHandlers } from './timeline/ItemLane'
 import { MediaLane } from './timeline/MediaLane'
+import { LyricsLane, type LyricsLaneHandlers } from './timeline/LyricsLane'
+import { MarkerLane } from './timeline/MarkerLane'
 import { createPlayhead, type Playhead } from '../timeline/playhead'
 import {
   alignReferenceMedia,
@@ -28,15 +30,18 @@ import {
   type GrabSpec,
 } from '../timeline/grab'
 import {
-  lyricRange,
   lyricBlocks,
   lyricAtMs,
-  overlappingLyric,
   isUnassigned,
   announcementProblemsByCallId,
   type AnnouncementSettings,
   type AnnouncementProblem,
 } from '../timeline/lyrics'
+import {
+  applyLyricEvent,
+  initialLyricAuthoring,
+  type LyricAuthoringEvent,
+} from '../timeline/lyric-authoring'
 import { useAppStore } from '../store'
 
 /**
@@ -202,51 +207,6 @@ function buildWaveformPath(peaks: number[] | null, width: number, halfHeight: nu
   return `M${top.join('L')}L${bottom.join('L')}Z`
 }
 
-/** A line being typed: its range is already fixed, its text is not. */
-interface LyricDraft {
-  /** The line being re-worded, or null while a new line is being authored. */
-  id: string | null
-  startMs: number
-  endMs: number
-  text: string
-}
-
-/**
- * A grab strip on one edge of a Lyric.
- *
- * Wider than it looks: a 3px target is unhittable at this zoom, so the strip
- * is 7px and straddles the border, with only the inner sliver painted.
- */
-function LyricEdgeHandle({
-  side,
-  onDown,
-}: {
-  side: 'start' | 'end'
-  onDown: (e: React.MouseEvent) => void
-}): React.JSX.Element {
-  return (
-    <div
-      role="presentation"
-      onMouseDown={onDown}
-      onClick={(e) => e.stopPropagation()}
-      onDoubleClick={(e) => e.stopPropagation()}
-      title={side === 'start' ? 'Drag the in point' : 'Drag the out point'}
-      style={{
-        position: 'absolute',
-        top: 0,
-        bottom: 0,
-        [side === 'start' ? 'left' : 'right']: -3,
-        width: 7,
-        cursor: 'ew-resize',
-        background:
-          side === 'start'
-            ? 'linear-gradient(to right, transparent 0 2px, #5dade2 2px 5px, transparent 5px)'
-            : 'linear-gradient(to left, transparent 0 2px, #5dade2 2px 5px, transparent 5px)',
-      }}
-    />
-  )
-}
-
 export function TimelineEditor({
   shots,
   cameras,
@@ -297,9 +257,6 @@ export function TimelineEditor({
   const [playheadMs, setPlayheadMs] = useState(0)
   const [dragOverride, setDragOverride] = useState<Record<string, number>>({})
   const [markerDragOverride, setMarkerDragOverride] = useState<Record<string, number>>({})
-  const [editingMarkerId, setEditingMarkerId] = useState<string | null>(null)
-  const [editingMarkerLabel, setEditingMarkerLabel] = useState('')
-  const [hoveredMarkerId, setHoveredMarkerId] = useState<string | null>(null)
   const [waveformData, setWaveformData] = useState<number[] | null>(null)
   const [mediaDurationMs, setMediaDurationMs] = useState<number>(0)
   const [mediaOffsetOverride, setMediaOffsetOverride] = useState<number | null>(null)
@@ -313,11 +270,15 @@ export function TimelineEditor({
   const [mediaFileNotFound, setMediaFileNotFound] = useState(false)
   const [containerWidth, setContainerWidth] = useState(800)
   const [overviewWidth, setOverviewWidth] = useState(300)
-  const [lyricInMs, setLyricInMs] = useState<number | null>(null)
-  const [lyricDraft, setLyricDraft] = useState<LyricDraft | null>(null)
-  const [selectedLyricId, setSelectedLyricId] = useState<string | null>(null)
-  const [hoveredLyricId, setHoveredLyricId] = useState<string | null>(null)
-  const [lyricError, setLyricError] = useState<string | null>(null)
+  /**
+   * The whole Lyrics authoring loop, as one value.
+   *
+   * Was four separate `useState`s — in point, draft, selection, error — which
+   * between them could sit in combinations the loop has no name for, plus a fifth
+   * for hover that belonged in the lane and now lives there. The transitions live
+   * in `timeline/lyric-authoring`; this only holds the result.
+   */
+  const [authoring, setAuthoring] = useState(initialLyricAuthoring)
   /** The edge being dragged, shown before it is saved. */
   const [lyricDragOverride, setLyricDragOverride] = useState<{
     id: string
@@ -358,6 +319,15 @@ export function TimelineEditor({
   const isVoiceRef = useRef(false)
   // The drag handlers live on window and outlive the render that made them.
   const lyricsRef = useRef<Lyric[]>([])
+  /**
+   * The authoring state as it stands right now.
+   *
+   * Read rather than closed over, for the same reason as `lyricsRef`: an edge
+   * drag's commit and the store's answer to a write both arrive after the render
+   * that started them, and a stale draft there would throw away typed text.
+   */
+  const authoringRef = useRef(authoring)
+  authoringRef.current = authoring
   // The keyboard effect is bound once and never re-bound, so the handlers it
   // reaches for are republished every render through this ref rather than
   // captured in its closure.
@@ -989,104 +959,39 @@ export function TimelineEditor({
   }
 
   /**
-   * Writes a line, reporting a refusal instead of swallowing it.
+   * Runs one authoring event and performs whatever write it asks for.
    *
-   * The overlap check runs here too even though the store refuses overlaps: the
-   * local copy already knows which line is in the way, and naming it is more use
-   * to the operator than the round trip's "overlaps an existing line".
+   * The whole of the loop's reasoning is in `applyLyricEvent`; this is the seam
+   * where a decision becomes a store call, and the store's answer comes back as
+   * one more event so that a refusal leaves the typed line exactly where it is.
    */
-  async function saveLyric(input: LyricDraft): Promise<boolean> {
-    if (activeRundownId === null) return false
-    const clash = overlappingLyric(lyrics, input, input.id)
-    if (clash !== null) {
-      setLyricError(`Overlaps “${clash.text}”`)
-      return false
-    }
-    try {
-      await upsertLyric({
-        ...(input.id !== null ? { id: input.id } : {}),
-        rundownId: activeRundownId,
-        startMs: input.startMs,
-        endMs: input.endMs,
-        text: input.text,
-      })
-      setLyricError(null)
-      return true
-    } catch (err: unknown) {
-      setLyricError(err instanceof Error ? err.message : String(err))
-      return false
-    }
-  }
-
-  /**
-   * Set In: moves the selected line's start, or opens a new line at the playhead.
-   *
-   * One key does both because the authoring loop is the same either way — put the
-   * playhead where the line begins and press In — and the operator should not
-   * have to know whether they are correcting or creating.
-   */
-  function setLyricIn(): void {
-    const ms = Math.round(playhead.positionMs())
-    const selected = lyrics.find((l) => l.id === selectedLyricId)
-    if (selected !== undefined) {
-      const range = lyricRange(ms, selected.endMs)
-      if (range === null) {
-        setLyricError('That would leave the line no length')
-        return
-      }
-      void saveLyric({ id: selected.id, ...range, text: selected.text })
-      return
-    }
-    setLyricError(null)
-    setLyricInMs(ms)
-  }
-
-  /** Set Out: closes the selected line, or the line being authored. */
-  function setLyricOut(): void {
-    const ms = Math.round(playhead.positionMs())
-    const selected = lyrics.find((l) => l.id === selectedLyricId)
-    if (selected !== undefined) {
-      const range = lyricRange(selected.startMs, ms)
-      if (range === null) {
-        setLyricError('That would leave the line no length')
-        return
-      }
-      void saveLyric({ id: selected.id, ...range, text: selected.text })
-      return
-    }
-    if (lyricInMs === null) {
-      setLyricError('Set an In point first')
-      return
-    }
-    const range = lyricRange(lyricInMs, ms)
-    if (range === null) {
-      setLyricError('Set the Out point away from the In point')
-      return
-    }
-    const clash = overlappingLyric(lyrics, range)
-    if (clash !== null) {
-      setLyricError(`Overlaps “${clash.text}”`)
-      return
-    }
-    setLyricError(null)
-    setLyricDraft({ id: null, ...range, text: '' })
-  }
-
-  /** Commits the typed line, keeping the draft on screen if it is refused. */
-  function commitLyricDraft(): void {
-    const draft = lyricDraft
-    if (draft === null) return
-    const text = draft.text.trim()
-    if (text === '') {
-      setLyricError('A line needs some text')
-      return
-    }
-    void saveLyric({ ...draft, text }).then((saved) => {
-      if (!saved) return
-      setLyricDraft(null)
-      setLyricInMs(null)
-      setSelectedLyricId(null)
+  function dispatchLyric(event: LyricAuthoringEvent): void {
+    const { state, write } = applyLyricEvent(authoringRef.current, event, lyricsRef.current)
+    authoringRef.current = state
+    setAuthoring(state)
+    if (write === null || activeRundownId === null) return
+    upsertLyric({
+      ...(write.id !== null ? { id: write.id } : {}),
+      rundownId: activeRundownId,
+      startMs: write.startMs,
+      endMs: write.endMs,
+      text: write.text,
     })
+      .then(() => dispatchLyric({ type: 'saved', write }))
+      .catch((err: unknown) =>
+        dispatchLyric({
+          type: 'refused',
+          message: err instanceof Error ? err.message : String(err),
+        }),
+      )
+  }
+
+  function setLyricIn(): void {
+    dispatchLyric({ type: 'setIn', atMs: playhead.positionMs() })
+  }
+
+  function setLyricOut(): void {
+    dispatchLyric({ type: 'setOut', atMs: playhead.positionMs() })
   }
 
   /**
@@ -1103,8 +1008,7 @@ export function TimelineEditor({
     if (!(lane instanceof HTMLElement)) return
     const laneLeft = lane.getBoundingClientRect().left
 
-    setSelectedLyricId(id)
-    setLyricError(null)
+    dispatchLyric({ type: 'grabEdge', id })
 
     beginGrab(e, {
       resolve: (sample) =>
@@ -1120,18 +1024,14 @@ export function TimelineEditor({
       // Commit what the last move showed, and nothing at all if there was none: a
       // bare click on an edge handle must not write.
       commitOn: 'move',
-      commit: (next) => {
-        const existing = lyricsRef.current.find((l) => l.id === id)
-        if (existing === undefined) return
-        void saveLyric({ id, ...next, text: existing.text })
-      },
+      commit: (next) => dispatchLyric({ type: 'edgeDragged', id, ...next }),
       end: () => setLyricDragOverride(null),
     })
   }
 
   function deleteLyric(id: string): void {
     removeLyric(id).catch((err: unknown) => console.error('[TimelineEditor] deleteLyric:', err))
-    if (selectedLyricId === id) setSelectedLyricId(null)
+    dispatchLyric({ type: 'deleted', id })
   }
 
   // Stable identity so ItemLane can memoise, current logic through a ref so no
@@ -1180,6 +1080,71 @@ export function TimelineEditor({
       onTrackMouseDown: (e: React.MouseEvent) => mediaLaneCallbacksRef.current.onTrackMouseDown(e),
       onImportMedia: () => mediaLaneCallbacksRef.current.onImportMedia(),
       onClearMedia: () => mediaLaneCallbacksRef.current.onClearMedia(),
+    }),
+    [],
+  )
+
+  // Same trick again for the two remaining lanes: a stable handler object, current
+  // logic through a ref. Both close over the authoring loop and the grab adapter,
+  // neither of which belongs in a dependency list.
+  const lyricsLaneCallbacksRef = useRef<LyricsLaneHandlers>({
+    onLaneClick: () => {},
+    onSelect: () => {},
+    onReword: () => {},
+    onDelete: () => {},
+    onEdgeMouseDown: () => {},
+    onDraftChange: () => {},
+    onDraftCommit: () => {},
+    onDraftCancel: () => {},
+  })
+  lyricsLaneCallbacksRef.current = {
+    onLaneClick: (e) => {
+      dispatchLyric({ type: 'clearSelection' })
+      handleTrackClick(e)
+    },
+    onSelect: (id) => dispatchLyric({ type: 'select', id }),
+    onReword: (id) => dispatchLyric({ type: 'reword', id }),
+    onDelete: (id) => deleteLyric(id),
+    onEdgeMouseDown: (e, id, edge) => beginLyricResize(e, id, edge),
+    onDraftChange: (text) => dispatchLyric({ type: 'type', text }),
+    onDraftCommit: () => dispatchLyric({ type: 'commit' }),
+    onDraftCancel: () => dispatchLyric({ type: 'cancel' }),
+  }
+  const lyricsLaneHandlers = useMemo<LyricsLaneHandlers>(
+    () => ({
+      onLaneClick: (e) => lyricsLaneCallbacksRef.current.onLaneClick(e),
+      onSelect: (id) => lyricsLaneCallbacksRef.current.onSelect(id),
+      onReword: (id) => lyricsLaneCallbacksRef.current.onReword(id),
+      onDelete: (id) => lyricsLaneCallbacksRef.current.onDelete(id),
+      onEdgeMouseDown: (e, id, edge) => lyricsLaneCallbacksRef.current.onEdgeMouseDown(e, id, edge),
+      onDraftChange: (text) => lyricsLaneCallbacksRef.current.onDraftChange(text),
+      onDraftCommit: () => lyricsLaneCallbacksRef.current.onDraftCommit(),
+      onDraftCancel: () => lyricsLaneCallbacksRef.current.onDraftCancel(),
+    }),
+    [],
+  )
+
+  const markerLaneCallbacksRef = useRef({
+    onMarkerMouseDown: (_e: React.MouseEvent, _marker: Marker) => {},
+    onTrackDoubleClick: (_e: React.MouseEvent<HTMLDivElement>) => {},
+    onUpdateMarker,
+    onDeleteMarker,
+  })
+  markerLaneCallbacksRef.current = {
+    onMarkerMouseDown: (e, marker) => handleMarkerMouseDown(e, marker),
+    onTrackDoubleClick: (e) => handleMarkerTrackDblClick(e),
+    onUpdateMarker,
+    onDeleteMarker,
+  }
+  const markerLaneHandlers = useMemo(
+    () => ({
+      onMarkerMouseDown: (e: React.MouseEvent, marker: Marker) =>
+        markerLaneCallbacksRef.current.onMarkerMouseDown(e, marker),
+      onTrackDoubleClick: (e: React.MouseEvent<HTMLDivElement>) =>
+        markerLaneCallbacksRef.current.onTrackDoubleClick(e),
+      onUpdateMarker: (id: string, positionMs: number, label?: string | null) =>
+        markerLaneCallbacksRef.current.onUpdateMarker(id, positionMs, label),
+      onDeleteMarker: (id: string) => markerLaneCallbacksRef.current.onDeleteMarker(id),
     }),
     [],
   )
@@ -1303,23 +1268,6 @@ export function TimelineEditor({
     })
   }
 
-  function handleMarkerLabelClick(e: React.MouseEvent, marker: Marker): void {
-    e.stopPropagation()
-    setEditingMarkerId(marker.id)
-    setEditingMarkerLabel(marker.label ?? '')
-  }
-
-  function handleMarkerLabelSave(marker: Marker): void {
-    const trimmed = editingMarkerLabel.trim() || null
-    // One write, through the one Marker seam: a second write straight to
-    // `window.api` raced this one and carried the pre-drag position, so labelling
-    // a Marker just after dragging it could put the Marker back where it was.
-    if (trimmed !== marker.label) {
-      onUpdateMarker(marker.id, markerDragOverride[marker.id] ?? marker.positionMs, trimmed)
-    }
-    setEditingMarkerId(null)
-  }
-
   function handleMediaTrackMouseDown(e: React.MouseEvent): void {
     if (!rundownMedia) return
     const grab = { origOffsetMs: rundownMedia.offsetMs }
@@ -1440,6 +1388,19 @@ export function TimelineEditor({
     () => lyricBlocks(lyricsForLane, zoomPxPerSec),
     [lyricsForLane, zoomPxPerSec],
   )
+  // Pixels are the lane's business, so the draft arrives already placed — same
+  // deal as the blocks above.
+  const lyricDraftBox = useMemo(() => {
+    const draft = authoring.draft
+    if (draft === null) return null
+    return {
+      text: draft.text,
+      leftPx: pxAtMs(draft.startMs, zoomPxPerSec),
+      widthPx: Math.max(120, pxAtMs(draft.endMs - draft.startMs, zoomPxPerSec)),
+    }
+  }, [authoring.draft, zoomPxPerSec])
+  const pendingLyricInPx =
+    authoring.pendingInMs === null ? null : pxAtMs(authoring.pendingInMs, zoomPxPerSec)
   // The whole point of the lane: which line is being sung right now. The playhead
   // is committed to state at PLAYHEAD_COMMIT_INTERVAL_MS, so this lags by at most
   // that — far below the length of a sung line.
@@ -1554,7 +1515,7 @@ export function TimelineEditor({
             width: 'auto',
             padding: '0 6px',
             opacity: running ? 0.4 : 1,
-            color: lyricInMs !== null ? '#5dade2' : '#ccc',
+            color: authoring.pendingInMs !== null ? '#5dade2' : '#ccc',
           }}
           disabled={running}
           onClick={setLyricIn}
@@ -1570,13 +1531,13 @@ export function TimelineEditor({
         >
           Out ]
         </button>
-        {lyricError !== null && (
+        {authoring.error !== null && (
           <span
             style={{ color: '#e74c3c', fontSize: '11px', cursor: 'pointer' }}
             title="Click to dismiss"
-            onClick={() => setLyricError(null)}
+            onClick={() => dispatchLyric({ type: 'dismissError' })}
           >
-            {lyricError}
+            {authoring.error}
           </span>
         )}
         {/*
@@ -1710,316 +1671,30 @@ export function TimelineEditor({
           />
 
           {/* Row 3b: Lyrics track — the second and only other Track, in both Kinds */}
-          <div
-            data-lyrics-lane=""
-            style={{
-              height: LYRICS_ROW_HEIGHT,
-              width: totalPx,
-              background: '#141414',
-              position: 'relative',
-              borderTop: '1px solid #2a2a2a',
-              cursor: 'crosshair',
-              overflow: 'hidden',
-            }}
-            onClick={(e) => {
-              setSelectedLyricId(null)
-              handleTrackClick(e)
-            }}
-          >
-            {lyricLane.map((block) => {
-              const isSelected = selectedLyricId === block.id
-              const isHovered = hoveredLyricId === block.id
-              const isCurrent = currentLyricId === block.id
-              return (
-                <div
-                  key={block.id}
-                  style={{
-                    position: 'absolute',
-                    left: block.leftPx,
-                    top: 3,
-                    width: block.widthPx,
-                    height: LYRICS_ROW_HEIGHT - 6,
-                    background: isSelected ? '#2e5c8a' : isCurrent ? '#27435f' : '#243447',
-                    border: `1px solid ${isSelected || isCurrent ? '#5dade2' : '#31506e'}`,
-                    borderRadius: '2px',
-                    boxSizing: 'border-box',
-                    color: isCurrent ? '#fff' : '#d6e6f5',
-                    fontSize: '10px',
-                    // Two lines rather than one: a sung line rarely fits the
-                    // width its own timing gives it, and an ellipsis hides the
-                    // half of the lyric the operator is trying to read.
-                    lineHeight: '11px',
-                    display: '-webkit-box',
-                    WebkitBoxOrient: 'vertical',
-                    WebkitLineClamp: 2,
-                    wordBreak: 'break-word',
-                    whiteSpace: 'normal',
-                    padding: '2px 6px',
-                    overflow: 'hidden',
-                    cursor: 'pointer',
-                    userSelect: 'none',
-                  }}
-                  title={`${block.text} — click to select, double-click to re-word`}
-                  onMouseEnter={() => setHoveredLyricId(block.id)}
-                  onMouseLeave={() => setHoveredLyricId(null)}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    setLyricError(null)
-                    setSelectedLyricId(isSelected ? null : block.id)
-                  }}
-                  onDoubleClick={(e) => {
-                    e.stopPropagation()
-                    const existing = lyrics.find((l) => l.id === block.id)
-                    if (existing === undefined) return
-                    setSelectedLyricId(existing.id)
-                    setLyricDraft({
-                      id: existing.id,
-                      startMs: existing.startMs,
-                      endMs: existing.endMs,
-                      text: existing.text,
-                    })
-                  }}
-                >
-                  {block.text}
-                  {(isHovered || isSelected) && !running && (
-                    <>
-                      <LyricEdgeHandle
-                        side="start"
-                        onDown={(e) => beginLyricResize(e, block.id, 'start')}
-                      />
-                      <LyricEdgeHandle
-                        side="end"
-                        onDown={(e) => beginLyricResize(e, block.id, 'end')}
-                      />
-                    </>
-                  )}
-                  {isHovered && (
-                    <button
-                      style={{
-                        position: 'absolute',
-                        right: 0,
-                        top: 0,
-                        background: 'rgba(0,0,0,0.5)',
-                        border: 'none',
-                        color: '#e74c3c',
-                        fontSize: '10px',
-                        lineHeight: 1,
-                        padding: '2px 4px',
-                        cursor: 'pointer',
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        deleteLyric(block.id)
-                      }}
-                      title="Delete line"
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-              )
-            })}
-
-            {/* Pending In point: the line has a start but no end yet */}
-            {lyricInMs !== null && lyricDraft === null && (
-              <div
-                style={{
-                  position: 'absolute',
-                  left: pxAtMs(lyricInMs, zoomPxPerSec),
-                  top: 0,
-                  width: '2px',
-                  height: LYRICS_ROW_HEIGHT,
-                  borderLeft: '2px dashed #5dade2',
-                  pointerEvents: 'none',
-                }}
-              />
-            )}
-
-            {/* Typing the line, once its in and out points are fixed */}
-            {lyricDraft !== null && (
-              <input
-                autoFocus
-                value={lyricDraft.text}
-                onChange={(e) => setLyricDraft({ ...lyricDraft, text: e.target.value })}
-                onClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => {
-                  e.stopPropagation()
-                  if (e.key === 'Enter') commitLyricDraft()
-                  if (e.key === 'Escape') {
-                    setLyricDraft(null)
-                    setLyricError(null)
-                  }
-                }}
-                placeholder="line of lyrics"
-                style={{
-                  position: 'absolute',
-                  left: pxAtMs(lyricDraft.startMs, zoomPxPerSec),
-                  top: 3,
-                  width: Math.max(120, pxAtMs(lyricDraft.endMs - lyricDraft.startMs, zoomPxPerSec)),
-                  height: LYRICS_ROW_HEIGHT - 6,
-                  background: '#1b2a3a',
-                  border: '1px solid #5dade2',
-                  color: '#d6e6f5',
-                  fontSize: '10px',
-                  padding: '0 4px',
-                  boxSizing: 'border-box',
-                  zIndex: 20,
-                }}
-              />
-            )}
-
-            {lyrics.length === 0 && lyricDraft === null && (
-              <span
-                style={{
-                  position: 'absolute',
-                  left: '8px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  color: '#444',
-                  fontSize: '10px',
-                  fontFamily: 'monospace',
-                  pointerEvents: 'none',
-                }}
-              >
-                Lyrics — set In [ , play, set Out ] , type the line
-              </span>
-            )}
-          </div>
+          <LyricsLane
+            blocks={lyricLane}
+            selectedId={authoring.selectedId}
+            currentId={currentLyricId}
+            draft={lyricDraftBox}
+            pendingInLeftPx={pendingLyricInPx}
+            width={totalPx}
+            height={LYRICS_ROW_HEIGHT}
+            running={running}
+            handlers={lyricsLaneHandlers}
+          />
 
           {/* Row 4: Marker track */}
-          <div
-            style={{
-              height: MARKER_ROW_HEIGHT,
-              width: totalPx,
-              background: '#1e1e1e',
-              position: 'relative',
-              borderTop: '1px solid #2a2a2a',
-              cursor: 'crosshair',
-            }}
-            onDoubleClick={handleMarkerTrackDblClick}
-          >
-            {markers.map((marker) => {
-              const effectivePositionMs = markerDragOverride[marker.id] ?? marker.positionMs
-              const leftPx = pxAtMs(effectivePositionMs, zoomPxPerSec)
-              const isEditing = editingMarkerId === marker.id
-              const isHovered = hoveredMarkerId === marker.id
-
-              return (
-                <div
-                  key={marker.id}
-                  style={{
-                    position: 'absolute',
-                    left: leftPx,
-                    top: 0,
-                    height: MARKER_ROW_HEIGHT,
-                    width: 1,
-                    zIndex: 10,
-                  }}
-                  onMouseEnter={() => setHoveredMarkerId(marker.id)}
-                  onMouseLeave={() => setHoveredMarkerId(null)}
-                >
-                  {/* Dotted vertical line */}
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: 0,
-                      top: 0,
-                      width: '2px',
-                      height: MARKER_ROW_HEIGHT,
-                      borderLeft: '2px dashed #f39c12',
-                      cursor: 'ew-resize',
-                    }}
-                    onMouseDown={(e) => handleMarkerMouseDown(e, marker)}
-                  />
-
-                  {/* Label / inline edit */}
-                  {isEditing ? (
-                    <input
-                      autoFocus
-                      value={editingMarkerLabel}
-                      onChange={(e) => setEditingMarkerLabel(e.target.value)}
-                      onBlur={() => handleMarkerLabelSave(marker)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleMarkerLabelSave(marker)
-                        if (e.key === 'Escape') setEditingMarkerId(null)
-                      }}
-                      style={{
-                        position: 'absolute',
-                        left: '4px',
-                        top: '2px',
-                        width: '80px',
-                        fontSize: '9px',
-                        background: '#2a2a2a',
-                        border: '1px solid #f39c12',
-                        color: '#f39c12',
-                        padding: '1px 2px',
-                        zIndex: 20,
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  ) : (
-                    <span
-                      style={{
-                        position: 'absolute',
-                        left: '4px',
-                        top: '2px',
-                        fontSize: '9px',
-                        color: '#f39c12',
-                        whiteSpace: 'nowrap',
-                        cursor: 'text',
-                        userSelect: 'none',
-                      }}
-                      onClick={(e) => handleMarkerLabelClick(e, marker)}
-                    >
-                      {marker.label ?? ''}
-                    </span>
-                  )}
-
-                  {/* Delete button on hover */}
-                  {isHovered && !isEditing && (
-                    <button
-                      style={{
-                        position: 'absolute',
-                        left: '4px',
-                        top: '14px',
-                        fontSize: '9px',
-                        background: 'none',
-                        border: 'none',
-                        color: '#f39c12',
-                        cursor: 'pointer',
-                        padding: 0,
-                        lineHeight: 1,
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onDeleteMarker(marker.id)
-                      }}
-                      title="Delete marker"
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-              )
-            })}
-
-            {markers.length === 0 && (
-              <span
-                style={{
-                  position: 'absolute',
-                  left: '8px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  color: '#444',
-                  fontSize: '10px',
-                  fontFamily: 'monospace',
-                  pointerEvents: 'none',
-                }}
-              >
-                double-click to add marker
-              </span>
-            )}
-          </div>
+          <MarkerLane
+            markers={markers}
+            dragOverride={markerDragOverride}
+            zoomPxPerSec={zoomPxPerSec}
+            width={totalPx}
+            height={MARKER_ROW_HEIGHT}
+            onMarkerMouseDown={markerLaneHandlers.onMarkerMouseDown}
+            onUpdateMarker={markerLaneHandlers.onUpdateMarker}
+            onDeleteMarker={markerLaneHandlers.onDeleteMarker}
+            onTrackDoubleClick={markerLaneHandlers.onTrackDoubleClick}
+          />
 
           {/* Row 5: Media track */}
           <MediaLane

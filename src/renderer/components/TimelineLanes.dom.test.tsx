@@ -18,7 +18,7 @@ import { render, screen, act, cleanup } from '@testing-library/react'
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import type { Shot, Camera } from '../../shared/types'
 
-const renders = { item: 0, ruler: 0, overview: 0, media: 0 }
+const renders = { item: 0, ruler: 0, overview: 0, media: 0, lyrics: 0, marker: 0 }
 
 vi.mock('./timeline/ItemLane', () => ({
   ItemLane: React.memo(function ItemLaneStub(): React.JSX.Element {
@@ -36,6 +36,18 @@ vi.mock('./timeline/MediaLane', () => ({
   MediaLane: React.memo(function MediaLaneStub(): React.JSX.Element {
     renders.media++
     return <div data-testid="media-lane" />
+  }),
+}))
+vi.mock('./timeline/LyricsLane', () => ({
+  LyricsLane: React.memo(function LyricsLaneStub(): React.JSX.Element {
+    renders.lyrics++
+    return <div data-testid="lyrics-lane" />
+  }),
+}))
+vi.mock('./timeline/MarkerLane', () => ({
+  MarkerLane: React.memo(function MarkerLaneStub(): React.JSX.Element {
+    renders.marker++
+    return <div data-testid="marker-lane" />
   }),
 }))
 vi.mock('./timeline/OverviewBar', () => ({
@@ -133,6 +145,8 @@ describe('lane memoisation during playback', () => {
     renders.ruler = 0
     renders.overview = 0
     renders.media = 0
+    renders.lyrics = 0
+    renders.marker = 0
 
     const scroller = (): Element | null => document.querySelector('.timeline-scroll')
     let lastScrollLeft = 0
@@ -152,6 +166,6 @@ describe('lane memoisation during playback', () => {
       }
     }
 
-    expect(renders).toEqual({ item: 0, ruler: 0, overview: 0, media: 0 })
+    expect(renders).toEqual({ item: 0, ruler: 0, overview: 0, media: 0, lyrics: 0, marker: 0 })
   })
 })

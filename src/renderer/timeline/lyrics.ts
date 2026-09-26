@@ -56,7 +56,7 @@ export function rangesOverlap(a: TimeRange, b: TimeRange): boolean {
  * count as clashing with itself.
  */
 export function overlappingLyric(
-  lyrics: Lyric[],
+  lyrics: readonly Lyric[],
   range: TimeRange,
   ignoreId: string | null = null,
 ): Lyric | null {
