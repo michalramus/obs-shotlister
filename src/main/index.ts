@@ -529,6 +529,10 @@ function registerIpcHandlers(): void {
   registerIpcHandler('live:next', () => {
     const { state, hiddenShotId } = live.next()
     publish.liveStateChanged(state)
+    // Next past the last Shot ends the session and empties the Live queue, so the
+    // Hidden flags phones are holding are no longer the ones the queue has (ADR
+    // 0003). `liveStateChanged` carries only the position, never the Shots.
+    if (!state.running) publish.rundownChanged()
     if (hiddenShotId) publish.shotHidden(hiddenShotId)
     obs.takeLiveShot().catch(console.error)
     return state
@@ -545,6 +549,9 @@ function registerIpcHandlers(): void {
   registerIpcHandler('live:restart', () => {
     const state = live.restart()
     publish.liveStateChanged(state)
+    // Restart refills the queue with every Shot visible again — the same reason
+    // Start publishes it.
+    publish.rundownChanged()
     obs.takeLiveShot().catch(console.error)
     return state
   })
