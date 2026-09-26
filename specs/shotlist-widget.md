@@ -14,15 +14,29 @@ interface ShotlistWidgetProps {
   rundownName: string
   shots: Shot[]
   cameras: Camera[]
+  parts?: Part[]               // the Parts a Voice-over Rundown's Calls name
+  kind?: RundownKind           // defaults to a Camera Rundown
   liveIndex: number | null     // index into shots[] of current live shot
   startedAt: number | null     // Date.now() when live shot started
   running: boolean
+  showNextBackground?: boolean
+  autoScroll?: boolean
   cameraFilter?: number[]      // camera numbers to show; undefined = show all
+  cuePlayer?: CuePlayback      // omitted plays no Cues at all
+  muteCount?: boolean
+  muteBeep?: boolean
 }
 ```
 
 Location: `src/shared/components/ShotlistWidget.tsx`
 Types imported from `src/shared/types.ts`.
+
+The widget decides *which* Cue fires and *when* — the countdown, the beep, the
+filtered-Camera beep, and the silence a Voice-over Rundown keeps because it speaks
+its own countdown. It decides nothing about *how* a Cue reaches a device: the Cue
+player owns the elements, the output devices and the Intercom output copy
+(`src/shared/audio/cue-player.ts`). The operator window passes a player that can
+name an Intercom output; the Phone view passes one that cannot.
 
 ## Layout
 

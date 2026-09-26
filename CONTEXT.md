@@ -68,6 +68,13 @@ Voice-over Rundown is made of, exactly as a Shot is the unit of a Camera Rundown
 is involved and OBS is never switched.
 _Avoid_: cue, announcement, moment, prompt
 
+**Rundown item**:
+Either unit a Rundown is made of, when the Kind is not the point: a Shot in a Camera
+Rundown, a Call in a Voice-over Rundown. They share one table and one row shape, and the
+Kind decides which column carries the target. Say Shot or Call whenever you know which one
+you mean.
+_Avoid_: entry, element, record, row
+
 **Announcement**:
 What a Voice-over Rundown speaks before a Call: that Call's Part name and connector, then
 the countdown numbers, played from clips rendered ahead of the show. Never a Cue, which is
@@ -142,6 +149,13 @@ _Avoid_: pre-roll, standby, arm
 The operator view for building a Rundown: splitting, resizing, relabelling and reordering
 Shots against the Reference media.
 _Avoid_: design mode, prep
+
+**Grab**:
+Taking hold of something on a Track in Edit mode and moving it with the pointer: a boundary
+between two Shots, the end of the last item, a Marker, a Lyric edge, the Reference media's
+offset, or the Playhead. Every Grab previews while the pointer moves and commits when it is
+released, and the two always agree.
+_Avoid_: drag, handle, resize, scrub
 
 **Live mode**:
 The operator view for running a Live session. Actions here affect the Live queue only.
