@@ -76,6 +76,9 @@ const api: ElectronApi = {
   audioDevices: {
     get: request('audio:devices:get'),
     save: request('audio:devices:save'),
+    virtualState: request('audio:virtual:state'),
+    ensureVirtual: request('audio:virtual:ensure'),
+    loopbackHints: request('audio:virtual:hints'),
   },
   speech: {
     status: request('speech:renderSummary'),

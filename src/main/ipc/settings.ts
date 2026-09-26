@@ -236,11 +236,17 @@ export function getEffectiveVoiceSettings(
  * Two independent selectors, because Announcements are piped into a virtual
  * cable feeding Mumble while the operator keeps their own countdown Cues on
  * their own speakers. `null` means the system default.
+ *
+ * The Intercom output is a third destination rather than a third selector: it
+ * takes a copy of both sounds, so an intercom client on this machine carries the
+ * show without anything being taken away from the operator.
  */
 export function getAudioDevices(db: Database.Database): AudioDeviceSettings {
   return {
     cueSinkId: readSetting(db, 'audio_cue_sink') ?? null,
     announcementSinkId: readSetting(db, 'audio_announcement_sink') ?? null,
+    intercomEnabled: readSetting(db, 'audio_intercom_enabled') === 'true',
+    intercomSinkId: readSetting(db, 'audio_intercom_sink') ?? null,
   }
 }
 
@@ -250,4 +256,6 @@ export function saveAudioDevices(db: Database.Database, value: AudioDeviceSettin
 
   set('audio_cue_sink', value.cueSinkId)
   set('audio_announcement_sink', value.announcementSinkId)
+  set('audio_intercom_sink', value.intercomSinkId)
+  writeSetting(db, 'audio_intercom_enabled', value.intercomEnabled ? 'true' : 'false')
 }

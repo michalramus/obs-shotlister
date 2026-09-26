@@ -252,18 +252,61 @@ describe('audio devices', () => {
     db.close()
   })
 
-  it('defaults both outputs to the system default', () => {
-    expect(getAudioDevices(db)).toEqual({ cueSinkId: null, announcementSinkId: null })
+  it('defaults both outputs to the system default, with no intercom', () => {
+    expect(getAudioDevices(db)).toEqual({
+      cueSinkId: null,
+      announcementSinkId: null,
+      intercomEnabled: false,
+      intercomSinkId: null,
+    })
   })
 
   it('keeps the two outputs independent', () => {
-    saveAudioDevices(db, { cueSinkId: 'speakers', announcementSinkId: 'virtual-cable' })
-    expect(getAudioDevices(db)).toEqual({
+    saveAudioDevices(db, {
+      cueSinkId: 'speakers',
+      announcementSinkId: 'virtual-cable',
+      intercomEnabled: false,
+      intercomSinkId: null,
+    })
+    expect(getAudioDevices(db)).toMatchObject({
       cueSinkId: 'speakers',
       announcementSinkId: 'virtual-cable',
     })
 
-    saveAudioDevices(db, { cueSinkId: 'speakers', announcementSinkId: null })
-    expect(getAudioDevices(db)).toEqual({ cueSinkId: 'speakers', announcementSinkId: null })
+    saveAudioDevices(db, {
+      cueSinkId: 'speakers',
+      announcementSinkId: null,
+      intercomEnabled: false,
+      intercomSinkId: null,
+    })
+    expect(getAudioDevices(db)).toMatchObject({ cueSinkId: 'speakers', announcementSinkId: null })
+  })
+
+  it('remembers the intercom output, and that it was switched off again', () => {
+    // Off must survive a restart as deliberately as on does: a Cue arriving on
+    // the band's intercom because a stored 'true' outlived the operator turning
+    // it off is the one failure this setting cannot have.
+    saveAudioDevices(db, {
+      cueSinkId: null,
+      announcementSinkId: null,
+      intercomEnabled: true,
+      intercomSinkId: 'shotlister-out',
+    })
+    expect(getAudioDevices(db)).toMatchObject({
+      intercomEnabled: true,
+      intercomSinkId: 'shotlister-out',
+    })
+
+    saveAudioDevices(db, {
+      cueSinkId: null,
+      announcementSinkId: null,
+      intercomEnabled: false,
+      intercomSinkId: 'shotlister-out',
+    })
+    expect(getAudioDevices(db)).toMatchObject({
+      intercomEnabled: false,
+      // Kept, so switching it back on does not ask which device again.
+      intercomSinkId: 'shotlister-out',
+    })
   })
 })

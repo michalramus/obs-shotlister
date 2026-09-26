@@ -182,7 +182,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
   lyrics: [],
   renderSummary: null,
   phraseDurations: {},
-  audioDevices: { cueSinkId: null, announcementSinkId: null },
+  audioDevices: {
+    cueSinkId: null,
+    announcementSinkId: null,
+    intercomEnabled: false,
+    intercomSinkId: null,
+  },
   voiceSettings: null,
   projectVoiceSettings: null,
   effectiveVoiceSettings: null,

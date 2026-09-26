@@ -5,6 +5,7 @@ import { extname } from 'path'
 import { fromMediaUrl } from '../shared/media-url'
 import { toWebStream } from './media-stream'
 import { startServer } from './server'
+import { createVirtualSinkManager, loopbackHints } from './audio/virtual-sink'
 import { registerIpcHandler, pushToWindow } from './ipc/register'
 import type {
   CameraUpsertInput,
@@ -111,6 +112,11 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 const obsClient = createOBSClient()
+
+// The loopback device the Intercom output duplicates into. Created here on Linux
+// and only looked for elsewhere (ADR 0008) — either way before a show, never
+// during one.
+const virtualSink = createVirtualSinkManager()
 
 // Created once the database is open, in app.whenReady().
 let live: LiveSession
@@ -387,9 +393,24 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler('audio:devices:get', () => getAudioDevices(db))
 
-  registerIpcHandler('audio:devices:save', (payload: AudioDeviceSettings) =>
-    saveAudioDevices(db, payload),
-  )
+  registerIpcHandler('audio:devices:save', (payload: AudioDeviceSettings) => {
+    saveAudioDevices(db, payload)
+    // Switching the Intercom output on is the operator asking for the device, so
+    // it is made here rather than at the next start. A sink that will not load
+    // must not fail the save: the panel reads the reason back from its own state
+    // call, and every other output keeps working meanwhile.
+    if (payload.intercomEnabled) {
+      virtualSink.ensure().catch((err: unknown) => {
+        console.error('[audio] could not create the virtual output:', err)
+      })
+    }
+  })
+
+  registerIpcHandler('audio:virtual:state', () => virtualSink.state())
+
+  registerIpcHandler('audio:virtual:ensure', () => virtualSink.ensure())
+
+  registerIpcHandler('audio:virtual:hints', () => [...loopbackHints(process.platform)])
 
   // Announcement rendering
   registerIpcHandler('speech:renderSummary', ({ projectId }: { projectId: string }) =>
@@ -959,6 +980,16 @@ app.whenReady().then(() => {
     startOscServer(oscSettings.port, { next: handleOscNext, skip: handleOscSkip })
   }
 
+  // The Intercom output is a device, and a device has to exist before the
+  // operator can pick it in Mumble. Made at start so it is there while they set
+  // the show up, not first asked for when a Cue is already due. Not awaited: on
+  // Linux it is one pactl call, and on every other platform it is a no-op.
+  if (getAudioDevices(_db).intercomEnabled) {
+    virtualSink.ensure().catch((err: unknown) => {
+      console.error('[audio] could not create the virtual output on start:', err)
+    })
+  }
+
   // Subscribe to OBS WebSocket events for auto-validation
   const validationEvents = [
     'StudioModeStateChanged',
@@ -1017,6 +1048,12 @@ app.on('will-quit', () => {
 app.on('before-quit', () => {
   render?.sweepOrphans().catch((err: unknown) => {
     console.error('[speech] sweep on quit failed:', err)
+  })
+  // Here rather than in `will-quit` for the same reason: the unload is async and
+  // `will-quit` does not wait. A sink that outlives a hard kill is harmless — it
+  // is silent, the next start reuses it, and the audio server drops it at logout.
+  virtualSink.remove().catch((err: unknown) => {
+    console.error('[audio] removing the virtual output failed:', err)
   })
 })
 

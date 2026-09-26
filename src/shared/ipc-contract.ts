@@ -153,6 +153,36 @@ export interface EffectiveVoiceSettings {
 export interface AudioDeviceSettings {
   cueSinkId: string | null
   announcementSinkId: string | null
+  /**
+   * Send every Cue and Announcement to {@link AudioDeviceSettings.intercomSinkId}
+   * as well as to the device its own setting names, so an intercom client on this
+   * machine can carry the show. Duplicates; never moves sound off the operator's
+   * own speakers.
+   */
+  intercomEnabled: boolean
+  /** The Virtual output to duplicate into. `null` means nothing is chosen yet. */
+  intercomSinkId: string | null
+}
+
+/**
+ * Where the Virtual output — the loopback device the Intercom output plays into —
+ * stands on this machine.
+ *
+ * The app creates one on Linux and only finds one on macOS and Windows (ADR
+ * 0008), so this reports both what is true now and what the operator has to do
+ * about it.
+ */
+export interface VirtualOutputState {
+  /** Whether this platform lets the app create the device at all. */
+  creatable: boolean
+  /** Whether it exists right now. */
+  present: boolean
+  /** The label it carries in the device list, for matching. Null off Linux. */
+  label: string | null
+  /** What to record in the intercom client. Null until the device exists. */
+  monitorLabel: string | null
+  /** Why it is not there, or what to install. Null when present. */
+  guidance: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +368,12 @@ export interface IpcContract {
   'voice:effective': { payload: { projectId: string | null }; result: EffectiveVoiceSettings }
   'audio:devices:get': { payload: NoPayload; result: AudioDeviceSettings }
   'audio:devices:save': { payload: AudioDeviceSettings; result: void }
+  /** The Virtual output as it stands, creating nothing. */
+  'audio:virtual:state': { payload: NoPayload; result: VirtualOutputState }
+  /** Creates the Virtual output where the platform allows it; idempotent. */
+  'audio:virtual:ensure': { payload: NoPayload; result: VirtualOutputState }
+  /** Device-label fragments that mean "this device loops back", lower case. */
+  'audio:virtual:hints': { payload: NoPayload; result: string[] }
 
   // --- Announcement rendering ---
   'speech:renderSummary': { payload: { projectId: string }; result: ProjectRenderSummary }
@@ -529,6 +565,9 @@ export interface ElectronApi {
   audioDevices: {
     get: Request<'audio:devices:get'>
     save: Request<'audio:devices:save'>
+    virtualState: Request<'audio:virtual:state'>
+    ensureVirtual: Request<'audio:virtual:ensure'>
+    loopbackHints: Request<'audio:virtual:hints'>
   }
   speech: {
     status: Request<'speech:renderSummary'>
@@ -665,6 +704,9 @@ export const IPC_CHANNELS = [
   'voice:effective',
   'audio:devices:get',
   'audio:devices:save',
+  'audio:virtual:state',
+  'audio:virtual:ensure',
+  'audio:virtual:hints',
   'speech:renderSummary',
   'speech:render',
   'speech:phraseDurations',
