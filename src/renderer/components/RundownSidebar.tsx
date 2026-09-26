@@ -43,6 +43,18 @@ const s = {
     borderBottom: '1px solid #2a2a2a',
   } satisfies React.CSSProperties,
 
+  actionError: {
+    margin: '8px 10px 0',
+    padding: '6px 8px',
+    background: '#3a1d1d',
+    border: '1px solid #7b2d2d',
+    borderRadius: '3px',
+    color: '#e6a5a5',
+    fontSize: '11px',
+    lineHeight: 1.35,
+    cursor: 'pointer',
+  } satisfies React.CSSProperties,
+
   list: {
     flex: 1,
     overflowY: 'auto' as const,
@@ -566,6 +578,8 @@ export function RundownSidebar(): React.JSX.Element {
   const reorderRundowns = useAppStore((s) => s.reorderRundowns)
   const setRundownFolder = useAppStore((s) => s.setRundownFolder)
   const setRundownKind = useAppStore((s) => s.setRundownKind)
+  const renameFolder = useAppStore((s) => s.renameFolder)
+  const deleteFolder = useAppStore((s) => s.deleteFolder)
 
   const [newName, setNewName] = useState('')
   const [showNewInput, setShowNewInput] = useState(false)
@@ -574,6 +588,12 @@ export function RundownSidebar(): React.JSX.Element {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  // Why the last action did not happen. The main process refuses some of these
+  // deliberately and explains why — deleting the Rundown a Live session is running,
+  // converting one that would strand assignments — and routing that explanation to
+  // console.error meant the operator confirmed a delete and simply watched nothing
+  // happen.
+  const [actionError, setActionError] = useState<string | null>(null)
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null)
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
   // Folders with no rundowns yet exist only here, so they cannot be re-derived
@@ -712,9 +732,10 @@ export function RundownSidebar(): React.JSX.Element {
     const confirmed = window.confirm(`Delete rundown "${rundown.name}"?`)
     if (!confirmed) return
     try {
+      setActionError(null)
       await removeRundown(id)
     } catch (err) {
-      console.error('[RundownSidebar] delete error:', err)
+      setActionError(err instanceof Error ? err.message : 'Could not delete the rundown.')
     }
   }
 
@@ -725,9 +746,10 @@ export function RundownSidebar(): React.JSX.Element {
    */
   async function handleSetKind(id: string, kind: RundownKind): Promise<void> {
     try {
+      setActionError(null)
       await setRundownKind(id, kind)
     } catch (err) {
-      console.error('[RundownSidebar] setKind error:', err)
+      setActionError(err instanceof Error ? err.message : 'Could not change the rundown kind.')
     }
     setContextMenu(null)
   }
@@ -747,9 +769,16 @@ export function RundownSidebar(): React.JSX.Element {
   }
 
   async function handleRenameFolder(oldName: string, newName: string): Promise<void> {
-    const inFolder = rundowns.filter((r) => r.folder === oldName)
-    for (const rd of inFolder) {
-      await handleSetFolder(rd.id, newName)
+    // One transactional rename rather than a loop of per-Rundown moves: a Folder
+    // names a scope for Parts as well as for Rundowns, and moving only the
+    // Rundowns left every Part still scoped to the old name — out of scope of the
+    // Folder it belongs to, and unreachable from the picker. Halfway through, a
+    // failure used to leave the Folder split across two names.
+    try {
+      await renameFolder(oldName, newName)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not rename the folder.')
+      return
     }
     setLocalFolders((prev) =>
       prev.map((f) =>
@@ -767,9 +796,14 @@ export function RundownSidebar(): React.JSX.Element {
   }
 
   async function handleDeleteFolder(folderName: string): Promise<void> {
-    const inFolder = rundowns.filter((r) => r.folder === folderName)
-    for (const rd of inFolder) {
-      await handleSetFolder(rd.id, null)
+    // Clears the Folder from its Parts as well as its Rundowns. Clearing only the
+    // Rundowns left the Parts scoped to a Folder that no longer existed, with no
+    // way to see or reach them again.
+    try {
+      await deleteFolder(folderName)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not delete the folder.')
+      return
     }
     setLocalFolders((prev) =>
       prev.filter((f) => !(f.projectId === activeProjectId && f.name === folderName)),
@@ -867,6 +901,12 @@ export function RundownSidebar(): React.JSX.Element {
   return (
     <aside style={s.sidebar} data-testid="rundown-sidebar">
       <div style={s.header}>Rundowns</div>
+
+      {actionError !== null && (
+        <div style={s.actionError} role="alert" onClick={() => setActionError(null)}>
+          {actionError}
+        </div>
+      )}
 
       <DndContext
         sensors={sensors}

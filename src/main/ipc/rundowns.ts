@@ -243,3 +243,25 @@ export function renameFolder(
   })
   apply()
 }
+
+/**
+ * Dissolves a Folder, returning everything in it to no Folder.
+ *
+ * Both tables, in one transaction, for the same reason as {@link renameFolder}: a
+ * Folder scopes Parts as well as Rundowns. Clearing only the Rundowns left every
+ * Part scoped to a Folder that no longer exists — out of scope of every Rundown
+ * and unreachable from any picker, with nothing in the UI to show it or undo it.
+ */
+export function deleteFolder(db: Database.Database, projectId: string, folder: string): void {
+  const clearRundowns = db.prepare(
+    'UPDATE rundowns SET folder = NULL WHERE project_id = ? AND folder = ?',
+  )
+  const clearParts = db.prepare(
+    'UPDATE parts SET folder = NULL WHERE project_id = ? AND folder = ?',
+  )
+  const apply = db.transaction(() => {
+    clearRundowns.run(projectId, folder)
+    clearParts.run(projectId, folder)
+  })
+  apply()
+}

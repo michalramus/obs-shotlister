@@ -10,7 +10,7 @@ import {
   promotePart,
   setPartsColor,
 } from './parts'
-import { renameFolder } from './rundowns'
+import { renameFolder, deleteFolder } from './rundowns'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -594,5 +594,59 @@ describe('renameFolder', () => {
   it('rejects an empty folder name', () => {
     expect(() => renameFolder(db, 'p1', 'Old', '  ')).toThrow(/must not be empty/)
     expect(() => renameFolder(db, 'p1', '', 'New')).toThrow(/must not be empty/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// deleteFolder
+// ---------------------------------------------------------------------------
+
+describe('deleteFolder', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openMemoryDb()
+    insertProject(db, 'p1', 'Band A')
+    insertProject(db, 'p2', 'Band B')
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('returns both rundowns and parts to no folder', () => {
+    insertRundown(db, 'rd-1', 'p1', 'Song 1', 'Old')
+    insertPart(db, 'pt-1', 'p1', 1, 'wokal 1', 'Old')
+
+    deleteFolder(db, 'p1', 'Old')
+
+    const rundown = db.prepare('SELECT folder FROM rundowns WHERE id = ?').get('rd-1') as {
+      folder: string | null
+    }
+    expect(rundown.folder).toBeNull()
+    expect(listParts(db, 'p1')[0].folder).toBeNull()
+  })
+
+  it('leaves no Part stranded in a folder that no longer exists', () => {
+    // The defect this exists to prevent: clearing only the Rundowns left the Part
+    // scoped to a dissolved folder, out of scope of every Rundown and unreachable.
+    insertRundown(db, 'rd-1', 'p1', 'Song 1', 'Old')
+    insertPart(db, 'pt-1', 'p1', 1, 'wokal 1', 'Old')
+
+    deleteFolder(db, 'p1', 'Old')
+
+    expect(names(listPartsInScope(db, 'rd-1'))).toEqual(['wokal 1'])
+  })
+
+  it('leaves other folders and other projects alone', () => {
+    insertRundown(db, 'rd-1', 'p1', 'Song 1', 'Keep')
+    insertPart(db, 'pt-1', 'p1', 1, 'wokal 1', 'Keep')
+    insertRundown(db, 'rd-2', 'p2', 'Other', 'Old')
+    insertPart(db, 'pt-2', 'p2', 1, 'gitara', 'Old')
+
+    deleteFolder(db, 'p1', 'Old')
+
+    expect(listParts(db, 'p1')[0].folder).toBe('Keep')
+    expect(listParts(db, 'p2')[0].folder).toBe('Old')
   })
 })

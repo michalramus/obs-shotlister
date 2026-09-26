@@ -52,6 +52,7 @@ const api: ElectronApi = {
     setKind: request('rundowns:setKind'),
     unassignedCount: request('rundowns:unassignedCount'),
     renameFolder: request('rundowns:renameFolder'),
+    deleteFolder: request('rundowns:deleteFolder'),
   },
   parts: {
     list: request('parts:list'),

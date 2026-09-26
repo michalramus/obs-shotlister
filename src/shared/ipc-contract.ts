@@ -352,6 +352,10 @@ export interface IpcContract {
     payload: { projectId: string; from: string; to: string }
     result: void
   }
+  'rundowns:deleteFolder': {
+    payload: { projectId: string; folder: string }
+    result: void
+  }
 
   // --- Parts ---
   'parts:list': { payload: { projectId: string }; result: Part[] }
@@ -562,6 +566,7 @@ export interface ElectronApi {
     setKind: Request<'rundowns:setKind'>
     unassignedCount: Request<'rundowns:unassignedCount'>
     renameFolder: Request<'rundowns:renameFolder'>
+    deleteFolder: Request<'rundowns:deleteFolder'>
   }
   parts: {
     list: Request<'parts:list'>
@@ -713,6 +718,7 @@ export const IPC_CHANNELS = [
   'rundowns:setKind',
   'rundowns:unassignedCount',
   'rundowns:renameFolder',
+  'rundowns:deleteFolder',
   'parts:list',
   'parts:listInScope',
   'parts:upsert',

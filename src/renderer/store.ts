@@ -88,6 +88,7 @@ interface AppStore {
   setRundownFolder: (id: string, folder: string | null) => Promise<void>
   setRundownKind: (id: string, kind: RundownKind) => Promise<void>
   renameFolder: (from: string, to: string) => Promise<void>
+  deleteFolder: (folder: string) => Promise<void>
 
   // Part CRUD actions
   reloadParts: () => Promise<void>
@@ -410,6 +411,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const { activeProjectId } = get()
     if (!activeProjectId) throw new Error('No active project')
     await window.api.rundowns.renameFolder({ projectId: activeProjectId, from, to })
+    await get().loadRundowns(activeProjectId)
+    await get().loadParts(activeProjectId)
+  },
+
+  deleteFolder: async (folder) => {
+    const { activeProjectId } = get()
+    if (!activeProjectId) throw new Error('No active project')
+    await window.api.rundowns.deleteFolder({ projectId: activeProjectId, folder })
     await get().loadRundowns(activeProjectId)
     await get().loadParts(activeProjectId)
   },
