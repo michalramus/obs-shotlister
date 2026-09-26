@@ -2,6 +2,11 @@ node_modules/
 out/
 dist/
 .DS_Store
+
+# Editor swap files
+*.swp
+*.swo
+*~
 .claude/
 *.local
 
