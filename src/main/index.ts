@@ -393,14 +393,16 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler('audio:devices:get', () => getAudioDevices(db))
 
-  registerIpcHandler('audio:devices:save', (payload: AudioDeviceSettings) => {
+  registerIpcHandler('audio:devices:save', async (payload: AudioDeviceSettings) => {
     saveAudioDevices(db, payload)
     // Switching the Intercom output on is the operator asking for the device, so
-    // it is made here rather than at the next start. A sink that will not load
-    // must not fail the save: the panel reads the reason back from its own state
-    // call, and every other output keeps working meanwhile.
+    // it is made here rather than at the next start. Awaited, so the panel's
+    // status line reads the sink that now exists rather than racing it — but a
+    // sink that will not load must not fail the save: the reason reaches the
+    // operator through that same status line, and every other output keeps
+    // working meanwhile.
     if (payload.intercomEnabled) {
-      virtualSink.ensure().catch((err: unknown) => {
+      await virtualSink.ensure().catch((err: unknown) => {
         console.error('[audio] could not create the virtual output:', err)
       })
     }

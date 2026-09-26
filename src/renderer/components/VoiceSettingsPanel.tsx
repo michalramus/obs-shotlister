@@ -733,9 +733,11 @@ function IntercomSection({
     }
   }, [onError])
 
+  // Re-read after the toggle: enabling it is what creates the sink on Linux, and
+  // the status line is the only place the operator learns whether that worked.
   useEffect(() => {
     void readState()
-  }, [readState])
+  }, [readState, audioDevices.intercomEnabled])
 
   /** Devices whose name says they loop back, marked so they can be picked out. */
   const marked = useMemo(() => markLoopbackDevices(devices, hints), [devices, hints])
