@@ -21,6 +21,7 @@ Camera shot queue manager for live productions(something like cuepilot but witho
 - **Phone monitor** — embedded Express + Socket.io server pushes state to LAN browsers in real time
 - **Cue Tray** — small companion app for the video switching computer that plays the countdown and beep over the LAN
 - **OSC server** — accept `/obsque/next` and `/obsque/skip` commands from external controllers
+- **Intercom output** — plays a copy of every cue and announcement into a loopback device, so Mumble (or any voice client) can carry the show to an intercom
 - **DaVinci Resolve import** — import shot list from Resolve CSV marker export
 - **Export / Import** — rundown, project, or full database in JSON
 
@@ -93,6 +94,7 @@ All settings are stored in SQLite and configured from the app UI.
 |---|---|
 | OBS WebSocket host/port/password | Header → OBS button |
 | OSC server port | Header → OSC button |
+| Intercom output (device, on/off) | Header → speaker icon → Voice & audio settings… |
 | Camera names, colors, OBS scene mappings | Header → project name → Cameras |
 | Web server port | `src/main/server/index.ts` (default `3000`) |
 
@@ -166,6 +168,45 @@ closing it quits, so the program can never become something you can neither see 
 
 See `tray/README.md` for building it and for how the cue timing is kept identical to the
 operator window.
+
+## Intercom output
+
+Everything the show produces — countdown cues, beeps, spoken announcements — can be played a
+second time into a loopback device, so a voice client on the same machine picks it up as a
+microphone and carries it to the intercom.
+
+It **duplicates**: the operator keeps hearing everything on their own devices. Reference media is
+never routed, so scrubbing a rehearsal video does not reach the band.
+
+**Enable:** Header → speaker icon → **Voice & audio settings…** → Intercom output → toggle on,
+pick the device, press **Test**.
+
+### Where the device comes from
+
+| Platform | Device | Select in Mumble |
+|---|---|---|
+| Linux (PipeWire / PulseAudio) | Created by the app as **Shotlister Out** | *Monitor of Shotlister Out* |
+| macOS | BlackHole (`brew install blackhole-2ch`) or Loopback — installed by you | that device |
+| Windows | VB-CABLE (vb-audio.com) or VoiceMeeter — installed by you | *CABLE Output* |
+
+Only Linux lets an app create a loopback device at runtime; macOS wants a signed Core Audio
+plug-in and Windows a driver, so there the app detects a known device, marks it *— loopback* in the
+picker, and tells you what to install when there is none. It never runs an installer. See
+`docs/adr/0008-the-virtual-output-is-created-only-where-the-os-allows-it.md`.
+
+On Linux the sink is created at start (when the setting is on) and removed at quit:
+
+```bash
+pactl load-module module-null-sink \
+  sink_name=shotlister_out \
+  sink_properties=device.description="Shotlister Out"
+```
+
+An existing `shotlister_out` is reused rather than duplicated, and only a sink this app loaded is
+unloaded again — one you set up by hand outlives the app.
+
+A device that disappears mid-show costs the intercom its copy and nothing else: the operator's own
+cues and announcements keep playing. Full behaviour in `specs/intercom-output.md`.
 
 ## OSC server
 
