@@ -2,48 +2,11 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { Shot, Camera, Part, RundownKind } from '../types'
 import { targetOf, targetsById, targetsOf } from '../rundown-item'
 import { formatMs, computeTiming, computeRemainingMs } from '../timing'
+import type { Cue, CuePlayback } from '../audio/cue-player'
 
 // The countdown renders tenths of a second, so ticking faster than this only
 // costs phone battery — the old loop re-rendered the whole list at 60fps.
 const TICK_INTERVAL_MS = 50
-
-/** `setSinkId` is not in the DOM lib but is what Chromium exposes. */
-type RoutableAudio = HTMLAudioElement & { setSinkId?: (sinkId: string) => Promise<void> }
-
-/**
- * Points one clip at an output device, falling back to the default.
- *
- * A device that has been unplugged since it was chosen must not silence the
- * countdown — the operator would rather hear their Cues on the wrong speakers
- * than not at all.
- */
-function routeToSink(audio: HTMLAudioElement, sinkId: string | null, required = false): void {
-  const routable = audio as RoutableAudio
-  if (typeof routable.setSinkId !== 'function') return
-  // '' is how the API says "system default". Passing it matters: the clips are
-  // pooled and keep whichever sink they were last given, so without this,
-  // choosing System default leaves them on the old device until a restart.
-  routable.setSinkId(sinkId ?? '').then(
-    () => {
-      if (required) audio.muted = false
-    },
-    (err: unknown) => {
-      if (required) {
-        // The Intercom output's copy is a copy. Played on the default device by
-        // mistake it is every Cue heard twice in the operator's ear, so it is
-        // muted instead: the element stays pooled and starts sounding again the
-        // moment the device comes back.
-        audio.muted = true
-        console.error('[ShotlistWidget] intercom output unavailable, muting its copy:', err)
-        return
-      }
-      console.error('[ShotlistWidget] cue output device unavailable:', err)
-    },
-  )
-}
-
-/** The fixed Cues, preloaded per output device. */
-const CUE_FILES = ['one.opus', 'two.opus', 'three.opus', 'beep.opus', 'beep-low.opus'] as const
 
 export interface ShotlistWidgetProps {
   rundownName: string
@@ -59,28 +22,19 @@ export interface ShotlistWidgetProps {
   showNextBackground?: boolean
   autoScroll?: boolean
   cameraFilter?: number[]
-  audioBaseUrl?: string
+  /**
+   * Where the Cues are played. Omitted plays nothing, which is how a view that
+   * has no audio yet — the operator window before its clip directory is known —
+   * says so.
+   *
+   * Only playing, never routing: which devices the Cues reach, and whether an
+   * Intercom output gets a copy, belongs to whoever built the player. The
+   * operator window hands over one that knows its devices; the Phone view hands
+   * over one that cannot have any.
+   */
+  cuePlayer?: CuePlayback
   muteCount?: boolean
   muteBeep?: boolean
-  audioVolume?: number // 0–1, default 1
-  /**
-   * Output device for the countdown Cues. `null` or omitted is the system
-   * default.
-   *
-   * Independent of where Announcements play, so the operator keeps their own
-   * Cues on their own speakers while the band hears only the speech. Only the
-   * operator window sets it — a phone has no such choice to make.
-   */
-  cueSinkId?: string | null
-  /**
-   * The Intercom output: a second device every Cue is played on as well, so an
-   * intercom client on this machine carries the show. `null` or omitted routes
-   * nowhere extra.
-   *
-   * Only the operator window passes it. A phone shares this widget but has no
-   * intercom to feed, and a camera operator's handset must never become one.
-   */
-  intercomSinkId?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -262,24 +216,15 @@ export function ShotlistWidget({
   showNextBackground = false,
   autoScroll = false,
   cameraFilter,
-  audioBaseUrl,
+  cuePlayer,
   muteCount = false,
   muteBeep = false,
-  audioVolume = 1,
-  cueSinkId = null,
-  intercomSinkId = null,
 }: ShotlistWidgetProps): React.JSX.Element {
   // A Voice-over Rundown is shown unfiltered — there are no Cameras to filter
   // by — and it speaks its own countdown rather than playing the fixed Cues.
   const isVoice = kind === 'voice'
 
   const [now, setNow] = useState(() => Date.now())
-  const audioPoolRef = useRef<Map<string, HTMLAudioElement>>(new Map())
-  // A second pool, routed to the Intercom output and played alongside the first.
-  // Separate elements rather than one element retargeted per Cue: `setSinkId` is
-  // async and a beep is 200ms, so a retargeted element would still be opening
-  // the device when the sound was due.
-  const intercomPoolRef = useRef<Map<string, HTMLAudioElement>>(new Map())
   const lastTickRef = useRef(0)
   const [headerFlash, setHeaderFlash] = useState(false)
   const rafRef = useRef<number | null>(null)
@@ -297,111 +242,23 @@ export function ShotlistWidget({
   const prevLiveIndexForFilterBeepRef = useRef<number | null>(null)
   const filteredCamWasLiveRef = useRef<boolean>(false)
 
-  // Preload the cue sounds once: constructing an Audio per beep put a network
-  // fetch on the countdown's critical path.
-  useEffect(() => {
-    if (!audioBaseUrl) return
-    const pool = audioPoolRef.current
-    for (const name of CUE_FILES) {
-      if (pool.has(name)) continue
-      const audio = new Audio(`${audioBaseUrl}/${name}`)
-      audio.preload = 'auto'
-      pool.set(name, audio)
-    }
-    return () => {
-      pool.clear()
-    }
-  }, [audioBaseUrl])
-
-  // The Intercom output's copies exist only while there is an intercom to feed:
-  // ten more preloaded elements are not free, and a phone never has one at all.
-  const hasIntercom = intercomSinkId !== null
-  useEffect(() => {
-    const pool = intercomPoolRef.current
-    if (!audioBaseUrl || !hasIntercom) {
-      pool.clear()
-      return
-    }
-    for (const name of CUE_FILES) {
-      if (pool.has(name)) continue
-      const audio = new Audio(`${audioBaseUrl}/${name}`)
-      audio.preload = 'auto'
-      pool.set(name, audio)
-    }
-    return () => {
-      pool.clear()
-    }
-  }, [audioBaseUrl, hasIntercom])
-
-  // Route the pools whenever a device changes. Done here rather than in
-  // playCue because setSinkId is async: switching on the way to a beep would
-  // put the first one on the old device, which is the one beep the operator
-  // changed the setting to move.
-  useEffect(() => {
-    for (const audio of audioPoolRef.current.values()) {
-      routeToSink(audio, cueSinkId)
-    }
-  }, [cueSinkId, audioBaseUrl])
-
-  useEffect(() => {
-    if (intercomSinkId === null) return
-    for (const audio of intercomPoolRef.current.values()) {
-      routeToSink(audio, intercomSinkId, true)
-    }
-  }, [intercomSinkId, audioBaseUrl, hasIntercom])
-
   /**
-   * Plays one Cue on the operator's device and on the Intercom output.
+   * Plays one Cue, where the Live session says a Cue is due.
    *
-   * @param mutedLocally Silences the operator's own copy only. Their mute button
-   *   is about their ears: the Cue Tray is not silenced by it either, and the
-   *   intercom is another listener, not a speaker on this desk. Muting the beep
-   *   to concentrate must not take the band's countdown away.
+   * @param silentToOperator Silences the operator's own copy only — the player
+   *   still feeds the Intercom output. Passed on rather than decided here.
    */
   const playCue = useCallback(
-    (filename: string, mutedLocally = false): void => {
-      if (!audioBaseUrl) return
+    (cue: Cue, silentToOperator = false): void => {
+      if (!cuePlayer) return
       // A Voice-over Rundown speaks its countdown instead. The fixed Cues are a
       // Camera Rundown's countdown and would talk over the Announcement — and
       // they count to the wrong thing anyway, since an Announcement counts down
       // to the next Call rather than to the end of this one.
       if (isVoice) return
-      if (!mutedLocally) {
-        let audio = audioPoolRef.current.get(filename)
-        if (!audio) {
-          audio = new Audio(`${audioBaseUrl}/${filename}`)
-          audioPoolRef.current.set(filename, audio)
-        }
-        // A clip created after the routing effect ran still needs pointing at the
-        // chosen device; a no-op once it is already there.
-        routeToSink(audio, cueSinkId)
-        audio.volume = audioVolume
-        audio.currentTime = 0
-        audio.play().catch((err: unknown) => console.error('[ShotlistWidget] audio error:', err))
-      }
-
-      // Same Cue, again, on the Intercom output. Started after the operator's own
-      // copy and never awaited: the intercom must not be able to delay or fail
-      // the sound the operator is listening for.
-      if (intercomSinkId === null || intercomSinkId === cueSinkId) return
-      let toIntercom = intercomPoolRef.current.get(filename)
-      if (!toIntercom) {
-        toIntercom = new Audio(`${audioBaseUrl}/${filename}`)
-        // Muted until routing resolves, which it has not when an element is made
-        // here rather than by the preload effect: `setSinkId` is async, so an
-        // unmuted new element would sound its first Cue on the default device —
-        // in the operator's ear, doubled. It unmutes itself on success.
-        toIntercom.muted = true
-        intercomPoolRef.current.set(filename, toIntercom)
-        routeToSink(toIntercom, intercomSinkId, true)
-      }
-      toIntercom.volume = audioVolume
-      toIntercom.currentTime = 0
-      toIntercom
-        .play()
-        .catch((err: unknown) => console.error('[ShotlistWidget] intercom cue error:', err))
+      cuePlayer.play(cue, silentToOperator)
     },
-    [audioBaseUrl, audioVolume, cueSinkId, intercomSinkId, isVoice],
+    [cuePlayer, isVoice],
   )
 
   // Ticker while running
@@ -427,7 +284,7 @@ export function ShotlistWidget({
 
       // Countdown and natural beep (unfiltered mode only)
       const hasFilterNow = cameraFilter !== undefined && cameraFilter.length > 0
-      if (!hasFilterNow && liveIndex !== null && audioBaseUrl) {
+      if (!hasFilterNow && liveIndex !== null && cuePlayer) {
         // Reset state on liveIndex or startedAt change (new live session)
         if (
           liveIndex !== prevLiveIndexForAudioRef.current ||
@@ -459,10 +316,10 @@ export function ShotlistWidget({
           prevSec >= 1 &&
           prevSec <= 3
         ) {
-          const words: Record<number, string> = { 1: 'one', 2: 'two', 3: 'three' }
+          const words: Record<number, Cue> = { 1: 'one', 2: 'two', 3: 'three' }
           // Muting is passed in rather than checked here, so a muted operator
           // still feeds the intercom.
-          playCue(`${words[prevSec]}.opus`, muteCount)
+          playCue(words[prevSec], muteCount)
         }
 
         // Beep at expiry: fire once when remainingMs reaches 0 (progress bar at 100%)
@@ -471,7 +328,7 @@ export function ShotlistWidget({
           if (remainingMs === 0 && prevMs !== null && prevMs > 0) {
             reachedZeroAtRef.current = tickNow
             beepFiredRef.current = true
-            playCue('beep.opus', muteBeep)
+            playCue('beep', muteBeep)
           }
         }
       }
@@ -488,17 +345,7 @@ export function ShotlistWidget({
         rafRef.current = null
       }
     }
-  }, [
-    running,
-    liveIndex,
-    shots,
-    startedAt,
-    cameraFilter,
-    audioBaseUrl,
-    muteCount,
-    muteBeep,
-    playCue,
-  ])
+  }, [running, liveIndex, shots, startedAt, cameraFilter, cuePlayer, muteCount, muteBeep, playCue])
 
   // Auto-scroll to live shot when live index changes
   useEffect(() => {
@@ -517,19 +364,19 @@ export function ShotlistWidget({
   // Filtered beep: play beep when the filtered camera goes live
   const hasFilterForEffect = cameraFilter !== undefined && cameraFilter.length > 0
   useEffect(() => {
-    if (!audioBaseUrl || !running || !hasFilterForEffect || muteBeep || liveIndex === null) return
+    if (!cuePlayer || !running || !hasFilterForEffect || muteBeep || liveIndex === null) return
     if (liveIndex === prevLiveIndexForFilterBeepRef.current) return
     prevLiveIndexForFilterBeepRef.current = liveIndex
     const liveShot = shots[liveIndex]
     if (!liveShot) return
     const liveCam = cameras.find((c) => c.id === liveShot.cameraId)
     if (liveCam && cameraFilter && cameraFilter.includes(liveCam.number)) {
-      playCue('beep.opus')
+      playCue('beep')
     }
   }, [
     liveIndex,
     running,
-    audioBaseUrl,
+    cuePlayer,
     hasFilterForEffect,
     muteBeep,
     shots,
@@ -540,7 +387,7 @@ export function ShotlistWidget({
 
   // Filtered low-beep: play beep-low when filtered camera goes OFF live (switching to waiting)
   useEffect(() => {
-    if (!audioBaseUrl || !hasFilterForEffect || muteBeep) return
+    if (!cuePlayer || !hasFilterForEffect || muteBeep) return
     const liveShot = liveIndex !== null ? shots[liveIndex] : null
     const liveCam = liveShot ? cameras.find((c) => c.id === liveShot.cameraId) : null
     const isFilteredCamLive =
@@ -550,13 +397,13 @@ export function ShotlistWidget({
       cameraFilter.includes(liveCam.number)
 
     if (filteredCamWasLiveRef.current && !isFilteredCamLive) {
-      playCue('beep-low.opus')
+      playCue('beep-low')
     }
     filteredCamWasLiveRef.current = isFilteredCamLive
   }, [
     liveIndex,
     running,
-    audioBaseUrl,
+    cuePlayer,
     hasFilterForEffect,
     muteBeep,
     shots,

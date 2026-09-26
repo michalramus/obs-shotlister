@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
 import { useWebStore } from './store'
 import { ShotlistWidget } from '../shared/components/ShotlistWidget'
+import { createPhoneCuePlayer, type PhoneCuePlayer } from '../shared/audio/cue-player'
 import { shotHeldThroughTransition } from '../shared/live-view'
 import type { Rundown, Shot, Camera } from '../shared/types'
 
@@ -107,6 +108,16 @@ export default function App(): React.JSX.Element {
     const v = parseFloat(localStorage.getItem('obs-queuer-audio-volume') ?? '1')
     return isNaN(v) ? 1 : v
   })
+
+  // A handset's player: it has no device to choose and no Intercom output to
+  // feed, so it is never given one to name.
+  const cuePlayerRef = useRef<PhoneCuePlayer | null>(null)
+  cuePlayerRef.current ??= createPhoneCuePlayer('/audio')
+  const cuePlayer = cuePlayerRef.current
+  useEffect(() => {
+    cuePlayer.setVolume(audioVolume)
+  }, [cuePlayer, audioVolume])
+  useEffect(() => () => cuePlayer.dispose(), [cuePlayer])
 
   const [selectedCamera, setSelectedCamera] = useState<number | null>(() => {
     try {
@@ -300,10 +311,9 @@ export default function App(): React.JSX.Element {
             startedAt={startedAt}
             running={running}
             cameraFilter={selectedCamera !== null ? [selectedCamera] : []}
-            audioBaseUrl="/audio"
+            cuePlayer={cuePlayer}
             muteCount={muteCount}
             muteBeep={muteBeep}
-            audioVolume={audioVolume}
           />
         )}
       </div>

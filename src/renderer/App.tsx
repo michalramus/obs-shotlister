@@ -15,7 +15,8 @@ import { OSCSettingsPanel } from './components/OSCSettingsPanel'
 import { TimelineEditor } from './components/TimelineEditor'
 import { TopBar } from './components/TopBar'
 import { createAnnouncementPlayer } from './audio/announcements'
-import { outputTargets } from '../shared/audio-routing'
+import { createCuePlayer, type CuePlayer } from '../shared/audio/cue-player'
+import type { SoundSinks } from '../shared/audio/routed-clip'
 
 const styles = {
   root: {
@@ -141,7 +142,10 @@ export default function App(): React.JSX.Element {
   const [audioVolume, setAudioVolume] = useState<number>(() =>
     parseFloat(localStorage.getItem('obs-queuer-audio-volume') ?? '1'),
   )
-  const [audioBaseUrl, setAudioBaseUrl] = useState<string | undefined>()
+  // Built once the clip directory is known, and the only thing the shotlist is
+  // told about audio: it plays Cues through this and never names a device.
+  const [cuePlayer, setCuePlayer] = useState<CuePlayer | null>(null)
+  const cuePlayerRef = useRef<CuePlayer | null>(null)
 
   const [showCameraConfig, setShowCameraConfig] = useState(false)
   const [showPartsConfig, setShowPartsConfig] = useState(false)
@@ -156,9 +160,22 @@ export default function App(): React.JSX.Element {
   const isFirstLiveIndexRef = useRef(true)
   // One player for the app's lifetime: a new plan cuts off the one in flight,
   // which only works if both went through the same instance.
-  const announcementSinksRef = useRef<readonly (string | null)[]>([announcementSinkId])
-  announcementSinksRef.current = outputTargets(announcementSinkId, intercomSink)
+  const announcementSinksRef = useRef<SoundSinks>({
+    primary: announcementSinkId,
+    intercom: intercomSink,
+  })
+  announcementSinksRef.current = { primary: announcementSinkId, intercom: intercomSink }
   const announcementPlayer = useRef(createAnnouncementPlayer(() => announcementSinksRef.current))
+
+  // Pushed into the player rather than passed down: routing is settled between
+  // shows, so the pool is already pointing at the right devices when a beep is due.
+  useEffect(() => {
+    cuePlayer?.setSinks({ cue: cueSinkId, intercom: intercomSink })
+  }, [cuePlayer, cueSinkId, intercomSink])
+
+  useEffect(() => {
+    cuePlayer?.setVolume(audioVolume)
+  }, [cuePlayer, audioVolume])
 
   const refreshOscSettings = useCallback(() => {
     window.api.osc
@@ -204,16 +221,22 @@ export default function App(): React.JSX.Element {
       window.api.server.onError(setServerError),
     ]
     refreshOscSettings()
+    let mounted = true
     window.api.assets
       .getAudioDir()
       .then((dir) => {
-        setAudioBaseUrl(toMediaUrl(dir))
+        if (!mounted) return
+        const cues = createCuePlayer(toMediaUrl(dir))
+        cuePlayerRef.current = cues
+        setCuePlayer(cues)
       })
       .catch((err: unknown) => console.error('[App] getAudioDir:', err))
     const player = announcementPlayer.current
     return () => {
+      mounted = false
       for (const off of unsubscribes) off()
       player.dispose()
+      cuePlayerRef.current?.dispose()
     }
   }, [
     loadProjects,
@@ -443,12 +466,9 @@ export default function App(): React.JSX.Element {
         running={running}
         showNextBackground
         autoScroll
-        audioBaseUrl={audioBaseUrl}
+        cuePlayer={cuePlayer ?? undefined}
         muteCount={muteCount}
         muteBeep={muteBeep}
-        audioVolume={audioVolume}
-        cueSinkId={cueSinkId}
-        intercomSinkId={intercomSink}
       />
     ) : null
 

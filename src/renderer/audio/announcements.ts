@@ -9,17 +9,22 @@
  * feature. ADR 0003 constrains who owns *state*, not who owns audio output.
  *
  * Nothing is ever synthesised here: every clip already exists on disk (ADR
- * 0005) and this only schedules and plays.
+ * 0005) and this only schedules and plays. How a clip reaches a device — and how
+ * the Intercom output gets its copy — is src/shared/audio/routed-clip.ts, shared
+ * with the Cue player.
  *
- * Deliberately untested, per the issue's testing decisions: it does nothing but
- * drive timers and audio elements, and everything worth asserting on was
- * decided upstream in the pure scheduler.
+ * Deliberately untested, per the issue's testing decisions: what is left here is
+ * timers, and everything worth asserting on was decided upstream in the pure
+ * scheduler or below in the routed clip.
  */
 
 import type { AnnouncementPlan } from '../../shared/ipc-contract'
-
-/** `setSinkId` is not in the DOM lib but is what Chromium exposes. */
-type RoutableAudio = HTMLAudioElement & { setSinkId?: (sinkId: string) => Promise<void> }
+import {
+  createAudioElement,
+  createRoutedSound,
+  type RoutedClip,
+  type SoundSinks,
+} from '../../shared/audio/routed-clip'
 
 export interface AnnouncementPlayer {
   /**
@@ -50,95 +55,72 @@ export interface AnnouncementPlayer {
  * so there is ample time to do all of it up front.
  */
 interface PreparedClip {
-  audio: RoutableAudio
+  clip: RoutedClip
   /** Settles once the clip can play through without stalling, or cannot load. */
   ready: Promise<void>
   cancelled: boolean
 }
 
 /**
- * @param required When true, a clip that cannot reach `sinkId` is dropped instead
- *   of falling back to the default device. The Intercom output's copy is a *copy*:
- *   played on the operator's speakers by mistake it is a doubled word in their
- *   ear, which is worse than the intercom being silent and sounds like a bug in
- *   the Announcement itself.
+ * Every copy of one scheduled clip: the operator's, and the Intercom output's.
+ *
+ * The routed clip decides how many there are and which device each opens; the
+ * waiting-to-be-loaded part is this module's, because only an Announcement is
+ * played once, cold, at an exact moment.
  */
-function prepare(url: string, sinkId: string | null, required = false): PreparedClip {
-  const audio = new Audio() as RoutableAudio
-  const clip: PreparedClip = { audio, ready: Promise.resolve(), cancelled: false }
-
-  const buffered = new Promise<void>((resolve) => {
-    // `canplaythrough` rather than `canplay`: these clips are under a second,
-    // so "enough to start" and "all of it" are the same fetch, and waiting for
-    // the whole thing removes any chance of a stall mid-word.
-    audio.addEventListener('canplaythrough', () => resolve(), { once: true })
-    // A clip that fails to load must not leave its cue waiting forever. Let it
-    // through and let `play()` report the real error.
-    audio.addEventListener('error', () => resolve(), { once: true })
+function prepare(url: string, sinks: SoundSinks): PreparedClip[] {
+  const sound = createRoutedSound(url, sinks, createAudioElement)
+  return sound.clips.map((clip) => {
+    const buffered = new Promise<void>((resolve) => {
+      // `canplaythrough` rather than `canplay`: these clips are under a second,
+      // so "enough to start" and "all of it" are the same fetch, and waiting for
+      // the whole thing removes any chance of a stall mid-word.
+      clip.audio.addEventListener('canplaythrough', () => resolve(), { once: true })
+      // A clip that fails to load must not leave its cue waiting forever. Let it
+      // through and let `play()` report the real error.
+      clip.audio.addEventListener('error', () => resolve(), { once: true })
+    })
+    return {
+      clip,
+      // The routing is waited on alongside the bytes, so opening the device is
+      // paid for here and not at the cue, where it would cost the head of the clip.
+      ready: Promise.all([buffered, clip.routed]).then(() => undefined),
+      cancelled: false,
+    }
   })
-
-  audio.preload = 'auto'
-  audio.src = url
-  audio.load()
-
-  // Routed here rather than just before playing: switching sink opens a stream
-  // on the new device, and paying for that at the cue costs the head of the clip.
-  const routed =
-    sinkId !== null && typeof audio.setSinkId === 'function'
-      ? audio.setSinkId(sinkId).catch((err: unknown) => {
-          if (required) {
-            clip.cancelled = true
-            console.error('[announce] intercom output unavailable, dropping its copy:', err)
-            return
-          }
-          console.error('[announce] output device unavailable, using default:', err)
-        })
-      : Promise.resolve()
-
-  clip.ready = Promise.all([buffered, routed]).then(() => undefined)
-  return clip
 }
 
 /**
- * @param getSinkIds Every device this Announcement is to be heard on, primary
- *   first. More than one when the Intercom output is on: the same clips are
- *   played again on the loopback device an intercom client records, so the band
- *   hears the Announcement without it being taken away from the operator.
+ * @param getSinks The devices this Announcement is to be heard on: the one the
+ *   Announcement setting names, plus the Intercom output when it is on, so the
+ *   band hears the Announcement without it being taken away from the operator.
  */
-export function createAnnouncementPlayer(
-  getSinkIds: () => readonly (string | null)[],
-): AnnouncementPlayer {
+export function createAnnouncementPlayer(getSinks: () => SoundSinks): AnnouncementPlayer {
   let timers: ReturnType<typeof setTimeout>[] = []
   let prepared: PreparedClip[] = []
 
   function cancel(): void {
     for (const timer of timers) clearTimeout(timer)
     timers = []
-    for (const clip of prepared) {
+    for (const copy of prepared) {
       // Checked by anything still waiting on `ready`, which resolves when the
-      // cleared source raises its error event.
-      clip.cancelled = true
-      clip.audio.pause()
-      // Releases the decoder immediately rather than at the next GC; a show can
-      // cut off hundreds of these.
-      clip.audio.src = ''
+      // released source raises its error event.
+      copy.cancelled = true
+      copy.clip.release()
     }
     prepared = []
   }
 
-  function speak(clip: PreparedClip): void {
+  function speak(copy: PreparedClip): void {
     const start = (): void => {
-      if (clip.cancelled) return
-      clip.audio.play().catch((err: unknown) => {
-        // A clip that will not play must not take the Live advance with it.
-        console.error('[announce] playback failed:', err)
-      })
+      if (copy.cancelled) return
+      copy.clip.play()
     }
     // Normally already settled, so this costs a microtask. When it is not —
     // a cold disk, a plan pushed with almost no lead — waiting still beats
     // starting: an element told to play before it has data drops the head of
     // the clip, which is the whole problem this avoids.
-    clip.ready.then(start, start)
+    copy.ready.then(start, start)
   }
 
   return {
@@ -146,13 +128,9 @@ export function createAnnouncementPlayer(
       cancel()
       if (!plan) return
 
-      const sinkIds = getSinkIds()
+      const sinks = getSinks()
       for (const scheduled of plan.clips) {
-        // One element per destination. They are separate elements rather than one
-        // element moved between devices because `setSinkId` is async and a clip
-        // is under a second: by the time the second device opened, the word would
-        // be over.
-        const copies = sinkIds.map((sinkId, index) => prepare(scheduled.url, sinkId, index > 0))
+        const copies = prepare(scheduled.url, sinks)
         prepared.push(...copies)
 
         // A clip due now is played now rather than through a zero timer, so the
