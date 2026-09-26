@@ -4,22 +4,19 @@ import { join } from 'path'
 import { IPC_CHANNELS } from './ipc-contract'
 
 /**
- * The contract is only worth anything if the main process actually registers
- * what it declares. `IpcContract` is erased at build time, so these checks read
- * the registration source directly — a channel declared but never registered
- * would otherwise fail only when a user clicked the thing that calls it.
+ * The contract is only worth anything if the main process actually registers what
+ * it declares, and registration is imperative code the compiler cannot see: a
+ * channel declared but never registered would otherwise fail only when a user
+ * clicked the thing that calls it. So these checks read the registration source
+ * directly. The preload needs no equivalent — it names no channel, it walks
+ * `API_SURFACE`, and the surface is proven against the contract at compile time.
  */
 
 const root = join(__dirname, '..', '..')
 const mainSource = readFileSync(join(root, 'src/main/index.ts'), 'utf-8')
-const preloadSource = readFileSync(join(root, 'src/preload/index.ts'), 'utf-8')
 
 function registeredChannels(): string[] {
   return [...mainSource.matchAll(/registerIpcHandler\(\s*'([^']+)'/g)].map((m) => m[1])
-}
-
-function preloadChannels(): string[] {
-  return [...preloadSource.matchAll(/request\('([^']+)'\)/g)].map((m) => m[1])
 }
 
 describe('IPC contract', () => {
@@ -43,18 +40,6 @@ describe('IPC contract', () => {
     const counts = new Map<string, number>()
     for (const c of registeredChannels()) counts.set(c, (counts.get(c) ?? 0) + 1)
     expect([...counts].filter(([, n]) => n > 1)).toEqual([])
-  })
-
-  it('exposes every declared channel through the preload', () => {
-    const exposed = new Set(preloadChannels())
-    const missing = IPC_CHANNELS.filter((c) => !exposed.has(c))
-    expect(missing).toEqual([])
-  })
-
-  it('exposes no channel the contract does not declare', () => {
-    const declared = new Set<string>(IPC_CHANNELS)
-    const extra = preloadChannels().filter((c) => !declared.has(c))
-    expect(extra).toEqual([])
   })
 
   it('leaves no direct ipcMain.handle calls bypassing the typed wrapper', () => {

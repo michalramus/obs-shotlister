@@ -528,9 +528,13 @@ export type IpcPushPayload<C extends IpcPushChannel> = IpcPushContract[C]
 // The renderer-facing surface
 //
 // `window.api` keeps a grouped shape because that is what reads well at the call
-// site, but no signature is written out by hand: each entry names a channel and
-// takes its payload and result from the contract above. Grouping is the only
-// thing stated here, so a payload can never disagree across the process divide.
+// site, but nothing about a channel is written twice: `API_SURFACE` maps each api
+// method to the channel it speaks, and the types, the runtime channel list and
+// the preload's object are all derived from it.
+//
+// It is a value rather than a type because `IpcContract` erases at build time and
+// the preload has to walk this at runtime. Grouping and method naming are the only
+// things stated here — a payload still cannot disagree across the process divide.
 // ---------------------------------------------------------------------------
 
 /** A request function for one channel; channels with no payload take no argument. */
@@ -543,262 +547,243 @@ export type Subscribe<C extends IpcPushChannel> = (
   cb: (payload: IpcPushPayload<C>) => void,
 ) => () => void
 
-export interface ElectronApi {
-  projects: {
-    list: Request<'projects:list'>
-    create: Request<'projects:create'>
-    rename: Request<'projects:rename'>
-    delete: Request<'projects:delete'>
-  }
-  cameras: {
-    list: Request<'cameras:list'>
-    upsert: Request<'cameras:upsert'>
-    delete: Request<'cameras:delete'>
-  }
-  rundowns: {
-    list: Request<'rundowns:list'>
-    create: Request<'rundowns:create'>
-    rename: Request<'rundowns:rename'>
-    delete: Request<'rundowns:delete'>
-    setActive: Request<'rundowns:setActive'>
-    reorder: Request<'rundowns:reorder'>
-    setFolder: Request<'rundowns:setFolder'>
-    setKind: Request<'rundowns:setKind'>
-    unassignedCount: Request<'rundowns:unassignedCount'>
-    renameFolder: Request<'rundowns:renameFolder'>
-    deleteFolder: Request<'rundowns:deleteFolder'>
-  }
-  parts: {
-    list: Request<'parts:list'>
-    listInScope: Request<'parts:listInScope'>
-    upsert: Request<'parts:upsert'>
-    delete: Request<'parts:delete'>
-    promote: Request<'parts:promote'>
-    setColor: Request<'parts:setColor'>
-  }
-  lyrics: {
-    list: Request<'lyrics:list'>
-    upsert: Request<'lyrics:upsert'>
-    delete: Request<'lyrics:delete'>
-  }
-  voice: {
-    getSettings: Request<'voice:settings:get'>
-    saveSettings: Request<'voice:settings:save'>
-    getProjectSettings: Request<'voice:project:get'>
-    saveProjectSettings: Request<'voice:project:save'>
-    getEffectiveSettings: Request<'voice:effective'>
-  }
-  audioDevices: {
-    get: Request<'audio:devices:get'>
-    save: Request<'audio:devices:save'>
-    virtualState: Request<'audio:virtual:state'>
-    ensureVirtual: Request<'audio:virtual:ensure'>
-    loopbackHints: Request<'audio:virtual:hints'>
-  }
-  speech: {
-    status: Request<'speech:renderSummary'>
-    render: Request<'speech:render'>
-    phraseDurations: Request<'speech:phraseDurations'>
-    cleanOrphans: Request<'speech:cleanOrphans'>
-    deleteProjectClips: Request<'speech:deleteProjectClips'>
-    onStatusPush: Subscribe<'speech:renderSummary-push'>
-  }
-  shots: {
-    list: Request<'shots:list'>
-    create: Request<'shots:create'>
-    update: Request<'shots:update'>
-    delete: Request<'shots:delete'>
-    reorder: Request<'shots:reorder'>
-    split: Request<'shots:split'>
-    importCsvOpenDialog: Request<'shots:import-csv:open-dialog'>
-    importCsvParse: Request<'shots:import-csv:parse'>
-    importCsvConfirm: Request<'shots:import-csv:confirm'>
-  }
-  live: {
-    get: Request<'live:get'>
-    start: Request<'live:start'>
-    stop: Request<'live:stop'>
-    next: Request<'live:next'>
-    skipNext: Request<'live:skip-next'>
-    restart: Request<'live:restart'>
-    getPreviewFirst: Request<'live:getPreviewFirst'>
-    savePreviewFirst: Request<'live:savePreviewFirst'>
-    onStatePush: Subscribe<'live:state-push'>
-    onShotHiddenPush: Subscribe<'live:shot-hidden-push'>
-    onAnnouncementPush: Subscribe<'live:announcement-push'>
-  }
-  project: {
-    setActive: Request<'project:setActive'>
-  }
-  obs: {
-    getSettings: Request<'obs:settings:get'>
-    saveSettings: Request<'obs:settings:save'>
-    connect: Request<'obs:connect'>
-    disconnect: Request<'obs:disconnect'>
-    getStatus: Request<'obs:status'>
-    getEnabled: Request<'obs:getEnabled'>
-    setEnabled: Request<'obs:setEnabled'>
-    getScenes: Request<'obs:getScenes'>
-    getTransitions: Request<'obs:getTransitions'>
-    checkScenes: Request<'obs:checkScenes'>
-    validate: Request<'obs:validate'>
-    listTransitionMappings: Request<'obs:transitions:list'>
-    upsertTransitionMapping: Request<'obs:transitions:upsert'>
-    deleteTransitionMapping: Request<'obs:transitions:delete'>
-    onStatusChange: Subscribe<'obs:status'>
-    onValidationResult: Subscribe<'obs:validationResult'>
-  }
-  osc: {
-    getSettings: Request<'osc:settings:get'>
-    saveSettings: Request<'osc:settings:save'>
-  }
-  markers: {
-    list: Request<'markers:list'>
-    upsert: Request<'markers:upsert'>
-    delete: Request<'markers:delete'>
-  }
-  rundownMedia: {
-    get: Request<'rundown:media:get'>
-    save: Request<'rundown:media:save'>
-    clear: Request<'rundown:media:clear'>
-    openDialog: Request<'rundown:media:open-dialog'>
-  }
-  ui: {
-    setMode: Request<'ui:setMode'>
-  }
-  mediaFileExists: Request<'media:file-exists'>
-  mediaPeaks: {
-    get: Request<'media:peaks:get'>
-    put: Request<'media:peaks:put'>
-  }
-  exportImport: {
-    exportProject: Request<'export:project'>
-    exportRundown: Request<'export:rundown'>
-    exportDatabase: Request<'export:database'>
-    importProject: Request<'import:project'>
-    importRundown: Request<'import:rundown'>
-    importDatabase: Request<'import:database'>
-  }
-  assets: {
-    getAudioDir: Request<'assets:audioDir'>
-  }
-  appData: {
-    openDir: Request<'app:openDataDir'>
-  }
-  server: {
-    onError: Subscribe<'server:error'>
-  }
+/**
+ * A push channel in the surface, wrapped so it is distinguishable from a request
+ * channel. The wrapper is not decoration: `obs:status` is both a request and a
+ * push channel, so the name alone cannot say which of the two a leaf means.
+ */
+export type PushLeaf = { readonly push: IpcPushChannel }
+
+/** One api method, or a nested group of them. */
+export type SurfaceNode = IpcChannel | PushLeaf | SurfaceGroup
+
+export interface SurfaceGroup {
+  readonly [name: string]: SurfaceNode
 }
+
+/**
+ * Whether a leaf subscribes rather than requests.
+ *
+ * A guard rather than an inline `'push' in node`, which cannot narrow a group
+ * away: a group's index signature permits every key, so TypeScript has to assume
+ * a group might carry one called `push` too.
+ */
+export function isPushLeaf(node: SurfaceNode): node is PushLeaf {
+  if (typeof node === 'string') return false
+  const channel: unknown = node.push
+  return typeof channel === 'string'
+}
+
+export const API_SURFACE = {
+  projects: {
+    list: 'projects:list',
+    create: 'projects:create',
+    rename: 'projects:rename',
+    delete: 'projects:delete',
+  },
+  cameras: {
+    list: 'cameras:list',
+    upsert: 'cameras:upsert',
+    delete: 'cameras:delete',
+  },
+  rundowns: {
+    list: 'rundowns:list',
+    create: 'rundowns:create',
+    rename: 'rundowns:rename',
+    delete: 'rundowns:delete',
+    setActive: 'rundowns:setActive',
+    reorder: 'rundowns:reorder',
+    setFolder: 'rundowns:setFolder',
+    setKind: 'rundowns:setKind',
+    unassignedCount: 'rundowns:unassignedCount',
+    renameFolder: 'rundowns:renameFolder',
+    deleteFolder: 'rundowns:deleteFolder',
+  },
+  parts: {
+    list: 'parts:list',
+    listInScope: 'parts:listInScope',
+    upsert: 'parts:upsert',
+    delete: 'parts:delete',
+    promote: 'parts:promote',
+    setColor: 'parts:setColor',
+  },
+  lyrics: {
+    list: 'lyrics:list',
+    upsert: 'lyrics:upsert',
+    delete: 'lyrics:delete',
+  },
+  voice: {
+    getSettings: 'voice:settings:get',
+    saveSettings: 'voice:settings:save',
+    getProjectSettings: 'voice:project:get',
+    saveProjectSettings: 'voice:project:save',
+    getEffectiveSettings: 'voice:effective',
+  },
+  audioDevices: {
+    get: 'audio:devices:get',
+    save: 'audio:devices:save',
+    virtualState: 'audio:virtual:state',
+    ensureVirtual: 'audio:virtual:ensure',
+    loopbackHints: 'audio:virtual:hints',
+  },
+  speech: {
+    status: 'speech:renderSummary',
+    render: 'speech:render',
+    phraseDurations: 'speech:phraseDurations',
+    cleanOrphans: 'speech:cleanOrphans',
+    deleteProjectClips: 'speech:deleteProjectClips',
+    onStatusPush: { push: 'speech:renderSummary-push' },
+  },
+  shots: {
+    list: 'shots:list',
+    create: 'shots:create',
+    update: 'shots:update',
+    delete: 'shots:delete',
+    reorder: 'shots:reorder',
+    split: 'shots:split',
+    importCsvOpenDialog: 'shots:import-csv:open-dialog',
+    importCsvParse: 'shots:import-csv:parse',
+    importCsvConfirm: 'shots:import-csv:confirm',
+  },
+  live: {
+    get: 'live:get',
+    start: 'live:start',
+    stop: 'live:stop',
+    next: 'live:next',
+    skipNext: 'live:skip-next',
+    restart: 'live:restart',
+    getPreviewFirst: 'live:getPreviewFirst',
+    savePreviewFirst: 'live:savePreviewFirst',
+    onStatePush: { push: 'live:state-push' },
+    onShotHiddenPush: { push: 'live:shot-hidden-push' },
+    onAnnouncementPush: { push: 'live:announcement-push' },
+  },
+  project: {
+    setActive: 'project:setActive',
+  },
+  obs: {
+    getSettings: 'obs:settings:get',
+    saveSettings: 'obs:settings:save',
+    connect: 'obs:connect',
+    disconnect: 'obs:disconnect',
+    getStatus: 'obs:status',
+    getEnabled: 'obs:getEnabled',
+    setEnabled: 'obs:setEnabled',
+    getScenes: 'obs:getScenes',
+    getTransitions: 'obs:getTransitions',
+    checkScenes: 'obs:checkScenes',
+    validate: 'obs:validate',
+    listTransitionMappings: 'obs:transitions:list',
+    upsertTransitionMapping: 'obs:transitions:upsert',
+    deleteTransitionMapping: 'obs:transitions:delete',
+    onStatusChange: { push: 'obs:status' },
+    onValidationResult: { push: 'obs:validationResult' },
+  },
+  osc: {
+    getSettings: 'osc:settings:get',
+    saveSettings: 'osc:settings:save',
+  },
+  markers: {
+    list: 'markers:list',
+    upsert: 'markers:upsert',
+    delete: 'markers:delete',
+  },
+  rundownMedia: {
+    get: 'rundown:media:get',
+    save: 'rundown:media:save',
+    clear: 'rundown:media:clear',
+    openDialog: 'rundown:media:open-dialog',
+  },
+  ui: {
+    setMode: 'ui:setMode',
+  },
+  mediaFileExists: 'media:file-exists',
+  mediaPeaks: {
+    get: 'media:peaks:get',
+    put: 'media:peaks:put',
+  },
+  exportImport: {
+    exportProject: 'export:project',
+    exportRundown: 'export:rundown',
+    exportDatabase: 'export:database',
+    importProject: 'import:project',
+    importRundown: 'import:rundown',
+    importDatabase: 'import:database',
+  },
+  assets: {
+    getAudioDir: 'assets:audioDir',
+  },
+  appData: {
+    openDir: 'app:openDataDir',
+  },
+  server: {
+    onError: { push: 'server:error' },
+  },
+} as const satisfies SurfaceGroup
+
+/** The api one surface node describes. */
+type ApiFor<N> = N extends IpcChannel
+  ? Request<N>
+  : N extends PushLeaf
+    ? Subscribe<N['push']>
+    : { -readonly [K in keyof N]: ApiFor<N[K]> }
+
+export type ElectronApi = ApiFor<typeof API_SURFACE>
 
 // ---------------------------------------------------------------------------
 // Runtime channel list
 //
-// `IpcContract` is a type and vanishes at build time, so this array carries the
-// channel names into runtime for tests that check registration. The assertion
-// below fails to compile if the two ever disagree, so the list cannot silently
-// fall behind the contract.
+// Tests check that the main process registers what the contract declares, and
+// `IpcContract` is a type that vanishes at build time. Walking the surface is
+// what carries the names into runtime; the assertion below fails to compile if
+// the surface and the contract ever stop naming the same channels.
 // ---------------------------------------------------------------------------
 
-export const IPC_CHANNELS = [
-  'projects:list',
-  'projects:create',
-  'projects:rename',
-  'projects:delete',
-  'project:setActive',
-  'cameras:list',
-  'cameras:upsert',
-  'cameras:delete',
-  'rundowns:list',
-  'rundowns:create',
-  'rundowns:rename',
-  'rundowns:delete',
-  'rundowns:setActive',
-  'rundowns:reorder',
-  'rundowns:setFolder',
-  'rundowns:setKind',
-  'rundowns:unassignedCount',
-  'rundowns:renameFolder',
-  'rundowns:deleteFolder',
-  'parts:list',
-  'parts:listInScope',
-  'parts:upsert',
-  'parts:delete',
-  'parts:promote',
-  'parts:setColor',
-  'lyrics:list',
-  'lyrics:upsert',
-  'lyrics:delete',
-  'voice:settings:get',
-  'voice:settings:save',
-  'voice:project:get',
-  'voice:project:save',
-  'voice:effective',
-  'audio:devices:get',
-  'audio:devices:save',
-  'audio:virtual:state',
-  'audio:virtual:ensure',
-  'audio:virtual:hints',
-  'speech:renderSummary',
-  'speech:render',
-  'speech:phraseDurations',
-  'speech:cleanOrphans',
-  'speech:deleteProjectClips',
-  'shots:list',
-  'shots:create',
-  'shots:update',
-  'shots:delete',
-  'shots:reorder',
-  'shots:split',
-  'live:get',
-  'live:start',
-  'live:stop',
-  'live:next',
-  'live:skip-next',
-  'live:restart',
-  'live:getPreviewFirst',
-  'live:savePreviewFirst',
-  'shots:import-csv:open-dialog',
-  'shots:import-csv:parse',
-  'shots:import-csv:confirm',
-  'obs:settings:get',
-  'obs:settings:save',
-  'obs:connect',
-  'obs:disconnect',
-  'obs:status',
-  'obs:getEnabled',
-  'obs:setEnabled',
-  'obs:getScenes',
-  'obs:getTransitions',
-  'obs:checkScenes',
-  'obs:validate',
-  'obs:transitions:list',
-  'obs:transitions:upsert',
-  'obs:transitions:delete',
-  'markers:list',
-  'markers:upsert',
-  'markers:delete',
-  'rundown:media:get',
-  'rundown:media:save',
-  'rundown:media:clear',
-  'rundown:media:open-dialog',
-  'media:file-exists',
-  'media:peaks:get',
-  'media:peaks:put',
-  'osc:settings:get',
-  'osc:settings:save',
-  'ui:setMode',
-  'assets:audioDir',
-  'app:openDataDir',
-  'export:project',
-  'export:rundown',
-  'export:database',
-  'import:project',
-  'import:rundown',
-  'import:database',
-] as const
+/** The request channels one surface node reaches. Push leaves are one-way. */
+type RequestChannelsIn<N> = N extends IpcChannel
+  ? N
+  : N extends PushLeaf
+    ? never
+    : { [K in keyof N]: RequestChannelsIn<N[K]> }[keyof N]
+
+/** The push channels one surface node subscribes to. */
+type PushChannelsIn<N> = N extends IpcChannel
+  ? never
+  : N extends PushLeaf
+    ? N['push']
+    : { [K in keyof N]: PushChannelsIn<N[K]> }[keyof N]
+
+function collectChannels(node: SurfaceNode, into: IpcChannel[]): void {
+  if (typeof node === 'string') {
+    into.push(node)
+    return
+  }
+  if (isPushLeaf(node)) return
+  for (const child of Object.values(node)) collectChannels(child, into)
+}
+
+export const IPC_CHANNELS: readonly IpcChannel[] = ((): IpcChannel[] => {
+  const channels: IpcChannel[] = []
+  collectChannels(API_SURFACE, channels)
+  return channels
+})()
 
 type MutuallyAssignable<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never
 
-/** Compile-time proof that IPC_CHANNELS lists exactly the contract's channels. */
-const _channelsMatchContract: MutuallyAssignable<(typeof IPC_CHANNELS)[number], IpcChannel> = true
-void _channelsMatchContract
+/** Compile-time proof that the surface exposes exactly the contract's channels. */
+const _surfaceMatchesContract: MutuallyAssignable<
+  RequestChannelsIn<typeof API_SURFACE>,
+  IpcChannel
+> = true
+void _surfaceMatchesContract
+
+/**
+ * The same for the push channels, which also catches a leaf that subscribes to a
+ * request channel: `{ push: 'markers:list' }` is not a `PushLeaf`, so it reads as a
+ * group with a method called `push` and would otherwise pass unnoticed.
+ */
+const _pushSurfaceMatchesContract: MutuallyAssignable<
+  PushChannelsIn<typeof API_SURFACE>,
+  IpcPushChannel
+> = true
+void _pushSurfaceMatchesContract
