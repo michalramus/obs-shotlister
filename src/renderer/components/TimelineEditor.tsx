@@ -18,10 +18,19 @@ import { ItemLane, type ItemLaneHandlers } from './timeline/ItemLane'
 import { MediaLane } from './timeline/MediaLane'
 import { createPlayhead, type Playhead } from '../timeline/playhead'
 import {
+  alignReferenceMedia,
+  extendLastItem,
+  moveMarker,
+  resizeLyric,
+  resizeShotPair,
+  scrubPlayhead,
+  type GrabSample,
+  type GrabSpec,
+} from '../timeline/grab'
+import {
   lyricRange,
   lyricBlocks,
   lyricAtMs,
-  resizeLyric,
   overlappingLyric,
   isUnassigned,
   announcementProblemsByCallId,
@@ -193,25 +202,6 @@ function buildWaveformPath(peaks: number[] | null, width: number, halfHeight: nu
   return `M${top.join('L')}L${bottom.join('L')}Z`
 }
 
-interface DragState {
-  shotA: Shot
-  shotB: Shot
-  startX: number
-  origDurA: number
-  origDurB: number
-}
-
-interface MarkerDragState {
-  markerId: string
-  startX: number
-  origPositionMs: number
-}
-
-interface MediaDragState {
-  startX: number
-  origOffset: number
-}
-
 /** A line being typed: its range is already fixed, its text is not. */
 interface LyricDraft {
   /** The line being re-worded, or null while a new line is being authored. */
@@ -340,12 +330,16 @@ export function TimelineEditor({
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const isPlayingRef = useRef(isPlaying)
   const runningRef = useRef(running)
-  const dragStateRef = useRef<DragState | null>(null)
-  const markerDragStateRef = useRef<MarkerDragState | null>(null)
-  const mediaDragStateRef = useRef<MediaDragState | null>(null)
+  /**
+   * True while a grab that owns the Playhead is under way.
+   *
+   * Was three separate drag-state refs — boundary, Marker, Reference media — read
+   * together in one place and nowhere else. `beginGrab` closes over each grab's
+   * world now, so all the refs were still doing was answering this question.
+   */
+  const grabOwnsPlayheadRef = useRef(false)
   const zoomRef = useRef(zoomPxPerSec)
   const overviewRef = useRef<HTMLDivElement>(null)
-  const extendDragRef = useRef<{ startX: number; origDur: number } | null>(null)
   const onAddMarkerRef = useRef(onAddMarker)
   const onLabelEditRef = useRef(onLabelEdit)
   const selectedShotIdRef = useRef(selectedShotId)
@@ -761,12 +755,7 @@ export function TimelineEditor({
     if (!el) return
     function onScroll(): void {
       if (!el) return
-      const ownsPlayhead =
-        isPlayingRef.current ||
-        runningRef.current ||
-        dragStateRef.current !== null ||
-        markerDragStateRef.current !== null ||
-        mediaDragStateRef.current !== null
+      const ownsPlayhead = isPlayingRef.current || runningRef.current || grabOwnsPlayheadRef.current
       playhead.handleScroll(el.scrollLeft, !ownsPlayhead)
     }
     el.addEventListener('scroll', onScroll, { passive: true })
@@ -835,10 +824,18 @@ export function TimelineEditor({
     setZoomPxPerSec((z) => Math.max(5, Math.round(z / 1.4)))
   }
 
+  /**
+   * Puts the Playhead somewhere for a discrete interaction: a click, an arrow key,
+   * a scrub. Seeking the Reference media is skipped while playback owns it, which
+   * would otherwise fight the loop for the media's clock.
+   */
+  function placePlayhead(ms: number): void {
+    playhead.moveTo(ms)
+    if (!isPlayingRef.current) playhead.seekMedia(ms)
+  }
+
   function movePlayhead(deltaMs: number): void {
-    const n = Math.max(0, Math.min(playhead.positionMs() + deltaMs, totalMs))
-    playhead.moveTo(n)
-    if (!isPlayingRef.current) playhead.seekMedia(n)
+    placePlayhead(scrubPlayhead({ origMs: playhead.positionMs(), totalMs }, deltaMs).positionMs)
   }
 
   // Keyboard shortcuts
@@ -939,9 +936,7 @@ export function TimelineEditor({
 
   function handleTrackClick(e: React.MouseEvent<HTMLDivElement>): void {
     const rect = e.currentTarget.getBoundingClientRect()
-    const clamped = timelinePosMs(e.clientX, rect.left, zoomPxPerSec, totalMs)
-    playhead.moveTo(clamped)
-    if (!isPlayingRef.current) playhead.seekMedia(clamped)
+    placePlayhead(timelinePosMs(e.clientX, rect.left, zoomPxPerSec, totalMs))
   }
 
   function handleBlockClick(e: React.MouseEvent, shotId: string): void {
@@ -1111,30 +1106,27 @@ export function TimelineEditor({
     setSelectedLyricId(id)
     setLyricError(null)
 
-    let latest: { startMs: number; endMs: number } | null = null
-
-    const onMove = (ev: MouseEvent): void => {
-      const ms = timelinePosMs(ev.clientX, laneLeft, zoomPxPerSec, Number.MAX_SAFE_INTEGER)
-      const next = resizeLyric(lyricsRef.current, id, edge, ms)
-      if (next === null) return
-      latest = next
+    beginGrab(e, {
+      resolve: (sample) =>
+        resizeLyric(
+          lyricsRef.current,
+          id,
+          edge,
+          timelinePosMs(sample.clientX, laneLeft, zoomRef.current, Number.MAX_SAFE_INTEGER),
+        ),
       // Shown immediately, saved once: a write per mousemove would be a
       // transaction per pixel, and the store rejects overlaps anyway.
-      setLyricDragOverride({ id, ...next })
-    }
-
-    const onUp = (): void => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      setLyricDragOverride(null)
-      if (latest === null) return
-      const existing = lyricsRef.current.find((l) => l.id === id)
-      if (existing === undefined) return
-      void saveLyric({ id, ...latest, text: existing.text })
-    }
-
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
+      preview: (next) => setLyricDragOverride({ id, ...next }),
+      // Commit what the last move showed, and nothing at all if there was none: a
+      // bare click on an edge handle must not write.
+      commitOn: 'move',
+      commit: (next) => {
+        const existing = lyricsRef.current.find((l) => l.id === id)
+        if (existing === undefined) return
+        void saveLyric({ id, ...next, text: existing.text })
+      },
+      end: () => setLyricDragOverride(null),
+    })
   }
 
   function deleteLyric(id: string): void {
@@ -1207,79 +1199,86 @@ export function TimelineEditor({
     },
   }
 
+  /**
+   * The one place on the timeline where a pointer becomes a drag.
+   *
+   * Six interactions — the boundary between two Shots, the last item's trailing
+   * edge, a Marker, the Reference media offset, the Playhead and a Lyric edge —
+   * each installed their own `mousedown` → window `mousemove` → window `mouseup`
+   * sequence, and each re-derived the same conversion and clamped it inline. This
+   * is that sequence once; what each grab actually means is a resolver in
+   * `timeline/grab`, and nothing below here touches a `MouseEvent` or a listener.
+   *
+   * Release is treated as one more pointer reading, so the clamp that drew the
+   * preview is the same call that produces the committed value. That is the point:
+   * the boundary drag used to clamp twice, in two spellings, and they disagreed.
+   */
+  function beginGrab<P>(e: React.MouseEvent, spec: GrabSpec<P>): void {
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    if (spec.ownsPlayhead === true) grabOwnsPlayheadRef.current = true
+
+    let latest: P | null = null
+
+    function sample(ev: MouseEvent): GrabSample {
+      return { deltaMs: msAtPx(ev.clientX - startX, zoomRef.current), clientX: ev.clientX }
+    }
+
+    function onMouseMove(ev: MouseEvent): void {
+      const next = spec.resolve(sample(ev))
+      if (next === null) return
+      latest = next
+      spec.preview(next)
+    }
+
+    function onMouseUp(ev: MouseEvent): void {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+      grabOwnsPlayheadRef.current = false
+      if (spec.commit !== undefined) {
+        const committed = spec.commitOn === 'move' ? latest : spec.resolve(sample(ev))
+        if (committed !== null) spec.commit(committed)
+      }
+      spec.end?.()
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }
+
   /** Lengthens the final Shot past its current end. Committed on mouse-up. */
   function handleExtendMouseDown(
     e: React.MouseEvent,
     lastShot: Shot,
     currentDurationMs: number,
   ): void {
-    e.preventDefault()
-    e.stopPropagation()
-    extendDragRef.current = { startX: e.clientX, origDur: currentDurationMs }
-    function onMM(ev: MouseEvent): void {
-      if (!extendDragRef.current) return
-      const deltaMs = msAtPx(ev.clientX - extendDragRef.current.startX, zoomRef.current)
-      setDragOverride({ [lastShot.id]: Math.max(1000, extendDragRef.current.origDur + deltaMs) })
-    }
-    function onMU(ev: MouseEvent): void {
-      if (extendDragRef.current) {
-        const deltaMs = msAtPx(ev.clientX - extendDragRef.current.startX, zoomRef.current)
-        onExtendLastShot(lastShot.id, Math.max(1000, extendDragRef.current.origDur + deltaMs))
-        extendDragRef.current = null
-      }
-      setDragOverride({})
-      window.removeEventListener('mousemove', onMM)
-      window.removeEventListener('mouseup', onMU)
-    }
-    window.addEventListener('mousemove', onMM)
-    window.addEventListener('mouseup', onMU)
+    beginGrab(e, {
+      resolve: ({ deltaMs }) => extendLastItem({ origDurationMs: currentDurationMs }, deltaMs),
+      preview: ({ durationMs }) => setDragOverride({ [lastShot.id]: durationMs }),
+      commit: ({ durationMs }) => onExtendLastShot(lastShot.id, durationMs),
+      // Unlike the boundary drag, the override goes straight away rather than being
+      // held until the new `shots` arrive: only one Shot changed, so there is no
+      // neighbour for it to disagree with on the way through.
+      end: () => setDragOverride({}),
+    })
   }
 
   function handleBoundaryMouseDown(e: React.MouseEvent, shotA: Shot, shotB: Shot): void {
-    e.preventDefault()
-    e.stopPropagation()
-    dragStateRef.current = {
-      shotA,
-      shotB,
-      startX: e.clientX,
-      origDurA: shotA.durationMs,
-      origDurB: shotB.durationMs,
-    }
-
-    function onMouseMove(ev: MouseEvent): void {
-      const ds = dragStateRef.current
-      if (!ds) return
-      const rawDeltaMs = msAtPx(ev.clientX - ds.startX, zoomRef.current)
-      const newDurA = Math.max(1000, ds.origDurA + rawDeltaMs)
-      const maxDurA = ds.origDurA + ds.origDurB - 1000
-      const clampedDurA = Math.min(maxDurA, newDurA)
-      const newDurB = Math.max(1000, ds.origDurA + ds.origDurB - clampedDurA)
-      setDragOverride({ [ds.shotA.id]: clampedDurA, [ds.shotB.id]: newDurB })
-    }
-
-    function onMouseUp(ev: MouseEvent): void {
-      const ds = dragStateRef.current
-      if (ds) {
-        const rawDeltaMs = msAtPx(ev.clientX - ds.startX, zoomRef.current)
-        const newDurA = Math.max(
-          1000,
-          Math.min(ds.origDurA + ds.origDurB - 1000, ds.origDurA + rawDeltaMs),
-        )
-        const newDurB = Math.max(1000, ds.origDurA + ds.origDurB - newDurA)
-        onResizeShots(ds.shotA.id, newDurA, ds.shotB.id, newDurB)
-        // Keep dragOverride at final values until shots prop updates from IPC
-        setDragOverride({ [ds.shotA.id]: newDurA, [ds.shotB.id]: newDurB })
+    const grab = { origDurationAMs: shotA.durationMs, origDurationBMs: shotB.durationMs }
+    beginGrab(e, {
+      resolve: ({ deltaMs }) => resizeShotPair(grab, deltaMs),
+      preview: ({ durationAMs, durationBMs }) =>
+        setDragOverride({ [shotA.id]: durationAMs, [shotB.id]: durationBMs }),
+      commit: ({ durationAMs, durationBMs }) => {
+        onResizeShots(shotA.id, durationAMs, shotB.id, durationBMs)
+        // Hold the override at the committed values until the new `shots` come
+        // back from IPC: clearing it here would flash the old geometry.
+        setDragOverride({ [shotA.id]: durationAMs, [shotB.id]: durationBMs })
         pendingDragClearRef.current = true
-        dragStateRef.current = null
-      } else {
-        setDragOverride({})
-      }
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
-    }
-
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
+      },
+      ownsPlayhead: true,
+    })
   }
 
   function handleMarkerTrackDblClick(e: React.MouseEvent<HTMLDivElement>): void {
@@ -1292,37 +1291,16 @@ export function TimelineEditor({
   }
 
   function handleMarkerMouseDown(e: React.MouseEvent, marker: Marker): void {
-    e.preventDefault()
-    e.stopPropagation()
-    markerDragStateRef.current = {
-      markerId: marker.id,
-      startX: e.clientX,
-      origPositionMs: marker.positionMs,
-    }
-
-    function onMouseMove(ev: MouseEvent): void {
-      const ds = markerDragStateRef.current
-      if (!ds) return
-      const deltaMs = msAtPx(ev.clientX - ds.startX, zoomRef.current)
-      const newPositionMs = Math.max(0, Math.round(ds.origPositionMs + deltaMs))
-      setMarkerDragOverride({ [ds.markerId]: newPositionMs })
-    }
-
-    function onMouseUp(ev: MouseEvent): void {
-      const ds = markerDragStateRef.current
-      if (ds) {
-        const deltaMs = msAtPx(ev.clientX - ds.startX, zoomRef.current)
-        const newPositionMs = Math.max(0, Math.round(ds.origPositionMs + deltaMs))
-        onUpdateMarker(ds.markerId, newPositionMs)
-        markerDragStateRef.current = null
-      }
-      setMarkerDragOverride({})
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
-    }
-
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
+    const grab = { origPositionMs: marker.positionMs }
+    beginGrab(e, {
+      // No ceiling, deliberately: see `moveMarker`. A Marker may be dragged past
+      // the last Shot, which the Playhead scrub may not.
+      resolve: ({ deltaMs }) => moveMarker(grab, deltaMs),
+      preview: ({ positionMs }) => setMarkerDragOverride({ [marker.id]: positionMs }),
+      commit: ({ positionMs }) => onUpdateMarker(marker.id, positionMs),
+      end: () => setMarkerDragOverride({}),
+      ownsPlayhead: true,
+    })
   }
 
   function handleMarkerLabelClick(e: React.MouseEvent, marker: Marker): void {
@@ -1344,53 +1322,26 @@ export function TimelineEditor({
 
   function handleMediaTrackMouseDown(e: React.MouseEvent): void {
     if (!rundownMedia) return
-    e.preventDefault()
-    e.stopPropagation()
-    mediaDragStateRef.current = {
-      startX: e.clientX,
-      origOffset: rundownMedia.offsetMs,
-    }
-
-    function onMouseMove(ev: MouseEvent): void {
-      const ds = mediaDragStateRef.current
-      if (!ds) return
-      const newOffset = ds.origOffset + msAtPx(ev.clientX - ds.startX, zoomRef.current)
-      setMediaOffsetOverride(newOffset)
-    }
-
-    function onMouseUp(ev: MouseEvent): void {
-      const ds = mediaDragStateRef.current
-      if (ds) {
-        const newOffset = ds.origOffset + msAtPx(ev.clientX - ds.startX, zoomRef.current)
-        onUpdateMediaOffset(Math.round(newOffset))
-        mediaDragStateRef.current = null
-      }
-      setMediaOffsetOverride(null)
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
-    }
-
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
+    const grab = { origOffsetMs: rundownMedia.offsetMs }
+    beginGrab(e, {
+      resolve: ({ deltaMs }) => alignReferenceMedia(grab, deltaMs),
+      preview: ({ offsetMs }) => setMediaOffsetOverride(offsetMs),
+      commit: ({ offsetMs }) => onUpdateMediaOffset(offsetMs),
+      end: () => setMediaOffsetOverride(null),
+      ownsPlayhead: true,
+    })
   }
 
   function handlePlayheadDragMouseDown(e: React.MouseEvent): void {
-    e.preventDefault()
-    e.stopPropagation()
-    const origMs = playheadMs
-    const startX = e.clientX
-    function onMM(ev: MouseEvent): void {
-      const deltaMs = msAtPx(ev.clientX - startX, zoomRef.current)
-      const newMs = Math.max(0, Math.min(origMs + deltaMs, totalMs))
-      playhead.moveTo(newMs)
-      if (!isPlayingRef.current) playhead.seekMedia(newMs)
-    }
-    function onMU(): void {
-      window.removeEventListener('mousemove', onMM)
-      window.removeEventListener('mouseup', onMU)
-    }
-    window.addEventListener('mousemove', onMM)
-    window.addEventListener('mouseup', onMU)
+    const grab = { origMs: playheadMs, totalMs }
+    beginGrab(e, {
+      resolve: ({ deltaMs }) => scrubPlayhead(grab, deltaMs),
+      // The odd one out in two ways, both deliberate. There is nothing to commit —
+      // the Playhead is not stored — and the preview is the move: the resolver says
+      // where, and the Playhead module is what gets told, so it can seek the
+      // Reference media and pull the view along as it does for every other jump.
+      preview: ({ positionMs }) => placePlayhead(positionMs),
+    })
   }
 
   // Tick marks for the ruler. An hour-long Rundown is 727 of these, and they
