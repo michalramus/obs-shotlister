@@ -86,6 +86,9 @@ on the device its own setting names, once on the Intercom output.
 - **Announcements** — prepared exactly as the primary copy is, ahead of the cue, so the intercom
   copy does not start a device stream at the moment the word is due.
 - **Reference media** is not routed. Scrubbing a rehearsal video must not reach the band.
+- **Mute is local.** The operator's Mute countdown and Mute beep silence their own copy only;
+  the intercom keeps its feed. Their mute button is about their ears, exactly as it is for the Cue
+  Tray, which the app's mute has never silenced either.
 
 The copies start in the same task. The Announcement path delay applies to both, because it
 describes the route out of this machine; the operator therefore hears the utterance earlier than

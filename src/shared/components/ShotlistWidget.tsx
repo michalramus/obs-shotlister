@@ -350,25 +350,35 @@ export function ShotlistWidget({
     }
   }, [intercomSinkId, audioBaseUrl, hasIntercom])
 
+  /**
+   * Plays one Cue on the operator's device and on the Intercom output.
+   *
+   * @param mutedLocally Silences the operator's own copy only. Their mute button
+   *   is about their ears: the Cue Tray is not silenced by it either, and the
+   *   intercom is another listener, not a speaker on this desk. Muting the beep
+   *   to concentrate must not take the band's countdown away.
+   */
   const playCue = useCallback(
-    (filename: string): void => {
+    (filename: string, mutedLocally = false): void => {
       if (!audioBaseUrl) return
       // A Voice-over Rundown speaks its countdown instead. The fixed Cues are a
       // Camera Rundown's countdown and would talk over the Announcement — and
       // they count to the wrong thing anyway, since an Announcement counts down
       // to the next Call rather than to the end of this one.
       if (isVoice) return
-      let audio = audioPoolRef.current.get(filename)
-      if (!audio) {
-        audio = new Audio(`${audioBaseUrl}/${filename}`)
-        audioPoolRef.current.set(filename, audio)
+      if (!mutedLocally) {
+        let audio = audioPoolRef.current.get(filename)
+        if (!audio) {
+          audio = new Audio(`${audioBaseUrl}/${filename}`)
+          audioPoolRef.current.set(filename, audio)
+        }
+        // A clip created after the routing effect ran still needs pointing at the
+        // chosen device; a no-op once it is already there.
+        routeToSink(audio, cueSinkId)
+        audio.volume = audioVolume
+        audio.currentTime = 0
+        audio.play().catch((err: unknown) => console.error('[ShotlistWidget] audio error:', err))
       }
-      // A clip created after the routing effect ran still needs pointing at the
-      // chosen device; a no-op once it is already there.
-      routeToSink(audio, cueSinkId)
-      audio.volume = audioVolume
-      audio.currentTime = 0
-      audio.play().catch((err: unknown) => console.error('[ShotlistWidget] audio error:', err))
 
       // Same Cue, again, on the Intercom output. Started after the operator's own
       // copy and never awaited: the intercom must not be able to delay or fail
@@ -438,7 +448,6 @@ export function ShotlistWidget({
         // Countdown 3→1: play word at END of that second (when it ticks away)
         // e.g. play 'three' when remainingSec goes from 3 to 2
         if (
-          !muteCount &&
           prevSec !== null &&
           remainingSec !== null &&
           remainingSec < prevSec &&
@@ -446,16 +455,18 @@ export function ShotlistWidget({
           prevSec <= 3
         ) {
           const words: Record<number, string> = { 1: 'one', 2: 'two', 3: 'three' }
-          playCue(`${words[prevSec]}.opus`)
+          // Muting is passed in rather than checked here, so a muted operator
+          // still feeds the intercom.
+          playCue(`${words[prevSec]}.opus`, muteCount)
         }
 
         // Beep at expiry: fire once when remainingMs reaches 0 (progress bar at 100%)
         // 'one' fires at 1→0 transition; beep fires on the same tick
-        if (!muteBeep && !beepFiredRef.current && remainingMs !== null) {
+        if (!beepFiredRef.current && remainingMs !== null) {
           if (remainingMs === 0 && prevMs !== null && prevMs > 0) {
             reachedZeroAtRef.current = tickNow
             beepFiredRef.current = true
-            playCue('beep.opus')
+            playCue('beep.opus', muteBeep)
           }
         }
       }

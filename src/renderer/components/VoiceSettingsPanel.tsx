@@ -792,7 +792,8 @@ function IntercomSection({
       </div>
       <p style={s.hint}>
         A copy of every cue and announcement plays on the device below, so a voice-chat client can
-        carry it to the intercom. Nothing is taken away from your own speakers.
+        carry it to the intercom. Nothing is taken away from your own speakers, and muting a cue
+        mutes only your copy.
       </p>
 
       {virtual !== null && (

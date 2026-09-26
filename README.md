@@ -176,7 +176,8 @@ second time into a loopback device, so a voice client on the same machine picks 
 microphone and carries it to the intercom.
 
 It **duplicates**: the operator keeps hearing everything on their own devices. Reference media is
-never routed, so scrubbing a rehearsal video does not reach the band.
+never routed, so scrubbing a rehearsal video does not reach the band. Muting the countdown or the beep
+silences the operator's own copy only — the intercom keeps its feed, exactly as the Cue Tray does.
 
 **Enable:** Header → speaker icon → **Voice & audio settings…** → Intercom output → toggle on,
 pick the device, press **Test**.
