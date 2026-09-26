@@ -153,7 +153,7 @@ interface AppStore {
   // Marker CRUD actions
   loadMarkers: (rundownId: string) => Promise<void>
   addMarker: (rundownId: string, positionMs: number, label?: string | null) => Promise<Marker>
-  updateMarker: (id: string, positionMs: number) => Promise<void>
+  updateMarker: (id: string, positionMs: number, label?: string | null) => Promise<void>
   removeMarker: (id: string) => Promise<void>
 
   // Rundown media
@@ -662,7 +662,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return marker
   },
 
-  updateMarker: async (id, positionMs) => {
+  updateMarker: async (id, positionMs, label) => {
     const { markers } = get()
     const existing = markers.find((m) => m.id === id)
     if (!existing) return
@@ -670,7 +670,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       id,
       rundownId: existing.rundownId,
       positionMs,
-      label: existing.label,
+      // Absent means "leave the label alone"; an explicit null clears it.
+      label: label === undefined ? existing.label : label,
     })
     set((state) => ({
       markers: state.markers

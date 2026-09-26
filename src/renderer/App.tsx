@@ -409,8 +409,10 @@ export default function App(): React.JSX.Element {
           console.error('[App] addMarker:', err),
         )
     },
-    onUpdateMarker: (id: string, posMs: number) =>
-      updateMarker(id, posMs).catch((err: unknown) => console.error('[App] updateMarker:', err)),
+    onUpdateMarker: (id: string, posMs: number, label?: string | null) =>
+      updateMarker(id, posMs, label).catch((err: unknown) =>
+        console.error('[App] updateMarker:', err),
+      ),
     onDeleteMarker: (id: string) =>
       removeMarker(id).catch((err: unknown) => console.error('[App] deleteMarker:', err)),
     onImportMedia: () => {

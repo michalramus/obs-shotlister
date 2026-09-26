@@ -93,7 +93,7 @@ interface TimelineEditorProps {
   ) => void
   onExtendLastShot: (shotId: string, newDurationMs: number) => void
   onAddMarker: (positionMs: number) => void
-  onUpdateMarker: (id: string, positionMs: number) => void
+  onUpdateMarker: (id: string, positionMs: number, label?: string | null) => void
   onDeleteMarker: (id: string) => void
   rundownMedia: { filePath: string; offsetMs: number } | null
   onImportMedia: () => void
@@ -1469,16 +1469,11 @@ export function TimelineEditor({
 
   function handleMarkerLabelSave(marker: Marker): void {
     const trimmed = editingMarkerLabel.trim() || null
+    // One write, through the one Marker seam: a second write straight to
+    // `window.api` raced this one and carried the pre-drag position, so labelling
+    // a Marker just after dragging it could put the Marker back where it was.
     if (trimmed !== marker.label) {
-      onUpdateMarker(marker.id, markerDragOverride[marker.id] ?? marker.positionMs)
-      window.api.markers
-        .upsert({
-          id: marker.id,
-          rundownId: marker.rundownId,
-          positionMs: marker.positionMs,
-          label: trimmed,
-        })
-        .catch((err: unknown) => console.error('[TimelineEditor] label save:', err))
+      onUpdateMarker(marker.id, markerDragOverride[marker.id] ?? marker.positionMs, trimmed)
     }
     setEditingMarkerId(null)
   }
