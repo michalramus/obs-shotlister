@@ -206,6 +206,15 @@ export interface PartRenderState {
 }
 
 export interface ProjectRenderSummary {
+  /**
+   * Which Project this describes.
+   *
+   * Pushed summaries are not requests: app start schedules an auto-render for
+   * every Project, so a window showing one Project receives the others' summaries
+   * too. Without this the last one to arrive drove the warning strip, the start
+   * confirmation and the Voice panel.
+   */
+  projectId: string
   parts: PartRenderState[]
   /** Parts that are `stale` or `missing`; what the warning strip counts. */
   unrenderedCount: number

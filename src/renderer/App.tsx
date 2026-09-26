@@ -84,6 +84,7 @@ export default function App(): React.JSX.Element {
   const parts = useAppStore((s) => s.parts)
   const phraseDurations = useAppStore((s) => s.phraseDurations)
   const effectiveVoiceSettings = useAppStore((s) => s.effectiveVoiceSettings)
+  const loadVoiceSettings = useAppStore((s) => s.loadVoiceSettings)
   const unrenderedCount = useAppStore((s) => s.renderSummary?.unrenderedCount ?? 0)
   const announcementSinkId = useAppStore((s) => s.audioDevices.announcementSinkId)
   const cueSinkId = useAppStore((s) => s.audioDevices.cueSinkId)
@@ -95,6 +96,10 @@ export default function App(): React.JSX.Element {
   const intercomSink = intercomEnabled ? intercomSinkId : null
   const loadLiveState = useAppStore((s) => s.loadLiveState)
   const activeProjectId = useAppStore((s) => s.activeProjectId)
+  // The push listeners below are registered once on mount, so they cannot close
+  // over the active Project directly.
+  const activeProjectIdRef = useRef(activeProjectId)
+  activeProjectIdRef.current = activeProjectId
   const activeRundownId = useAppStore((s) => s.activeRundownId)
   const projects = useAppStore((s) => s.projects)
   const shots = useAppStore((s) => s.shots)
@@ -191,7 +196,12 @@ export default function App(): React.JSX.Element {
       window.api.live.onStatePush(handleLiveStatePush),
       window.api.live.onShotHiddenPush(markShotHidden),
       window.api.live.onAnnouncementPush((plan) => announcementPlayer.current.play(plan)),
-      window.api.speech.onStatusPush(setRenderSummary),
+      // Filtered by Project: app start schedules an auto-render for every Project,
+      // so this window is pushed the others' summaries too, and whichever arrived
+      // last used to drive the warning strip and the start confirmation.
+      window.api.speech.onStatusPush((summary) => {
+        if (summary.projectId === activeProjectIdRef.current) setRenderSummary(summary)
+      }),
       window.api.server.onError(setServerError),
     ]
     refreshOscSettings()
@@ -271,6 +281,13 @@ export default function App(): React.JSX.Element {
       loadPhraseDurations(activeProjectId).catch((err: unknown) => {
         console.error('[App] Failed to load phrase durations:', err)
       })
+      // Edit mode badges a Call too short to announce, and it needs the Voice
+      // settings to know what "too short" means. Loading them only when the Voice
+      // panel opened left every warning silently switched off in a fresh session,
+      // and stale for the previous project after a project switch.
+      loadVoiceSettings(activeProjectId).catch((err: unknown) => {
+        console.error('[App] Failed to load voice settings:', err)
+      })
     }
   }, [
     activeProjectId,
@@ -279,6 +296,7 @@ export default function App(): React.JSX.Element {
     loadParts,
     loadRenderSummary,
     loadPhraseDurations,
+    loadVoiceSettings,
   ])
 
   useEffect(() => {

@@ -81,6 +81,7 @@ export function projectRenderSummary(
 ): ProjectRenderSummary {
   const plan = projectRenderPlan(db, projectId, cachedHashes)
   return {
+    projectId,
     parts: plan.parts,
     unrenderedCount: plan.parts.filter((p: PartRenderState) => p.state !== 'rendered').length,
     rendering,
