@@ -80,6 +80,18 @@ is heard well after it is played. Announcements are scheduled this much earlier 
 hears them on the beat. A property of the machine's audio route, not of the show.
 _Avoid_: latency, lag, offset, lead
 
+**Intercom output**:
+A second output device that receives everything the show produces — every Cue and every
+Announcement — alongside the operator's own devices, so a voice-chat client on this machine
+can carry it to the intercom. Duplicates; it never moves sound away from the operator.
+_Avoid_: bus, mix, send, feed
+
+**Virtual output**:
+The loopback device the Intercom output plays into, named *Shotlister Out*: audio written to
+it comes back as a recordable input the intercom client can select. Created by the app where
+the OS allows it, and otherwise a third-party device the app only finds.
+_Avoid_: cable, sink, virtual mic, device
+
 **Voice**:
 The synthetic speaker an Announcement is rendered with. Set once for the app and
 overridable per Project, because the language follows the material and not the machine.
