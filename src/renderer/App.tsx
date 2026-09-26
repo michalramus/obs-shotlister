@@ -6,7 +6,6 @@ import { RundownSidebar } from './components/RundownSidebar'
 import { ShotListPanel } from './components/ShotListPanel'
 import { LiveControls } from './components/LiveControls'
 import { ShotlistWidget } from '../shared/components/ShotlistWidget'
-import { isInTransition } from '../shared/timing'
 import { toMediaUrl } from '../shared/media-url'
 import type { DeleteShotMode } from '../shared/ipc-contract'
 import { ResolveImportDialog } from './components/ResolveImportDialog'
@@ -231,12 +230,13 @@ export default function App(): React.JSX.Element {
     function handleKey(e: KeyboardEvent): void {
       const tag = (document.activeElement as HTMLElement)?.tagName
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return
+      // No Transition guard here: the main process drops a Next or a Skip that
+      // lands inside a Transition, and Preview-first comes from the stored
+      // setting, so the space bar cannot disagree with the pedal.
       if (e.code === 'Space') {
         e.preventDefault()
         if (running) {
-          if (!isInTransition(running, liveIndex, startedAt, shots, Date.now())) {
-            liveNext().catch((err: unknown) => console.error('[App] liveNext:', err))
-          }
+          liveNext().catch((err: unknown) => console.error('[App] liveNext:', err))
         } else if (uiMode === 'live' && shots.length > 0 && activeRundownId) {
           liveStart(activeRundownId).catch((err: unknown) => console.error('[App] liveStart:', err))
         }
@@ -244,24 +244,12 @@ export default function App(): React.JSX.Element {
       }
       if (e.code === 'ArrowRight' && running) {
         e.preventDefault()
-        if (!isInTransition(running, liveIndex, startedAt, shots, Date.now())) {
-          liveSkipNext().catch((err: unknown) => console.error('[App] liveSkipNext:', err))
-        }
+        liveSkipNext().catch((err: unknown) => console.error('[App] liveSkipNext:', err))
       }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [
-    running,
-    shots,
-    activeRundownId,
-    liveNext,
-    liveStart,
-    liveSkipNext,
-    uiMode,
-    liveIndex,
-    startedAt,
-  ])
+  }, [running, shots, activeRundownId, liveNext, liveStart, liveSkipNext, uiMode])
 
   // When the active project changes, load its cameras + rundowns
   useEffect(() => {

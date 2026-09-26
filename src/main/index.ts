@@ -60,6 +60,8 @@ import { listLyrics, upsertLyric, deleteLyric } from './ipc/lyrics'
 import { listShots, createShot, updateShot, deleteShot, reorderShots, splitShot } from './ipc/shots'
 import { createLiveSession } from './live/session'
 import type { LiveSession } from './live/session'
+import { createLiveControl } from './live/control'
+import type { LiveControl } from './live/control'
 import { createOBSSwitcher } from './obs/switcher'
 import type { OBSSwitcher } from './obs/switcher'
 import { createChangePublisher } from './publisher'
@@ -134,6 +136,7 @@ const virtualSink = createVirtualSinkManager()
 let live: LiveSession
 let obs: OBSSwitcher
 let publish: ChangePublisher
+let control: LiveControl
 let render: RenderService
 let obsAutoReconnect = false
 let obsReconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -171,35 +174,17 @@ function runValidation(database: ReturnType<typeof getDatabase>): void {
     })
 }
 
-// --- OSC helpers -------------------------------------------------------------
+// --- OSC adapters ------------------------------------------------------------
+//
+// The pedal is a transport, not a second opinion: what Next and Skip mean lives
+// in live/control.ts. These only decide whether the press reaches it at all.
 
 function handleOscNext(): void {
   if (currentUiMode !== 'live') return
   try {
-    const db = getDatabase()
-    const liveState = live.getState()
-
-    if (!liveState.running) {
-      // Mirror space bar: start the rundown if one is active and not yet running
-      if (!liveState.rundownId) return
-      const previewFirst = getPreviewFirst(db)
-      const state = live.start(liveState.rundownId)
-      publish.liveStateChanged(state)
-      publish.rundownChanged()
-      if (previewFirst) {
-        obs.startFromPreview().catch(console.error)
-      } else {
-        obs.takeLiveShot().catch(console.error)
-      }
-      return
-    }
-
-    if (live.isInTransition()) return
-    const { state, hiddenShotId } = live.next()
-    publish.liveStateChanged(state)
-    if (!state.running) publish.rundownChanged()
-    if (hiddenShotId) publish.shotHidden(hiddenShotId)
-    obs.takeLiveShot().catch(console.error)
+    // The pedal mirrors the space bar, so a press with nothing running starts
+    // the Rundown instead of reporting that there is nothing to advance.
+    control.next({ startIfStopped: true })
   } catch (err) {
     console.error('[osc] next error:', err)
   }
@@ -208,12 +193,7 @@ function handleOscNext(): void {
 function handleOscSkip(): void {
   if (currentUiMode !== 'live') return
   try {
-    const { state, hiddenShotId } = live.skipNext()
-    publish.liveStateChanged(state)
-    if (hiddenShotId) {
-      publish.shotHidden(hiddenShotId)
-    }
-    obs.cueNextShot().catch(console.error)
+    control.skipNext()
   } catch (err) {
     console.error('[osc] skip error:', err)
   }
@@ -507,54 +487,17 @@ function registerIpcHandlers(): void {
   // Live controls
   registerIpcHandler('live:get', () => live.getState())
 
-  registerIpcHandler('live:start', (payload: { rundownId: string; previewFirst?: boolean }) => {
-    const state = live.start(payload.rundownId)
-    publish.liveStateChanged(state)
-    publish.rundownChanged()
-    if (payload.previewFirst) {
-      obs.startFromPreview().catch(console.error)
-    } else {
-      obs.takeLiveShot().catch(console.error)
-    }
-    return state
-  })
+  registerIpcHandler('live:start', (payload: { rundownId: string; previewFirst?: boolean }) =>
+    control.start(payload),
+  )
 
-  registerIpcHandler('live:stop', () => {
-    const state = live.stop()
-    publish.liveStateChanged(state)
-    publish.rundownChanged()
-    return state
-  })
+  registerIpcHandler('live:stop', () => control.stop())
 
-  registerIpcHandler('live:next', () => {
-    const { state, hiddenShotId } = live.next()
-    publish.liveStateChanged(state)
-    // Next past the last Shot ends the session and empties the Live queue, so the
-    // Hidden flags phones are holding are no longer the ones the queue has (ADR
-    // 0003). `liveStateChanged` carries only the position, never the Shots.
-    if (!state.running) publish.rundownChanged()
-    if (hiddenShotId) publish.shotHidden(hiddenShotId)
-    obs.takeLiveShot().catch(console.error)
-    return state
-  })
+  registerIpcHandler('live:next', () => control.next())
 
-  registerIpcHandler('live:skip-next', () => {
-    const { state, hiddenShotId } = live.skipNext()
-    publish.liveStateChanged(state)
-    if (hiddenShotId) publish.shotHidden(hiddenShotId)
-    obs.cueNextShot().catch(console.error)
-    return state
-  })
+  registerIpcHandler('live:skip-next', () => control.skipNext())
 
-  registerIpcHandler('live:restart', () => {
-    const state = live.restart()
-    publish.liveStateChanged(state)
-    // Restart refills the queue with every Shot visible again — the same reason
-    // Start publishes it.
-    publish.rundownChanged()
-    obs.takeLiveShot().catch(console.error)
-    return state
-  })
+  registerIpcHandler('live:restart', () => control.restart())
 
   // DaVinci Resolve CSV import
   registerIpcHandler('shots:import-csv:parse', async (payload: { filePath: string }) => {
@@ -990,6 +933,14 @@ app.whenReady().then(() => {
     (status) => pushToWindow('speech:renderSummary-push', status),
   )
   publish = createChangePublisher(_db, live, () => _io)
+  control = createLiveControl({
+    session: live,
+    obs,
+    publish,
+    // Read per call rather than captured: the operator can toggle Preview-first
+    // between two Live sessions without anything being rewired.
+    previewFirst: () => getPreviewFirst(getDatabase()),
+  })
   live.clear()
   // App start is one of the only two moments the cache may be touched (ADR
   // 0005). Deliberately not awaited: a slow sweep must not hold up the window,
