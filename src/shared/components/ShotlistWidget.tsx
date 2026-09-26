@@ -17,16 +17,33 @@ type RoutableAudio = HTMLAudioElement & { setSinkId?: (sinkId: string) => Promis
  * countdown — the operator would rather hear their Cues on the wrong speakers
  * than not at all.
  */
-function routeToSink(audio: HTMLAudioElement, sinkId: string | null): void {
+function routeToSink(audio: HTMLAudioElement, sinkId: string | null, required = false): void {
   const routable = audio as RoutableAudio
   if (typeof routable.setSinkId !== 'function') return
   // '' is how the API says "system default". Passing it matters: the clips are
   // pooled and keep whichever sink they were last given, so without this,
   // choosing System default leaves them on the old device until a restart.
-  routable.setSinkId(sinkId ?? '').catch((err: unknown) => {
-    console.error('[ShotlistWidget] cue output device unavailable:', err)
-  })
+  routable.setSinkId(sinkId ?? '').then(
+    () => {
+      if (required) audio.muted = false
+    },
+    (err: unknown) => {
+      if (required) {
+        // The Intercom output's copy is a copy. Played on the default device by
+        // mistake it is every Cue heard twice in the operator's ear, so it is
+        // muted instead: the element stays pooled and starts sounding again the
+        // moment the device comes back.
+        audio.muted = true
+        console.error('[ShotlistWidget] intercom output unavailable, muting its copy:', err)
+        return
+      }
+      console.error('[ShotlistWidget] cue output device unavailable:', err)
+    },
+  )
 }
+
+/** The fixed Cues, preloaded per output device. */
+const CUE_FILES = ['one.opus', 'two.opus', 'three.opus', 'beep.opus', 'beep-low.opus'] as const
 
 export interface ShotlistWidgetProps {
   rundownName: string
@@ -55,6 +72,15 @@ export interface ShotlistWidgetProps {
    * operator window sets it — a phone has no such choice to make.
    */
   cueSinkId?: string | null
+  /**
+   * The Intercom output: a second device every Cue is played on as well, so an
+   * intercom client on this machine carries the show. `null` or omitted routes
+   * nowhere extra.
+   *
+   * Only the operator window passes it. A phone shares this widget but has no
+   * intercom to feed, and a camera operator's handset must never become one.
+   */
+  intercomSinkId?: string | null
 }
 
 // ---------------------------------------------------------------------------
@@ -241,6 +267,7 @@ export function ShotlistWidget({
   muteBeep = false,
   audioVolume = 1,
   cueSinkId = null,
+  intercomSinkId = null,
 }: ShotlistWidgetProps): React.JSX.Element {
   // A Voice-over Rundown is shown unfiltered — there are no Cameras to filter
   // by — and it speaks its own countdown rather than playing the fixed Cues.
@@ -248,6 +275,11 @@ export function ShotlistWidget({
 
   const [now, setNow] = useState(() => Date.now())
   const audioPoolRef = useRef<Map<string, HTMLAudioElement>>(new Map())
+  // A second pool, routed to the Intercom output and played alongside the first.
+  // Separate elements rather than one element retargeted per Cue: `setSinkId` is
+  // async and a beep is 200ms, so a retargeted element would still be opening
+  // the device when the sound was due.
+  const intercomPoolRef = useRef<Map<string, HTMLAudioElement>>(new Map())
   const lastTickRef = useRef(0)
   const [headerFlash, setHeaderFlash] = useState(false)
   const rafRef = useRef<number | null>(null)
@@ -270,7 +302,7 @@ export function ShotlistWidget({
   useEffect(() => {
     if (!audioBaseUrl) return
     const pool = audioPoolRef.current
-    for (const name of ['one.opus', 'two.opus', 'three.opus', 'beep.opus', 'beep-low.opus']) {
+    for (const name of CUE_FILES) {
       if (pool.has(name)) continue
       const audio = new Audio(`${audioBaseUrl}/${name}`)
       audio.preload = 'auto'
@@ -281,7 +313,27 @@ export function ShotlistWidget({
     }
   }, [audioBaseUrl])
 
-  // Route the pool whenever the device changes. Done here rather than in
+  // The Intercom output's copies exist only while there is an intercom to feed:
+  // ten more preloaded elements are not free, and a phone never has one at all.
+  const hasIntercom = intercomSinkId !== null
+  useEffect(() => {
+    const pool = intercomPoolRef.current
+    if (!audioBaseUrl || !hasIntercom) {
+      pool.clear()
+      return
+    }
+    for (const name of CUE_FILES) {
+      if (pool.has(name)) continue
+      const audio = new Audio(`${audioBaseUrl}/${name}`)
+      audio.preload = 'auto'
+      pool.set(name, audio)
+    }
+    return () => {
+      pool.clear()
+    }
+  }, [audioBaseUrl, hasIntercom])
+
+  // Route the pools whenever a device changes. Done here rather than in
   // playCue because setSinkId is async: switching on the way to a beep would
   // put the first one on the old device, which is the one beep the operator
   // changed the setting to move.
@@ -290,6 +342,13 @@ export function ShotlistWidget({
       routeToSink(audio, cueSinkId)
     }
   }, [cueSinkId, audioBaseUrl])
+
+  useEffect(() => {
+    if (intercomSinkId === null) return
+    for (const audio of intercomPoolRef.current.values()) {
+      routeToSink(audio, intercomSinkId, true)
+    }
+  }, [intercomSinkId, audioBaseUrl, hasIntercom])
 
   const playCue = useCallback(
     (filename: string): void => {
@@ -310,8 +369,24 @@ export function ShotlistWidget({
       audio.volume = audioVolume
       audio.currentTime = 0
       audio.play().catch((err: unknown) => console.error('[ShotlistWidget] audio error:', err))
+
+      // Same Cue, again, on the Intercom output. Started after the operator's own
+      // copy and never awaited: the intercom must not be able to delay or fail
+      // the sound the operator is listening for.
+      if (intercomSinkId === null || intercomSinkId === cueSinkId) return
+      let toIntercom = intercomPoolRef.current.get(filename)
+      if (!toIntercom) {
+        toIntercom = new Audio(`${audioBaseUrl}/${filename}`)
+        intercomPoolRef.current.set(filename, toIntercom)
+        routeToSink(toIntercom, intercomSinkId, true)
+      }
+      toIntercom.volume = audioVolume
+      toIntercom.currentTime = 0
+      toIntercom
+        .play()
+        .catch((err: unknown) => console.error('[ShotlistWidget] intercom cue error:', err))
     },
-    [audioBaseUrl, audioVolume, cueSinkId, isVoice],
+    [audioBaseUrl, audioVolume, cueSinkId, intercomSinkId, isVoice],
   )
 
   // Ticker while running

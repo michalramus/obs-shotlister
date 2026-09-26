@@ -16,6 +16,7 @@ import { OSCSettingsPanel } from './components/OSCSettingsPanel'
 import { TimelineEditor } from './components/TimelineEditor'
 import { TopBar } from './components/TopBar'
 import { createAnnouncementPlayer } from './audio/announcements'
+import { outputTargets } from '../shared/audio-routing'
 
 const styles = {
   root: {
@@ -86,6 +87,12 @@ export default function App(): React.JSX.Element {
   const unrenderedCount = useAppStore((s) => s.renderSummary?.unrenderedCount ?? 0)
   const announcementSinkId = useAppStore((s) => s.audioDevices.announcementSinkId)
   const cueSinkId = useAppStore((s) => s.audioDevices.cueSinkId)
+  const intercomEnabled = useAppStore((s) => s.audioDevices.intercomEnabled)
+  const intercomSinkId = useAppStore((s) => s.audioDevices.intercomSinkId)
+  // One value for "is there an Intercom output to duplicate into", so nothing
+  // downstream has to remember that a device chosen while the toggle is off is
+  // not a destination.
+  const intercomSink = intercomEnabled ? intercomSinkId : null
   const loadLiveState = useAppStore((s) => s.loadLiveState)
   const activeProjectId = useAppStore((s) => s.activeProjectId)
   const activeRundownId = useAppStore((s) => s.activeRundownId)
@@ -145,9 +152,9 @@ export default function App(): React.JSX.Element {
   const isFirstLiveIndexRef = useRef(true)
   // One player for the app's lifetime: a new plan cuts off the one in flight,
   // which only works if both went through the same instance.
-  const announcementSinkRef = useRef(announcementSinkId)
-  announcementSinkRef.current = announcementSinkId
-  const announcementPlayer = useRef(createAnnouncementPlayer(() => announcementSinkRef.current))
+  const announcementSinksRef = useRef<readonly (string | null)[]>([announcementSinkId])
+  announcementSinksRef.current = outputTargets(announcementSinkId, intercomSink)
+  const announcementPlayer = useRef(createAnnouncementPlayer(() => announcementSinksRef.current))
 
   const refreshOscSettings = useCallback(() => {
     window.api.osc
@@ -433,6 +440,7 @@ export default function App(): React.JSX.Element {
         muteBeep={muteBeep}
         audioVolume={audioVolume}
         cueSinkId={cueSinkId}
+        intercomSinkId={intercomSink}
       />
     ) : null
 

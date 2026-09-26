@@ -56,7 +56,14 @@ interface PreparedClip {
   cancelled: boolean
 }
 
-function prepare(url: string, sinkId: string | null): PreparedClip {
+/**
+ * @param required When true, a clip that cannot reach `sinkId` is dropped instead
+ *   of falling back to the default device. The Intercom output's copy is a *copy*:
+ *   played on the operator's speakers by mistake it is a doubled word in their
+ *   ear, which is worse than the intercom being silent and sounds like a bug in
+ *   the Announcement itself.
+ */
+function prepare(url: string, sinkId: string | null, required = false): PreparedClip {
   const audio = new Audio() as RoutableAudio
   const clip: PreparedClip = { audio, ready: Promise.resolve(), cancelled: false }
 
@@ -79,6 +86,11 @@ function prepare(url: string, sinkId: string | null): PreparedClip {
   const routed =
     sinkId !== null && typeof audio.setSinkId === 'function'
       ? audio.setSinkId(sinkId).catch((err: unknown) => {
+          if (required) {
+            clip.cancelled = true
+            console.error('[announce] intercom output unavailable, dropping its copy:', err)
+            return
+          }
           console.error('[announce] output device unavailable, using default:', err)
         })
       : Promise.resolve()
@@ -87,7 +99,15 @@ function prepare(url: string, sinkId: string | null): PreparedClip {
   return clip
 }
 
-export function createAnnouncementPlayer(getSinkId: () => string | null): AnnouncementPlayer {
+/**
+ * @param getSinkIds Every device this Announcement is to be heard on, primary
+ *   first. More than one when the Intercom output is on: the same clips are
+ *   played again on the loopback device an intercom client records, so the band
+ *   hears the Announcement without it being taken away from the operator.
+ */
+export function createAnnouncementPlayer(
+  getSinkIds: () => readonly (string | null)[],
+): AnnouncementPlayer {
   let timers: ReturnType<typeof setTimeout>[] = []
   let prepared: PreparedClip[] = []
 
@@ -126,18 +146,26 @@ export function createAnnouncementPlayer(getSinkId: () => string | null): Announ
       cancel()
       if (!plan) return
 
-      const sinkId = getSinkId()
+      const sinkIds = getSinkIds()
       for (const scheduled of plan.clips) {
-        const clip = prepare(scheduled.url, sinkId)
-        prepared.push(clip)
+        // One element per destination. They are separate elements rather than one
+        // element moved between devices because `setSinkId` is async and a clip
+        // is under a second: by the time the second device opened, the word would
+        // be over.
+        const copies = sinkIds.map((sinkId, index) => prepare(scheduled.url, sinkId, index > 0))
+        prepared.push(...copies)
 
         // A clip due now is played now rather than through a zero timer, so the
         // first syllable is not pushed into the next frame.
         if (scheduled.atMs <= 0) {
-          speak(clip)
+          for (const copy of copies) speak(copy)
           continue
         }
-        timers.push(setTimeout(() => speak(clip), scheduled.atMs))
+        timers.push(
+          setTimeout(() => {
+            for (const copy of copies) speak(copy)
+          }, scheduled.atMs),
+        )
       }
     },
 
