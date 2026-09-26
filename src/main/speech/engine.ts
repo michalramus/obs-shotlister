@@ -1,12 +1,13 @@
 /**
- * The Piper side of Announcement rendering: spawn the engine, get a clip and a
- * duration out of it.
+ * The Piper side of Announcement rendering: find the engine, spawn it, get a
+ * clip and a duration out of it.
  *
- * Everything that decides *what* to speak and *when* lives elsewhere and is
- * pure — `shared/render-plan` decides which clips a Project still needs,
- * `shared/announcement` decides where each one lands in time. This module is
- * the part that cannot be pure: a child process, a WAV file and a rename. It
- * holds no state, reads no database and knows nothing about Parts.
+ * This is the only module in the speech cluster that spawns a process, and the
+ * only one that needs Electron to know where the binary is. Everything it used
+ * to also hold has moved to where it can be tested: the WAV arithmetic to
+ * `speech/wav`, the batch policy to `speech/batch`, the file layout behind
+ * `speech/clip-store`. What is left is one function behind the
+ * {@link Synthesiser} seam, plus the platform paths that lead to it.
  *
  * Nothing in here may run during a Live session (ADR 0005). The caller enforces
  * that; this module would happily synthesise mid-show if asked, which is
@@ -14,25 +15,26 @@
  */
 
 import { spawn } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { access, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { app } from 'electron'
-import { clipHash, type RenderPlanItem } from '../../shared/render-plan'
-import { clipPath, ensureClipsDir } from './cache'
+// ENGINE_ID is part of every clip hash, so it must never change casually: a
+// different id orphans every clip in every cache on the next app start. It lives
+// with the hash it is part of — see shared/render-plan.
+import { ENGINE_ID, clipHash, type RenderPlanItem } from '../../shared/render-plan'
+import { EngineUnusableError, renderFailure } from './batch'
+import type { SynthesisedClip, Synthesiser } from './batch'
+import type { ClipStore } from './clip-store'
+import { audibleDurationMs, trimLeadingSilence } from './wav'
 import type { VoiceFiles } from './voices'
 
-export { CLIP_EXTENSION, clipPath, clipsDir, listCachedHashes, sweep } from './cache'
-
-/**
- * Part of every clip hash, so it must never change casually: a different engine
- * id orphans every clip in every cache on the next app start.
- */
-// Re-exported so one import of this module serves the whole render path, but
-// defined with the hash it is part of — see shared/render-plan.
-export { ENGINE_ID } from '../../shared/render-plan'
-import { ENGINE_ID } from '../../shared/render-plan'
+// Nothing is re-exported from here any more. This module used to be the one
+// import the whole render path went through, which is how the WAV maths, the
+// cache layout and the batch policy all ended up behind Electron's `app` and
+// out of reach of a test. Callers now import each of those from the module that
+// owns it.
 
 /** Piper is fast, but a wedged child process must not hold a render batch open. */
 const DEFAULT_TIMEOUT_MS = 30_000
@@ -183,285 +185,18 @@ export function resolveVoice(voice: string, userDataDir: string): VoiceFiles | n
 }
 
 // ---------------------------------------------------------------------------
-// WAV duration
-// ---------------------------------------------------------------------------
-
-const RIFF_HEADER_BYTES = 12
-const CHUNK_HEADER_BYTES = 8
-
-/**
- * How long a WAV runs, in milliseconds, read from its own header.
- *
- * This number is load-bearing: flush placement schedules the phrase backwards
- * from the first countdown number using it, so a wrong duration silently
- * mis-times every Announcement. It is read here rather than asked of an
- * external tool precisely so it can be proved in a unit test.
- *
- * Chunks are walked rather than assumed to be at fixed offsets — Piper writes a
- * plain 44-byte header today, but a `LIST` chunk before `data` is legal WAV and
- * would shift everything.
- */
-export function wavDurationMs(wav: Buffer): number {
-  if (wav.length < RIFF_HEADER_BYTES) throw new Error('not a WAV file: too short for a header')
-  if (wav.toString('ascii', 0, 4) !== 'RIFF' || wav.toString('ascii', 8, 12) !== 'WAVE') {
-    throw new Error('not a WAV file: missing RIFF/WAVE header')
-  }
-
-  let byteRate = 0
-  let audioBytes = -1
-  let offset = RIFF_HEADER_BYTES
-
-  while (offset + CHUNK_HEADER_BYTES <= wav.length) {
-    const id = wav.toString('ascii', offset, offset + 4)
-    const declared = wav.readUInt32LE(offset + 4)
-    const body = offset + CHUNK_HEADER_BYTES
-
-    if (id === 'fmt ') {
-      if (declared < 16 || body + 16 > wav.length) throw new Error('malformed WAV: truncated fmt')
-      byteRate = wav.readUInt32LE(body + 8)
-      if (byteRate === 0) {
-        // A zero byte rate is legal-ish in the wild; the three fields it is
-        // derived from are mandatory, so recompute rather than give up.
-        const channels = wav.readUInt16LE(body + 2)
-        const sampleRate = wav.readUInt32LE(body + 4)
-        const bitsPerSample = wav.readUInt16LE(body + 14)
-        byteRate = sampleRate * channels * Math.ceil(bitsPerSample / 8)
-      }
-    } else if (id === 'data') {
-      // A writer that died before rewinding leaves a size of 0 or 0xFFFFFFFF.
-      // What is actually on disk is the honest answer in both cases.
-      const available = wav.length - body
-      audioBytes = declared === 0 || declared > available ? available : declared
-    }
-
-    // Chunks are word-aligned: an odd size is followed by a pad byte.
-    offset = body + declared + (declared % 2)
-  }
-
-  if (byteRate <= 0) throw new Error('malformed WAV: no usable fmt chunk')
-  if (audioBytes < 0) throw new Error('malformed WAV: no data chunk')
-  if (audioBytes === 0) throw new Error('malformed WAV: no audio in data chunk')
-
-  return Math.round((audioBytes / byteRate) * 1000)
-}
-
-/** Anything quieter than this is padding, not speech. ~1% of full scale. */
-const SILENCE_FLOOR = 300
-
-/**
- * How long a clip actually *says* something, ignoring the pad at the end.
- *
- * This is the number flush placement schedules against, and it has to be the
- * audible length rather than the file length: Piper pads every utterance, and
- * a pad counted as speech opens a gap exactly where the phrase is meant to run
- * continuously into the first countdown number. The upstream CLI can be told
- * not to pad; the arm64 build has no such flag, so the pad is measured away
- * here instead and both behave the same.
- *
- * The file keeps its padding — trimming the audio would gain nothing, since
- * clips are scheduled independently and a trailing silence simply plays under
- * the next one.
- *
- * Falls back to the full duration for anything not 16-bit PCM, and for a clip
- * with no audible content at all: a zero-length clip would be a worse answer
- * than an honest one.
- */
-export function audibleDurationMs(wav: Buffer): number {
-  const full = wavDurationMs(wav)
-
-  const view = pcm16View(wav)
-  if (view === null) return full
-
-  const { start, sampleCount, frameBytes, sampleRate } = view
-  let lastAudible = -1
-  for (let i = 0; i < sampleCount; i++) {
-    if (Math.abs(wav.readInt16LE(start + i * frameBytes)) > SILENCE_FLOOR) lastAudible = i
-  }
-  if (lastAudible < 0) return full
-
-  return Math.min(full, Math.round(((lastAudible + 1) / sampleRate) * 1000))
-}
-
-/**
- * How much silence to leave in front of the first audible sample, in ms.
- *
- * Cutting exactly on the threshold crossing would shave the attack off a
- * plosive — the "t" of "trzy" is mostly a transient that never reaches the
- * floor. Ten milliseconds is inaudible against a countdown mark and keeps the
- * consonant. It is a fixed amount, which is the whole point: every clip then
- * starts speaking the same distance into itself.
- */
-const ONSET_PREROLL_MS = 10
-
-/**
- * Removes the silence espeak puts in front of an utterance.
- *
- * Numerals get a couple of hundred milliseconds of it where words get none, and
- * — the part that actually shows — *not the same amount each time*. Countdown
- * numbers are scheduled on exact one-second marks, so clips whose speech starts
- * at different offsets inside themselves are heard at uneven intervals: "3 2 1"
- * comes out limping even though the schedule is perfect.
- *
- * Normalising the onset here is what makes the schedule audible. Measuring the
- * offset instead and correcting for it would push that correction through the
- * plan, the database and the renderer; cutting it once, at the point the file is
- * written, leaves every clip with the property the scheduler already assumes —
- * that it starts speaking when you play it.
- *
- * Only the front. The trailing pad is left alone: it is silence that plays
- * harmlessly under the next clip, and `audibleDurationMs` already measures past
- * it.
- *
- * Anything not 16-bit PCM, or already tight, comes back untouched.
- */
-export function trimLeadingSilence(wav: Buffer): Buffer {
-  const view = pcm16View(wav)
-  if (view === null) return wav
-
-  const { start, sampleCount, frameBytes, sampleRate, channels } = view
-  let firstAudible = -1
-  for (let i = 0; i < sampleCount; i++) {
-    if (Math.abs(wav.readInt16LE(start + i * frameBytes)) > SILENCE_FLOOR) {
-      firstAudible = i
-      break
-    }
-  }
-  // Nothing audible at all is left exactly as it is: a clip of pure silence is
-  // a rendering failure to report, not a buffer to slice to nothing.
-  if (firstAudible < 0) return wav
-
-  const preroll = Math.round((ONSET_PREROLL_MS / 1000) * sampleRate)
-  const cutFrames = Math.max(0, firstAudible - preroll)
-  if (cutFrames === 0) return wav
-
-  const body = wav.subarray(start + cutFrames * frameBytes, start + sampleCount * frameBytes)
-  return canonicalWav(body, sampleRate, channels)
-}
-
-/**
- * A plain 44-byte-header PCM WAV around `body`.
- *
- * The trimmed clip is rebuilt rather than patched: the source may carry extra
- * chunks whose offsets a naive splice would invalidate, and every consumer of
- * these files only ever wants the samples.
- */
-function canonicalWav(body: Buffer, sampleRate: number, channels: number): Buffer {
-  const bytesPerSample = 2
-  const byteRate = sampleRate * channels * bytesPerSample
-  const header = Buffer.alloc(44)
-
-  header.write('RIFF', 0, 'ascii')
-  header.writeUInt32LE(36 + body.length, 4)
-  header.write('WAVE', 8, 'ascii')
-  header.write('fmt ', 12, 'ascii')
-  header.writeUInt32LE(16, 16)
-  header.writeUInt16LE(1, 20) // PCM
-  header.writeUInt16LE(channels, 22)
-  header.writeUInt32LE(sampleRate, 24)
-  header.writeUInt32LE(byteRate, 28)
-  header.writeUInt16LE(channels * bytesPerSample, 32)
-  header.writeUInt16LE(8 * bytesPerSample, 34)
-  header.write('data', 36, 'ascii')
-  header.writeUInt32LE(body.length, 40)
-
-  return Buffer.concat([header, body])
-}
-
-/** The `data` chunk of a 16-bit PCM WAV, or null when it is anything else. */
-function pcm16View(wav: Buffer): {
-  start: number
-  sampleCount: number
-  frameBytes: number
-  sampleRate: number
-  channels: number
-} | null {
-  if (wav.length < RIFF_HEADER_BYTES) return null
-
-  let channels = 0
-  let sampleRate = 0
-  let bitsPerSample = 0
-  let start = -1
-  let length = 0
-  let offset = RIFF_HEADER_BYTES
-
-  while (offset + CHUNK_HEADER_BYTES <= wav.length) {
-    const id = wav.toString('ascii', offset, offset + 4)
-    const declared = wav.readUInt32LE(offset + 4)
-    const body = offset + CHUNK_HEADER_BYTES
-
-    if (id === 'fmt ' && body + 16 <= wav.length) {
-      channels = wav.readUInt16LE(body + 2)
-      sampleRate = wav.readUInt32LE(body + 4)
-      bitsPerSample = wav.readUInt16LE(body + 14)
-    } else if (id === 'data') {
-      const available = wav.length - body
-      start = body
-      length = declared === 0 || declared > available ? available : declared
-    }
-    offset = body + declared + (declared % 2)
-  }
-
-  if (bitsPerSample !== 16 || channels < 1 || sampleRate <= 0 || start < 0) return null
-  const frameBytes = 2 * channels
-  return {
-    start,
-    sampleCount: Math.floor(length / frameBytes),
-    frameBytes,
-    sampleRate,
-    channels,
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Synthesis
 // ---------------------------------------------------------------------------
 
 export interface SynthesiseOptions {
-  /** Electron's `app.getPath('userData')`; the cache hangs off it. */
+  /** Where the finished clip is put. The engine never learns the layout. */
+  clips: ClipStore
+  /** Electron's `app.getPath('userData')`; the voices hang off it. */
   userDataDir: string
   /** Defaults to 30s. A clip that takes longer than this is a wedged process. */
   timeoutMs?: number
   /** Cancels the spawn, and stops `renderAll` between items. */
   signal?: AbortSignal
-}
-
-export interface SynthesisedClip {
-  hash: string
-  durationMs: number
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-/**
- * Marks a failure as "the engine cannot run at all", as opposed to "this one
- * clip did not render".
- *
- * The difference matters to a batch: one bad clip is worth skipping past, but
- * an engine that cannot be executed will fail identically for all sixty-one,
- * and logging that sixty-one times buries the one line that explains it.
- */
-export class EngineUnusableError extends Error {
-  readonly engineUnusable = true
-}
-
-export function isEngineUnusable(error: unknown): boolean {
-  return error instanceof EngineUnusableError
-}
-
-/**
- * Names the clip that failed, without losing whether the engine can run at all.
- *
- * The naming used to be done with a plain `new Error`, which quietly downgraded
- * every spawn failure: `runPiper` reports EBADARCH and EACCES as unusable, the
- * rewrap made them ordinary, and `renderAll` then carried on to the next clip.
- * The mislabelled-arm64 case — the one with a whole paragraph of advice written
- * for it — printed that paragraph sixty-one times.
- */
-export function renderFailure(item: { text: string; voice: string }, error: unknown): Error {
-  const message = `rendering "${item.text}" (${item.voice}): ${messageOf(error)}`
-  return isEngineUnusable(error) ? new EngineUnusableError(message) : new Error(message)
 }
 
 /**
@@ -573,12 +308,11 @@ function runPiper(args: string[], text: string, opts: SynthesiseOptions): Promis
 }
 
 /**
- * Synthesises one clip into the cache and returns its duration.
+ * Synthesises one clip into the store and returns its duration.
  *
- * The WAV is written to a temporary name in the cache directory and renamed
- * into place only once it has parsed, so a crashed or killed Piper can never
- * leave a truncated file sitting at a hash that the render log then calls
- * rendered.
+ * Piper writes to scratch and the bytes only reach the store once they have
+ * parsed, so a crashed or killed Piper can never leave a truncated file sitting
+ * at a hash that the render log then calls rendered.
  */
 export async function synthesise(
   item: RenderPlanItem,
@@ -610,8 +344,12 @@ export async function synthesise(
   }
   const { model, config } = voiceFiles
 
-  const dir = await ensureClipsDir(opts.userDataDir)
-  const temporary = join(dir, `.${item.hash}.${randomBytes(6).toString('hex')}.part`)
+  // Piper writes to scratch, and the store publishes. Scratch rather than the
+  // cache directory because this module no longer knows the layout — and it does
+  // not need to: what has to be atomic is the moment a clip becomes visible at
+  // its hash, which is the store's business, not the spawn's.
+  const scratch = await mkdtemp(join(tmpdir(), 'shotlister-piper-'))
+  const temporary = join(scratch, 'out.wav')
 
   try {
     await runPiper(
@@ -619,112 +357,25 @@ export async function synthesise(
       item.text,
       opts,
     )
-    // Trimmed before it is measured, and before it is named: the duration the
+    // Trimmed before it is measured, and before it is stored: the duration the
     // scheduler stores has to describe the file that will actually be played.
     const wav = trimLeadingSilence(await readFile(temporary))
-    await writeFile(temporary, wav)
     const durationMs = audibleDurationMs(wav)
-    await rename(temporary, clipPath(opts.userDataDir, item.hash))
+    await opts.clips.put(item, wav)
     return { hash: item.hash, durationMs }
   } catch (error) {
-    await rm(temporary, { force: true }).catch(() => undefined)
     throw renderFailure(item, error)
+  } finally {
+    await rm(scratch, { recursive: true, force: true }).catch(() => undefined)
   }
-}
-
-// ---------------------------------------------------------------------------
-// Batch rendering
-// ---------------------------------------------------------------------------
-
-export interface RenderFailure {
-  item: RenderPlanItem
-  message: string
-}
-
-export interface RenderProgress {
-  /** Items attempted so far, successes and failures alike. */
-  completed: number
-  total: number
-  item: RenderPlanItem
-  /**
-   * The clip, once it is on disk. Reported per item rather than only in the
-   * final result so the caller can persist each duration as it lands — a batch
-   * of sixty clips takes minutes, and a render interrupted halfway must not
-   * leave audio on disk that nothing knows the length of.
-   */
-  clip?: SynthesisedClip
-  /** Present when this item failed. */
-  error?: string
-}
-
-export interface RenderAllResult {
-  rendered: SynthesisedClip[]
-  failed: RenderFailure[]
-  /** True when the caller cancelled before every item was attempted. */
-  aborted: boolean
-  /**
-   * Set when the batch stopped because the engine itself cannot run, rather
-   * than because individual clips failed. The remaining items were not tried.
-   */
-  engineFailure?: string
 }
 
 /**
- * Renders a list of clips one at a time.
+ * The real {@link Synthesiser}: Piper, bound to one cache and one userData.
  *
- * Sequential on purpose: this runs on the machine that is about to drive a
- * show, and a parallel render of sixty number clips would peg every core of the
- * operator's laptop minutes before doors.
- *
- * One bad item never takes the batch with it. The operator asked to render
- * everything missing; sixty-one clips and one clear failure is a far better
- * outcome than nothing and a stack trace.
+ * What `speech/service` and `renderAll` are handed, so neither has to know that
+ * Piper exists. A test hands them something else.
  */
-export async function renderAll(
-  items: readonly RenderPlanItem[],
-  opts: SynthesiseOptions,
-  onProgress?: (progress: RenderProgress) => void,
-): Promise<RenderAllResult> {
-  const rendered: SynthesisedClip[] = []
-  const failed: RenderFailure[] = []
-  let aborted = false
-  let engineFailure: string | undefined
-
-  const report = (progress: RenderProgress): void => {
-    // A listener that throws is the caller's bug, not a reason to abandon the
-    // clips still to render.
-    try {
-      onProgress?.(progress)
-    } catch {
-      /* ignored */
-    }
-  }
-
-  for (const item of items) {
-    if (opts.signal?.aborted) {
-      aborted = true
-      break
-    }
-    let error: string | undefined
-    let fatal = false
-    let clip: SynthesisedClip | undefined
-    try {
-      clip = await synthesise(item, opts)
-      rendered.push(clip)
-    } catch (caught) {
-      error = messageOf(caught)
-      fatal = isEngineUnusable(caught)
-      failed.push({ item, message: error })
-    }
-    report({ completed: rendered.length + failed.length, total: items.length, item, clip, error })
-
-    // Nothing else in this batch can succeed, and repeating the same message
-    // for every remaining clip hides it rather than emphasising it.
-    if (fatal) {
-      engineFailure = error
-      break
-    }
-  }
-
-  return { rendered, failed, aborted, engineFailure }
+export function createPiperSynthesiser(opts: SynthesiseOptions): Synthesiser {
+  return (item) => synthesise(item, opts)
 }

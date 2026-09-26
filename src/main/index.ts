@@ -87,6 +87,9 @@ import {
   saveAudioDevices,
 } from './ipc/settings'
 import { clipsDir } from './speech/cache'
+import { createFileClipStore } from './speech/clip-store'
+import { createPiperSynthesiser, downloadedVoicesDir } from './speech/engine'
+import { ensureVoice } from './speech/voices'
 import { createRenderService } from './speech/service'
 import type { RenderService } from './speech/service'
 import { phraseDurations } from './ipc/speech'
@@ -926,12 +929,21 @@ app.whenReady().then(() => {
     clipsDir: clipsDir(app.getPath('userData')),
   })
   obs = createOBSSwitcher(_db, obsClient, live)
-  render = createRenderService(
-    _db,
-    app.getPath('userData'),
-    () => live.getState().running,
-    (status) => pushToWindow('speech:renderSummary-push', status),
-  )
+  const userDataDir = app.getPath('userData')
+  // The one place the three sides of rendering are bolted together: the cache on
+  // disk, Piper, and the Voice download. Everything above this line takes them as
+  // arguments, which is what keeps Electron out of the render policy.
+  const clipStore = createFileClipStore(userDataDir)
+  render = createRenderService({
+    db: _db,
+    clips: clipStore,
+    synthesise: createPiperSynthesiser({ clips: clipStore, userDataDir }),
+    installVoice: async (voice, onDownload) => {
+      await ensureVoice(voice, { voicesDir: downloadedVoicesDir(userDataDir), onDownload })
+    },
+    isLive: () => live.getState().running,
+    onStatus: (status) => pushToWindow('speech:renderSummary-push', status),
+  })
   publish = createChangePublisher(_db, live, () => _io)
   control = createLiveControl({
     session: live,

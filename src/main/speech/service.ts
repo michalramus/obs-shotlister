@@ -1,18 +1,18 @@
 /**
- * Running a render, and sweeping what is left over.
+ * When a render is allowed to happen, and what happens when it goes wrong.
  *
- * Everything this does was decided elsewhere: `ipc/speech` says what is wanted and
- * what is orphaned, `speech/engine` knows how to spawn Piper. This is the thin
- * caller that performs the process spawn and the file IO, holds the one piece
- * of state a render has — whether one is already running — and refuses to run
- * at the two moments it must not.
+ * Everything *interesting* here is a refusal or a latch, and none of it is about
+ * files: the three moments ADR 0005 forbids synthesis, the debounce that stops a
+ * rename from synthesising every intermediate spelling, the latch on an engine
+ * that has proved it cannot run, and the rule that a clip whose length cannot be
+ * measured must be deleted so a render can reach it again.
  *
- * Untested by design (see the issue's testing decisions): it does nothing but
- * sequence modules that are tested, and every path through it touches the
- * filesystem or the Piper binary.
+ * It reaches nothing by itself. The cache arrives as a {@link ClipStore}, Piper
+ * as a {@link Synthesiser}, the Voice installer as a function — so every one of
+ * those decisions can be asserted on with a cache in a Map and nothing spawned.
+ * `ipc/speech` still does the SQLite half; this only ever sequences it.
  */
 
-import { readFile } from 'node:fs/promises'
 import type Database from 'better-sqlite3'
 import type { ProjectRenderSummary } from '../../shared/ipc-contract'
 import {
@@ -28,12 +28,37 @@ import {
   recordClip,
 } from '../ipc/speech'
 import { getGlobalVoiceSettings } from '../ipc/settings'
-import { clipPath, ensureClipsDir, listCachedHashes, sweep } from './cache'
-import { audibleDurationMs, downloadedVoicesDir, renderAll } from './engine'
-import { ensureVoice } from './voices'
+import { renderAll, type Synthesiser } from './batch'
+import type { ClipStore } from './clip-store'
+import { audibleDurationMs } from './wav'
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Puts one Voice's model on disk, once per batch (ADR 0007).
+ *
+ * Injected rather than imported so a test never reaches Hugging Face: a model is
+ * a hundred-odd megabytes, and whether it arrives is the network's business, not
+ * this module's.
+ *
+ * @param onDownload Called before a download starts, so a slow batch can say
+ *   what it is waiting for.
+ */
+export type VoiceInstaller = (
+  voice: string,
+  onDownload: (voice: string, bytes: number) => void,
+) => Promise<void>
+
+export interface RenderServiceDeps {
+  db: Database.Database
+  clips: ClipStore
+  synthesise: Synthesiser
+  installVoice: VoiceInstaller
+  /** True while a Live session is running. Re-read at every decision, never captured. */
+  isLive: () => boolean
+  onStatus?: (status: ProjectRenderSummary) => void
 }
 
 export interface RenderService {
@@ -51,15 +76,15 @@ export interface RenderService {
    * Measures cached clips that have no recorded duration, and records it.
    *
    * Repair, not routine: see {@link clipsNeedingDurations}. Cheap when there is
-   * nothing to do — one directory listing and one query — so it runs at every
-   * start rather than behind a flag nobody would know to set.
+   * nothing to do — one cache listing and one query — so it runs at every start
+   * rather than behind a flag nobody would know to set.
    */
   backfillDurations: () => Promise<number>
   /**
    * Deletes clips no Project wants any more.
    *
    * Called at app start and app close only, never while a session might be
-   * running — nothing may touch the cache directory during a show.
+   * running — nothing may touch the cache during a show.
    */
   sweepOrphans: () => Promise<number>
   /**
@@ -102,14 +127,11 @@ export interface RenderService {
 }
 
 /** Long enough to cover typing a Part name, short enough to feel automatic. */
-const AUTO_RENDER_DEBOUNCE_MS = 3000
+export const AUTO_RENDER_DEBOUNCE_MS = 3000
 
-export function createRenderService(
-  db: Database.Database,
-  userDataDir: string,
-  isLive: () => boolean,
-  onStatus?: (status: ProjectRenderSummary) => void,
-): RenderService {
+export function createRenderService(deps: RenderServiceDeps): RenderService {
+  const { db, clips, synthesise, installVoice, isLive, onStatus } = deps
+
   let rendering = false
   let autoRenderTimer: ReturnType<typeof setTimeout> | null = null
   /** Projects queued during the current debounce. Every one of them renders. */
@@ -130,9 +152,9 @@ export function createRenderService(
   let engineBroken = false
 
   async function statusFor(projectId: string): Promise<ProjectRenderSummary> {
-    // Read the cache from the filesystem rather than from `speech_clips`, so a
-    // clip deleted behind our back reads as missing rather than as rendered.
-    const cached = await listCachedHashes(userDataDir)
+    // Read the cache from the store rather than from `speech_clips`, so a clip
+    // deleted behind our back reads as missing rather than as rendered.
+    const cached = await clips.hashes()
     const summary = projectRenderSummary(db, projectId, cached, rendering)
     return progress === null ? summary : { ...summary, progress }
   }
@@ -154,8 +176,7 @@ export function createRenderService(
     engineBroken = false
     rendering = true
     try {
-      await ensureClipsDir(userDataDir)
-      const cached = await listCachedHashes(userDataDir)
+      const cached = await clips.hashes()
       const items = missingClips(db, projectId, cached)
       progress = { completed: 0, total: items.length }
       onStatus?.(await statusFor(projectId))
@@ -165,24 +186,21 @@ export function createRenderService(
       // a download of a hundred-odd megabytes, so it happens here, before a
       // single clip is attempted, rather than inside the loop.
       for (const voice of new Set(items.map((item) => item.voice))) {
-        await ensureVoice(voice, {
-          voicesDir: downloadedVoicesDir(userDataDir),
-          onDownload: (id, bytes) => {
-            const mb = Math.round(bytes / 1_000_000)
-            console.log(`[speech] installing voice ${id} (${mb} MB)`)
-            progress = { completed: 0, total: items.length, stage: `Installing voice ${id}` }
-            pushStatus(projectId)
-          },
+        await installVoice(voice, (id, bytes) => {
+          const mb = Math.round(bytes / 1_000_000)
+          console.log(`[speech] installing voice ${id} (${mb} MB)`)
+          progress = { completed: 0, total: items.length, stage: `Installing voice ${id}` }
+          pushStatus(projectId)
         })
       }
 
       const byHash = new Map(items.map((item) => [item.hash, item]))
-      const result = await renderAll(items, { userDataDir }, (step) => {
+      const result = await renderAll(items, synthesise, (step) => {
         progress = { completed: step.completed, total: step.total }
         // Recorded here rather than after the batch, so a render interrupted
         // halfway leaves every clip it finished with a usable duration. Written
-        // after the file is in place, which `synthesise` guarantees before it
-        // reports the clip.
+        // after the clip is in the store, which `synthesise` guarantees before
+        // it reports the clip.
         if (step.clip) {
           const item = byHash.get(step.clip.hash)
           if (item) recordClip(db, item, step.clip.durationMs)
@@ -226,7 +244,7 @@ export function createRenderService(
   }
 
   async function sweepNow(): Promise<number> {
-    const cached = await listCachedHashes(userDataDir)
+    const cached = await clips.hashes()
 
     // Rows first, and unconditionally: a clip whose file went without the sweep
     // taking it is invisible to `orphanedClips`, so its row would otherwise
@@ -240,7 +258,7 @@ export function createRenderService(
     // Only what actually went: a clip that could not be deleted still exists
     // and still answers a cache lookup, so forgetting its row would make the
     // index disagree with the disk.
-    const swept = await sweep(userDataDir, orphans, (hash, error) =>
+    const swept = await clips.remove(orphans, (hash, error) =>
       console.error('[speech] could not sweep', hash, messageOf(error)),
     )
     forgetClips(db, swept)
@@ -254,7 +272,7 @@ export function createRenderService(
     async backfillDurations() {
       if (isLive() || rendering) return 0
 
-      const cached = await listCachedHashes(userDataDir)
+      const cached = await clips.hashes()
       const items = clipsNeedingDurations(db, cached)
       if (items.length === 0) return 0
 
@@ -262,7 +280,7 @@ export function createRenderService(
       const unreadable: string[] = []
       for (const item of items) {
         try {
-          recordClip(db, item, audibleDurationMs(await readFile(clipPath(userDataDir, item.hash))))
+          recordClip(db, item, audibleDurationMs(await clips.read(item.hash)))
           measured++
         } catch (error) {
           // A clip that cannot be measured is a clip that was never finished
@@ -273,7 +291,7 @@ export function createRenderService(
         }
       }
       if (unreadable.length > 0) {
-        forgetClips(db, await sweep(userDataDir, unreadable))
+        forgetClips(db, await clips.remove(unreadable))
       }
       console.log(`[speech] recovered the length of ${measured} clip(s) already on disk`)
       return measured
@@ -297,9 +315,9 @@ export function createRenderService(
       if (isLive()) throw new Error('Cannot delete recordings while a Live session is running')
       if (rendering) throw new Error('Cannot delete recordings while a render is running')
 
-      const cached = await listCachedHashes(userDataDir)
+      const cached = await clips.hashes()
       const hashes = clipsOnlyUsedBy(db, projectId, cached)
-      const gone = await sweep(userDataDir, hashes, (hash, error) =>
+      const gone = await clips.remove(hashes, (hash, error) =>
         console.error('[speech] could not delete', hash, messageOf(error)),
       )
       forgetClips(db, gone)

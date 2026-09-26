@@ -29,8 +29,12 @@ export const CLIP_EXTENSION = '.wav'
  * A hash is a filename, and it arrives from the database, so it is checked
  * rather than trusted: anything but lowercase hex could escape the cache
  * directory or clobber a file that is not ours.
+ *
+ * Exported so the rule itself can be asserted on: every path this module builds
+ * goes through it, and a `..` slipping past it is the one bug here that would
+ * reach outside the cache.
  */
-const HASH_PATTERN = /^[0-9a-f]{8,64}$/
+export const HASH_PATTERN = /^[0-9a-f]{8,64}$/
 
 function assertHash(hash: string): void {
   if (!HASH_PATTERN.test(hash)) {
