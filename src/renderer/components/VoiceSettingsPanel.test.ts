@@ -10,6 +10,9 @@ import {
   summarizeRenderStates,
   parseDelayInput,
   renderingHeadline,
+  markLoopbackDevices,
+  suggestLoopbackDevice,
+  LOOPBACK_SUFFIX,
 } from './VoiceSettingsPanel'
 import { TRANSMISSION_DELAY_MAX_MS, TRANSMISSION_DELAY_MIN_MS } from '../../shared/announcement'
 import type { PartRenderState, RenderState } from '../../shared/ipc-contract'
@@ -246,5 +249,53 @@ describe('renderingHeadline — stages', () => {
 
   it('goes back to the count once the stage is over', () => {
     expect(renderingHeadline({ completed: 3, total: 62 })).toBe('Rendering 3/62...')
+  })
+})
+
+describe('markLoopbackDevices', () => {
+  const devices = [
+    { deviceId: 'a', label: 'MacBook Pro Speakers' },
+    { deviceId: 'b', label: 'BlackHole 2ch' },
+    { deviceId: 'c', label: 'Shotlister Out' },
+  ]
+
+  it('marks the devices a platform hint matches, case insensitively', () => {
+    const marked = markLoopbackDevices(devices, ['blackhole'])
+    expect(marked.map((d) => d.label)).toEqual([
+      'MacBook Pro Speakers',
+      `BlackHole 2ch${LOOPBACK_SUFFIX}`,
+      'Shotlister Out',
+    ])
+  })
+
+  it('leaves every device selectable, marked or not', () => {
+    // The mark is a hint. An operator whose cable is called something else must
+    // still be able to choose it.
+    const marked = markLoopbackDevices(devices, ['shotlister out'])
+    expect(marked).toHaveLength(devices.length)
+    expect(marked.map((d) => d.deviceId)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('marks nothing when the platform has no hints, and ignores an empty one', () => {
+    expect(markLoopbackDevices(devices, [])).toEqual(devices)
+    // An empty hint is a substring of every label; it must not mark them all.
+    expect(markLoopbackDevices(devices, [''])).toEqual(devices)
+  })
+})
+
+describe('suggestLoopbackDevice', () => {
+  it('offers the first marked device', () => {
+    const marked = markLoopbackDevices(
+      [
+        { deviceId: 'a', label: 'Speakers' },
+        { deviceId: 'b', label: 'CABLE Input (VB-Audio Virtual Cable)' },
+      ],
+      ['cable input'],
+    )
+    expect(suggestLoopbackDevice(marked)?.deviceId).toBe('b')
+  })
+
+  it('offers nothing when no device looks like a loopback', () => {
+    expect(suggestLoopbackDevice([{ deviceId: 'a', label: 'Speakers' }])).toBeNull()
   })
 })

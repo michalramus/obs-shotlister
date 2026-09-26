@@ -1,12 +1,15 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAppStore } from '../store'
 import type {
+  AudioDeviceSettings,
   GlobalVoiceSettings,
   PartRenderState,
   PhrasePlacement,
   ProjectVoiceSettings,
   RenderState,
+  VirtualOutputState,
 } from '../../shared/ipc-contract'
+import { toMediaUrl } from '../../shared/media-url'
 import { NUMBER_CLIP_MAX, NUMBER_CLIP_MIN } from '../../shared/number-text'
 import { TRANSMISSION_DELAY_MAX_MS, TRANSMISSION_DELAY_MIN_MS } from '../../shared/announcement'
 
@@ -610,7 +613,7 @@ function OutputDevicesSection(): React.JSX.Element {
     }
   }
 
-  function save(patch: { cueSinkId?: string | null; announcementSinkId?: string | null }): void {
+  function save(patch: Partial<AudioDeviceSettings>): void {
     saveAudioDevices({ ...audioDevices, ...patch }).catch((err: unknown) =>
       setError(err instanceof Error ? err.message : 'Could not save the device.'),
     )
@@ -645,6 +648,8 @@ function OutputDevicesSection(): React.JSX.Element {
 
       <TransmissionDelayField onError={setError} />
 
+      <IntercomSection devices={devices} onSave={save} onError={setError} onRefresh={refresh} />
+
       {labelsHidden && (
         <p style={s.hint}>
           Device names are hidden until microphone permission is granted.{' '}
@@ -657,6 +662,187 @@ function OutputDevicesSection(): React.JSX.Element {
         </p>
       )}
       {error !== null && <p style={s.errorText}>{error}</p>}
+    </div>
+  )
+}
+
+/** Suffix marking a device the platform's loopback names matched. */
+export const LOOPBACK_SUFFIX = ' — loopback'
+
+/**
+ * Marks the devices whose name says they loop back.
+ *
+ * Matching on the name is the only option a renderer has: the device list carries
+ * no "this is virtual" flag, and the device ids are opaque. It is a hint, not a
+ * gate — every device stays selectable, because a cable somebody named themselves
+ * is still a valid Intercom output.
+ */
+export function markLoopbackDevices(
+  devices: OutputDevice[],
+  hints: readonly string[],
+): OutputDevice[] {
+  return devices.map((device) => {
+    const label = device.label.toLowerCase()
+    const isLoopback = hints.some((hint) => hint !== '' && label.includes(hint))
+    return isLoopback ? { ...device, label: `${device.label}${LOOPBACK_SUFFIX}` } : device
+  })
+}
+
+/** The first marked device, for the "use this one" shortcut. Null when none is. */
+export function suggestLoopbackDevice(marked: OutputDevice[]): OutputDevice | null {
+  return marked.find((device) => device.label.endsWith(LOOPBACK_SUFFIX)) ?? null
+}
+
+interface IntercomSectionProps {
+  devices: OutputDevice[]
+  onSave: (patch: Partial<AudioDeviceSettings>) => void
+  onError: (message: string) => void
+  /** Re-enumerates devices: a sink created just now is not in the list yet. */
+  onRefresh: () => Promise<void>
+}
+
+/**
+ * The Intercom output: one more destination for everything the show produces, so
+ * a voice-chat client on this machine can carry it to the intercom.
+ *
+ * The section says out loud where the device comes from, because that differs by
+ * platform and the operator cannot be expected to know (ADR 0008): on Linux the
+ * app makes it, elsewhere they install one and this only finds it.
+ */
+function IntercomSection({
+  devices,
+  onSave,
+  onError,
+  onRefresh,
+}: IntercomSectionProps): React.JSX.Element {
+  const audioDevices = useAppStore((st) => st.audioDevices)
+  const [virtual, setVirtual] = useState<VirtualOutputState | null>(null)
+  const [hints, setHints] = useState<string[]>([])
+  const [busy, setBusy] = useState(false)
+
+  const readState = useCallback(async (): Promise<void> => {
+    try {
+      const [state, loopbackHints] = await Promise.all([
+        window.api.audioDevices.virtualState(),
+        window.api.audioDevices.loopbackHints(),
+      ])
+      setVirtual(state)
+      setHints(loopbackHints)
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Could not read the virtual output.')
+    }
+  }, [onError])
+
+  useEffect(() => {
+    void readState()
+  }, [readState])
+
+  /** Devices whose name says they loop back, marked so they can be picked out. */
+  const marked = useMemo(() => markLoopbackDevices(devices, hints), [devices, hints])
+  const suggestion = useMemo(() => suggestLoopbackDevice(marked), [marked])
+
+  async function handleCreate(): Promise<void> {
+    setBusy(true)
+    try {
+      const state = await window.api.audioDevices.ensureVirtual()
+      setVirtual(state)
+      // The new sink is not in a device list enumerated before it existed.
+      await onRefresh()
+    } catch (err) {
+      onError(err instanceof Error ? err.message : 'Could not create the virtual output.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function handleTest(): void {
+    if (audioDevices.intercomSinkId === null) return
+    const sinkId = audioDevices.intercomSinkId
+    window.api.assets
+      .getAudioDir()
+      .then(async (dir) => {
+        const audio = new Audio(`${toMediaUrl(dir)}/beep.opus`) as HTMLAudioElement & {
+          setSinkId?: (id: string) => Promise<void>
+        }
+        // Routed before playing, and the failure is reported rather than swallowed:
+        // proving the route is the entire point of the button.
+        if (typeof audio.setSinkId === 'function') await audio.setSinkId(sinkId)
+        await audio.play()
+      })
+      .catch((err: unknown) =>
+        onError(err instanceof Error ? err.message : 'Could not play the test beep.'),
+      )
+  }
+
+  return (
+    <div style={{ marginTop: '16px', borderTop: '1px solid #333', paddingTop: '12px' }}>
+      <p style={s.sectionTitle}>Intercom output</p>
+
+      <div style={s.toggleRow}>
+        <button
+          style={s.toggleTrack(audioDevices.intercomEnabled)}
+          onClick={() => onSave({ intercomEnabled: !audioDevices.intercomEnabled })}
+          aria-label={
+            audioDevices.intercomEnabled ? 'Disable intercom output' : 'Enable intercom output'
+          }
+        >
+          <span style={s.toggleThumb(audioDevices.intercomEnabled)} />
+        </button>
+        <span>Also send cues and announcements to an intercom</span>
+      </div>
+      <p style={s.hint}>
+        A copy of every cue and announcement plays on the device below, so a voice-chat client can
+        carry it to the intercom. Nothing is taken away from your own speakers.
+      </p>
+
+      {virtual !== null && (
+        <p style={s.hint}>
+          {virtual.present && virtual.monitorLabel !== null
+            ? `${virtual.label} is running. Select “${virtual.monitorLabel}” as the input in your intercom client.`
+            : (virtual.guidance ?? '')}
+          {virtual.creatable && !virtual.present && (
+            <>
+              {' '}
+              <button
+                style={{ ...s.smallBtn, padding: '2px 6px' }}
+                onClick={() => void handleCreate()}
+                disabled={busy}
+              >
+                Create Shotlister Out
+              </button>
+            </>
+          )}
+        </p>
+      )}
+
+      <OutputDeviceSelect
+        id="voice-intercom-sink"
+        title="Intercom device"
+        hint="The loopback device your intercom client records from."
+        devices={marked}
+        selectedId={audioDevices.intercomSinkId}
+        onChange={(sinkId) => onSave({ intercomSinkId: sinkId })}
+      />
+
+      <div style={s.fieldRow}>
+        <button
+          style={s.smallBtn}
+          onClick={handleTest}
+          disabled={audioDevices.intercomSinkId === null}
+          title="Play one beep on the intercom device only"
+        >
+          Test
+        </button>
+        {suggestion !== null && audioDevices.intercomSinkId !== suggestion.deviceId && (
+          <button
+            style={s.smallBtn}
+            onClick={() => onSave({ intercomSinkId: suggestion.deviceId })}
+            title={suggestion.label}
+          >
+            Use the loopback device
+          </button>
+        )}
+      </div>
     </div>
   )
 }
