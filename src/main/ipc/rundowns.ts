@@ -10,6 +10,7 @@
 import Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
 import type { Rundown, RundownKind } from '../../shared/types'
+import { targetColumnOf } from '../db/rundown-items'
 
 // ---------------------------------------------------------------------------
 // Row shapes returned from better-sqlite3
@@ -171,7 +172,7 @@ export function unassignedItemCount(db: Database.Database, rundownId: string): n
     throw new Error(`Rundown not found: ${rundownId}`)
   }
 
-  const column = rundown.kind === 'voice' ? 'part_id' : 'camera_id'
+  const column = targetColumnOf(rundown.kind)
   const row = db
     .prepare(`SELECT COUNT(*) AS count FROM shots WHERE rundown_id = ? AND ${column} IS NULL`)
     .get(rundownId) as { count: number }

@@ -1,6 +1,12 @@
+// Import reads whatever JSON the operator hands over: every table's rows arrive
+// untyped here, so the payloads and the per-table row objects stay `any`. Items
+// are the exception — they go through src/main/db/rundown-items.ts, which knows
+// the columns.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { randomUUID } from 'crypto'
 import type Database from 'better-sqlite3'
+import { allItemRows, insertItem, listItemRows } from '../db/rundown-items'
+import type { ImportedItemRow, NewRundownItem } from '../db/rundown-items'
 
 // --- Export ---
 
@@ -13,9 +19,7 @@ export function exportProject(db: Database.Database, projectId: string): object 
     .all(projectId)
   const rundownsWithShots = rundowns.map((r: any) => ({
     ...r,
-    shots: db
-      .prepare('SELECT * FROM shots WHERE rundown_id = ? ORDER BY order_index ASC')
-      .all(r.id),
+    shots: listItemRows(db, r.id),
     markers: db
       .prepare('SELECT * FROM markers WHERE rundown_id = ? ORDER BY position_ms ASC')
       .all(r.id),
@@ -32,9 +36,7 @@ export function exportProject(db: Database.Database, projectId: string): object 
 export function exportRundown(db: Database.Database, rundownId: string): object {
   const rundown = db.prepare('SELECT * FROM rundowns WHERE id = ?').get(rundownId)
   if (!rundown) throw new Error(`Rundown ${rundownId} not found`)
-  const shots = db
-    .prepare('SELECT * FROM shots WHERE rundown_id = ? ORDER BY order_index ASC')
-    .all(rundownId)
+  const shots = listItemRows(db, rundownId)
   const markers = db
     .prepare('SELECT * FROM markers WHERE rundown_id = ? ORDER BY position_ms ASC')
     .all(rundownId)
@@ -60,7 +62,7 @@ export function exportDatabase(db: Database.Database): object {
   const rundowns = db
     .prepare('SELECT * FROM rundowns ORDER BY order_index ASC, created_at ASC')
     .all()
-  const shots = db.prepare('SELECT * FROM shots ORDER BY order_index ASC').all()
+  const shots = allItemRows(db)
   const markers = db.prepare('SELECT * FROM markers ORDER BY position_ms ASC').all()
   const parts = db.prepare('SELECT * FROM parts ORDER BY number ASC').all()
   const lyrics = db.prepare('SELECT * FROM lyrics ORDER BY start_ms ASC').all()
@@ -142,19 +144,12 @@ export function importProject(db: Database.Database, data: any): string {
   for (const rd of data.rundowns ?? []) {
     const rundownId = rundownIdMap.get(rd.id) as string
     for (const shot of rd.shots ?? []) {
-      db.prepare(
-        'INSERT INTO shots (id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      ).run(
-        randomUUID(),
+      insertItem(db, {
+        ...itemFieldsFrom(shot),
         rundownId,
-        shot.camera_id ? (cameraIdMap.get(shot.camera_id) ?? shot.camera_id) : null,
-        shot.part_id ? (partIdMap.get(shot.part_id) ?? null) : null,
-        shot.duration_ms,
-        shot.label ?? null,
-        shot.order_index,
-        shot.transition_name ?? null,
-        shot.transition_ms ?? 0,
-      )
+        cameraId: shot.camera_id ? (cameraIdMap.get(shot.camera_id) ?? shot.camera_id) : null,
+        partId: shot.part_id ? (partIdMap.get(shot.part_id) ?? null) : null,
+      })
     }
     for (const marker of rd.markers ?? []) {
       db.prepare(
@@ -168,6 +163,26 @@ export function importProject(db: Database.Database, data: any): string {
     }
   }
   return projectId
+}
+
+/**
+ * An exported item row read back as fields for {@link insertItem}.
+ *
+ * Whatever the row does not carry gets the same default the live writers use,
+ * and the caller overrides only what an import has to remap — the Rundown and
+ * the targets. Adding a column reaches every import path through here.
+ */
+function itemFieldsFrom(shot: ImportedItemRow): NewRundownItem {
+  return {
+    rundownId: shot.rundown_id as string,
+    cameraId: shot.camera_id ?? null,
+    partId: shot.part_id ?? null,
+    durationMs: shot.duration_ms as number,
+    label: shot.label ?? null,
+    orderIndex: shot.order_index as number,
+    transitionName: shot.transition_name ?? null,
+    transitionMs: shot.transition_ms ?? 0,
+  }
 }
 
 /**
@@ -248,19 +263,12 @@ export function importRundown(db: Database.Database, projectId: string, data: an
     const targetCameraId = importedCam
       ? (camByNumber.get(importedCam.number) ?? shot.camera_id)
       : shot.camera_id
-    db.prepare(
-      'INSERT INTO shots (id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).run(
-      randomUUID(),
+    insertItem(db, {
+      ...itemFieldsFrom(shot),
       rundownId,
-      shot.camera_id ? targetCameraId : null,
-      shot.part_id ? (partIdMap.get(shot.part_id) ?? null) : null,
-      shot.duration_ms,
-      shot.label ?? null,
-      shot.order_index,
-      shot.transition_name ?? null,
-      shot.transition_ms ?? 0,
-    )
+      cameraId: shot.camera_id ? targetCameraId : null,
+      partId: shot.part_id ? (partIdMap.get(shot.part_id) ?? null) : null,
+    })
   }
   for (const marker of data.markers ?? []) {
     db.prepare('INSERT INTO markers (id, rundown_id, position_ms, label) VALUES (?, ?, ?, ?)').run(
@@ -338,19 +346,9 @@ export function importDatabase(db: Database.Database, data: any): void {
       )
     }
     for (const s of data.shots ?? []) {
-      db.prepare(
-        'INSERT INTO shots (id, rundown_id, camera_id, part_id, duration_ms, label, order_index, transition_name, transition_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      ).run(
-        s.id,
-        s.rundown_id,
-        s.camera_id ?? null,
-        s.part_id ?? null,
-        s.duration_ms,
-        s.label ?? null,
-        s.order_index,
-        s.transition_name ?? null,
-        s.transition_ms ?? 0,
-      )
+      // Ids are preserved wholesale in a whole-database restore, so the item
+      // keeps its own id and Rundown rather than being remapped.
+      insertItem(db, { ...itemFieldsFrom(s), id: s.id, rundownId: s.rundown_id })
     }
     for (const l of data.lyrics ?? []) {
       db.prepare(

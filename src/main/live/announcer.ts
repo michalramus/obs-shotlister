@@ -21,6 +21,7 @@ import type { AnnouncementPlan } from '../../shared/ipc-contract'
 import { type AnnouncementClip, scheduleAnnouncement } from '../../shared/announcement'
 import { ENGINE_ID, clipHash, partClipHash } from '../../shared/render-plan'
 import { numberTexts } from '../../shared/number-text'
+import { targetIdOf } from '../../shared/rundown-item'
 import { toMediaUrl } from '../../shared/media-url'
 import { getEffectiveVoiceSettings } from '../ipc/settings'
 import { getPart } from '../ipc/parts'
@@ -70,9 +71,13 @@ export function createAnnouncementBuilder(
       try {
         // An unassigned Call cannot be announced. A Live session refuses to
         // start on one, so this only ever sees a Rundown edited underneath it.
-        if (!call.partId) return null
+        // The target is resolved for the Voice-over Kind rather than read off
+        // `partId` directly, so this asks the same question every other reader
+        // does.
+        const partId = targetIdOf(call, 'voice')
+        if (!partId) return null
 
-        const part = getPart(db, call.partId)
+        const part = getPart(db, partId)
         if (!part) return null
 
         const settings = getEffectiveVoiceSettings(db, part.projectId)

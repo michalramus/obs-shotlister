@@ -59,13 +59,24 @@ export function targetsOf(kind: RundownKind, cameras: Camera[], parts: Part[]): 
 }
 
 /**
+ * Which field of an item its Rundown's Kind assigns through.
+ *
+ * The single Kind-to-target decision. `src/main/db/rundown-items.ts` turns the
+ * answer into a column name for queries, so a view and a query can never
+ * disagree about which target counts.
+ */
+export function targetFieldOf(kind: RundownKind): 'cameraId' | 'partId' {
+  return kind === 'voice' ? 'partId' : 'cameraId'
+}
+
+/**
  * The id this item is assigned to under its Rundown's Kind.
  *
  * The other column may well be filled — both survive a conversion — and reading
  * it would put a Camera on air during a Voice-over Rundown.
  */
 export function targetIdOf(item: Shot, kind: RundownKind): string | null {
-  return kind === 'voice' ? item.partId : item.cameraId
+  return item[targetFieldOf(kind)]
 }
 
 /** True when the item has no target for its Rundown's Kind. */

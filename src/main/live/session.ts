@@ -114,6 +114,15 @@ export function createLiveSession(
       .get() as LiveStateRow
   }
 
+  /**
+   * The three facts the Live queue is built from, and only those.
+   *
+   * Deliberately not `listItems`: a queue is rebuilt on every start, restart and
+   * Rundown switch, and it needs an id, a position and a duration — not a
+   * target, a label or a Transition. The stored row is owned by
+   * src/main/db/rundown-items.ts; this is a projection over it, and
+   * {@link LiveQueueEntry} is this shape plus a hidden flag.
+   */
   function queueShots(rundownId: string): QueueShotRow[] {
     return db
       .prepare(
