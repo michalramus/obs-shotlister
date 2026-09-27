@@ -197,35 +197,44 @@ export function LiveControls(): React.JSX.Element {
               ▶ Start
             </button>
             {errorNotice}
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
-                fontSize: '12px',
-                color: '#aaa',
-                cursor: 'pointer',
-                userSelect: 'none',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={previewFirst}
-                onChange={(e) => {
-                  const v = e.target.checked
-                  setPreviewFirst(v)
-                  try {
-                    localStorage.setItem('obs-queuer-preview-first', String(v))
-                  } catch {
-                    /* ignore */
-                  }
-                  window.api.live
-                    .savePreviewFirst(v)
-                    .catch((err: unknown) => console.error('[LiveControls] savePreviewFirst:', err))
+            {/*
+              Preview-first loads the opening Shot's scene into OBS preview when a
+              Rundown is opened. A Voice-over Rundown never reaches OBS, so the
+              choice does not exist there and the control must not either.
+            */}
+            {rundownKind === 'camera' && (
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  fontSize: '12px',
+                  color: '#aaa',
+                  cursor: 'pointer',
+                  userSelect: 'none',
                 }}
-              />
-              Preview first
-            </label>
+              >
+                <input
+                  type="checkbox"
+                  checked={previewFirst}
+                  onChange={(e) => {
+                    const v = e.target.checked
+                    setPreviewFirst(v)
+                    try {
+                      localStorage.setItem('obs-queuer-preview-first', String(v))
+                    } catch {
+                      /* ignore */
+                    }
+                    window.api.live
+                      .savePreviewFirst(v)
+                      .catch((err: unknown) =>
+                        console.error('[LiveControls] savePreviewFirst:', err),
+                      )
+                  }}
+                />
+                Preview first
+              </label>
+            )}
           </>
         )}
       </div>
