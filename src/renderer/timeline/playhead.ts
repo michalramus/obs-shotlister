@@ -51,7 +51,10 @@ import { msAtPx, pxAtMs } from './coordinates'
  * ------------------------------------------------------------------ */
 
 export interface MediaClock {
-  /** Media position in seconds, or null when there is no Reference media. */
+  /**
+   * Media position in seconds, or null when there is no clock to follow: no
+   * Reference media, or media that cannot report where it is.
+   */
   currentTimeSec: number | null
   /** Where the media sits on the timeline, in milliseconds. */
   offsetMs: number
@@ -73,6 +76,12 @@ export interface EditPlaybackInput {
  * it means zero drift against the audio the operator is cutting to. Before the
  * media starts, its clock is pinned at zero and would not advance, so the wall
  * clock takes over.
+ *
+ * Which makes `currentTimeSec` null the host's only way to say "do not follow
+ * this": media that cannot play reports a position of zero for as long as it is
+ * attached, and following that pins the Playhead to the media offset forever. The
+ * host decides when its media is in that state — this module cannot tell, and
+ * must not try, because it is a DOM question.
  */
 export function editPlayheadMs({ origin, nowMs, media, totalMs }: EditPlaybackInput): number {
   if (media?.currentTimeSec != null) {
@@ -202,7 +211,12 @@ export interface PlayheadTargets {
  * is in play is the host's business.
  */
 export interface PlayheadMedia {
-  /** Media position in seconds, or null when there is no media or it has no time yet. */
+  /**
+   * Media position in seconds, or null when there is no media, it has no time
+   * yet, or it cannot play at all — a file that has been moved or deleted since
+   * the Rundown was saved. Null is what stops the loop following a clock stuck at
+   * zero; see `editPlayheadMs`.
+   */
   currentTimeSec: () => number | null
   /** Where the media sits on the timeline, or null when none is attached. */
   offsetMs: () => number | null

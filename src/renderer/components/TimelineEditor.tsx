@@ -640,7 +640,11 @@ export function TimelineEditor({
         scroller: () => scrollContainerRef.current,
       },
       media: {
-        currentTimeSec: () => getMediaEl()?.currentTime ?? null,
+        // Null while the element cannot report a position — see
+        // `playableMediaEl`. The offset below stays as it is: a seek issued at a
+        // still-loading element is applied once it loads, so losing it would be a
+        // worse trade than a Playhead that keeps moving on the wall clock.
+        currentTimeSec: () => playableMediaEl()?.currentTime ?? null,
         // Null unless there is both a file on the timeline and an element playing
         // it: a media clock the module can see but not drive would freeze the
         // playhead at the offset.
@@ -804,6 +808,33 @@ export function TimelineEditor({
 
   function getMediaEl(): HTMLVideoElement | HTMLAudioElement | null {
     return (mediaVideoRef.current as HTMLVideoElement | null) ?? audioPlayRef.current
+  }
+
+  /**
+   * The Reference media element, but only while its clock is worth following.
+   *
+   * An element that cannot play still reports `currentTime` 0 forever, and
+   * `editPlayheadMs` treats any media clock as authoritative, so the Playhead
+   * would sit at the media offset for the whole of playback instead of moving —
+   * the freeze the operator sees when a Rundown's video file has been moved or
+   * deleted. `App` mounts a `<video>` for any video-extension path without
+   * checking that the file is there, which is why this is the video case only:
+   * the `Audio` element for a bare audio file is built after
+   * `window.api.mediaFileExists`, so an audio path that is gone never produces an
+   * element at all.
+   *
+   * Reporting no clock here hands the Playhead to the wall clock, which is
+   * exactly what it does with no Reference media attached. `readyState` covers
+   * the case as well as `error` because a missing file reports nothing loaded for
+   * as long as it takes the network error to arrive, and because that is also the
+   * state a media element is in between `play()` and its first frame.
+   */
+  function playableMediaEl(): HTMLVideoElement | HTMLAudioElement | null {
+    const el = getMediaEl()
+    if (el === null) return null
+    if (el.error !== null) return null
+    if (el.readyState === HTMLMediaElement.HAVE_NOTHING) return null
+    return el
   }
 
   function zoomIn(): void {
