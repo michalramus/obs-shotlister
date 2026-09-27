@@ -161,6 +161,21 @@ export function summarizeRenderStates(parts: PartRenderState[]): RenderSummary {
   return { total, rendered, stale, missing, unrendered, headline }
 }
 
+/** How many Parts the collapsed per-Part list shows. */
+export const RENDER_ROWS_COLLAPSED = 5
+
+/**
+ * The Part rows the per-Part table shows.
+ *
+ * A Project can hold dozens of Parts, and the whole list pushes the render and
+ * cache buttons off the panel — so the list is a footnote until the operator
+ * asks for it. The stored order is kept either way: the operator recognises the
+ * list by it, and the headline already carries the counts that matter.
+ */
+export function visibleRenderRows(parts: PartRenderState[], expanded: boolean): PartRenderState[] {
+  return expanded ? parts : parts.slice(0, RENDER_ROWS_COLLAPSED)
+}
+
 // ---------------------------------------------------------------------------
 // Output devices
 // ---------------------------------------------------------------------------
@@ -440,6 +455,16 @@ const s = {
     verticalAlign: 'middle' as const,
     borderBottom: '1px solid #2a2a2a',
     color: '#ddd',
+  } satisfies React.CSSProperties,
+
+  expandBtn: {
+    padding: '4px 0',
+    marginTop: '6px',
+    border: 'none',
+    background: 'none',
+    color: '#888',
+    fontSize: '12px',
+    cursor: 'pointer',
   } satisfies React.CSSProperties,
 
   stateBadge: (state: RenderState): React.CSSProperties => ({
@@ -882,6 +907,7 @@ function RenderStateSection({ projectId }: RenderStateSectionProps): React.JSX.E
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [partsExpanded, setPartsExpanded] = useState(false)
 
   const parts = renderSummary?.parts ?? []
   const summary = summarizeRenderStates(parts)
@@ -1005,24 +1031,40 @@ function RenderStateSection({ projectId }: RenderStateSectionProps): React.JSX.E
       {note !== null && <p style={s.noteText}>{note}</p>}
 
       {parts.length > 0 && (
-        <table style={s.table}>
-          <thead>
-            <tr>
-              <th style={s.th}>Part</th>
-              <th style={s.th}>Audio</th>
-            </tr>
-          </thead>
-          <tbody>
-            {parts.map((part) => (
-              <tr key={part.partId}>
-                <td style={s.td}>{part.name}</td>
-                <td style={s.td}>
-                  <span style={s.stateBadge(part.state)}>{RENDER_STATE_LABEL[part.state]}</span>
-                </td>
+        <>
+          <table style={s.table}>
+            <thead>
+              <tr>
+                <th style={s.th}>Part</th>
+                <th style={s.th}>Audio</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {visibleRenderRows(parts, partsExpanded).map((part) => (
+                <tr key={part.partId}>
+                  <td style={s.td}>{part.name}</td>
+                  <td style={s.td}>
+                    <span style={s.stateBadge(part.state)}>{RENDER_STATE_LABEL[part.state]}</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {parts.length > RENDER_ROWS_COLLAPSED && (
+            <button
+              style={s.expandBtn}
+              onClick={() => setPartsExpanded((on) => !on)}
+              aria-expanded={partsExpanded}
+              aria-label={
+                partsExpanded
+                  ? `Show only the first ${RENDER_ROWS_COLLAPSED} parts`
+                  : `Show all ${parts.length} parts`
+              }
+            >
+              {partsExpanded ? '▾ Show less' : `▸ Show all ${parts.length}`}
+            </button>
+          )}
+        </>
       )}
     </div>
   )

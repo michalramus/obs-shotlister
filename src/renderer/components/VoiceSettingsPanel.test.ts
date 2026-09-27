@@ -8,6 +8,8 @@ import {
   formatCountdown,
   parseCountdownInput,
   summarizeRenderStates,
+  visibleRenderRows,
+  RENDER_ROWS_COLLAPSED,
   parseDelayInput,
   renderingHeadline,
   markLoopbackDevices,
@@ -297,5 +299,43 @@ describe('suggestLoopbackDevice', () => {
 
   it('offers nothing when no device looks like a loopback', () => {
     expect(suggestLoopbackDevice([{ deviceId: 'a', label: 'Speakers' }])).toBeNull()
+  })
+})
+
+describe('visibleRenderRows', () => {
+  const parts = Array.from({ length: 8 }, (_, i) => part(`p${i}`, 'rendered'))
+
+  it('shows only the first five while collapsed', () => {
+    const rows = visibleRenderRows(parts, false)
+    expect(rows).toHaveLength(RENDER_ROWS_COLLAPSED)
+    expect(rows.map((p) => p.name)).toEqual(['p0', 'p1', 'p2', 'p3', 'p4'])
+  })
+
+  it('shows every part once expanded', () => {
+    expect(visibleRenderRows(parts, true)).toEqual(parts)
+  })
+
+  it('keeps the stored order rather than sorting by render state', () => {
+    // The operator recognises the list by its order; the counts in the headline
+    // already say how much is unrendered.
+    const mixed = [
+      part('a', 'rendered'),
+      part('b', 'missing'),
+      part('c', 'stale'),
+      part('d', 'rendered'),
+      part('e', 'missing'),
+      part('f', 'stale'),
+    ]
+    expect(visibleRenderRows(mixed, false).map((p) => p.name)).toEqual(['a', 'b', 'c', 'd', 'e'])
+  })
+
+  it('shows a short list whole either way, so no toggle is needed', () => {
+    const few = parts.slice(0, RENDER_ROWS_COLLAPSED)
+    expect(visibleRenderRows(few, false)).toEqual(few)
+    expect(visibleRenderRows(few, true)).toEqual(few)
+  })
+
+  it('handles no parts at all', () => {
+    expect(visibleRenderRows([], false)).toEqual([])
   })
 })
