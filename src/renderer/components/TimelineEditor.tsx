@@ -915,6 +915,9 @@ export function TimelineEditor({
   }
 
   function handleCamButtonClick(camera: Camera): void {
+    // Splitting is an edit. The buttons are disabled during a Live session and the
+    // number keys already checked; this covers both callers at once.
+    if (running) return
     const positionMs = playhead.positionMs()
     let accumulated = 0
     for (const shot of shotsRef.current) {
@@ -938,6 +941,9 @@ export function TimelineEditor({
    * is the Shot code path untouched.
    */
   function assignPartAtPlayhead(part: Part): void {
+    // Reached from the Part buttons, the Part picker, the add-Part dialog and a
+    // key press. All four write, so the refusal lives here rather than four times.
+    if (running) return
     const positionMs = playhead.positionMs()
     let accumulated = 0
     for (const shot of shotsRef.current) {
@@ -1047,7 +1053,12 @@ export function TimelineEditor({
   itemLaneCallbacksRef.current = {
     onTrackClick: (e) => handleTrackClick(e as React.MouseEvent<HTMLDivElement>),
     onBlockClick: (e, shotId) => handleBlockClick(e, shotId),
-    onOpenContextMenu: (x, y, shotId) => setContextMenu({ x, y, shotId }),
+    // Every item on the menu deletes or retargets a Shot, so during a Live
+    // session it does not open at all — an empty menu would only invite a click.
+    onOpenContextMenu: (x, y, shotId) => {
+      if (running) return
+      setContextMenu({ x, y, shotId })
+    },
     onBoundaryMouseDown: (e, shot, nextShot) => handleBoundaryMouseDown(e, shot, nextShot),
     onExtendMouseDown: (e, shot, durationMs) => handleExtendMouseDown(e, shot, durationMs),
   }
@@ -1072,8 +1083,16 @@ export function TimelineEditor({
   })
   mediaLaneCallbacksRef.current = {
     onTrackMouseDown: (e) => handleMediaTrackMouseDown(e as React.MouseEvent<HTMLDivElement>),
-    onImportMedia,
-    onClearMedia,
+    // Attaching and clearing Reference media both change the Rundown, so both are
+    // refused during a Live session as well as hidden by the lane.
+    onImportMedia: () => {
+      if (running) return
+      onImportMedia()
+    },
+    onClearMedia: () => {
+      if (running) return
+      onClearMedia()
+    },
   }
   const mediaLaneHandlers = useMemo(
     () => ({
@@ -1102,9 +1121,17 @@ export function TimelineEditor({
       dispatchLyric({ type: 'clearSelection' })
       handleTrackClick(e)
     },
+    // Selecting a line is navigation and stays; re-wording and deleting one are
+    // writes, so they go the way of the edge handles the lane already hides.
     onSelect: (id) => dispatchLyric({ type: 'select', id }),
-    onReword: (id) => dispatchLyric({ type: 'reword', id }),
-    onDelete: (id) => deleteLyric(id),
+    onReword: (id) => {
+      if (running) return
+      dispatchLyric({ type: 'reword', id })
+    },
+    onDelete: (id) => {
+      if (running) return
+      deleteLyric(id)
+    },
     onEdgeMouseDown: (e, id, edge) => beginLyricResize(e, id, edge),
     onDraftChange: (text) => dispatchLyric({ type: 'type', text }),
     onDraftCommit: () => dispatchLyric({ type: 'commit' }),
@@ -1133,8 +1160,17 @@ export function TimelineEditor({
   markerLaneCallbacksRef.current = {
     onMarkerMouseDown: (e, marker) => handleMarkerMouseDown(e, marker),
     onTrackDoubleClick: (e) => handleMarkerTrackDblClick(e),
-    onUpdateMarker,
-    onDeleteMarker,
+    // Refused here as well as hidden in the lane. The `running` prop is what the
+    // operator sees; these two are what makes the rule true, so a future caller
+    // that forgets the prop still cannot write a Marker during a Live session.
+    onUpdateMarker: (id: string, positionMs: number, label?: string | null) => {
+      if (running) return
+      onUpdateMarker(id, positionMs, label)
+    },
+    onDeleteMarker: (id: string) => {
+      if (running) return
+      onDeleteMarker(id)
+    },
   }
   const markerLaneHandlers = useMemo(
     () => ({
@@ -1177,8 +1213,15 @@ export function TimelineEditor({
    * Release is treated as one more pointer reading, so the clamp that drew the
    * preview is the same call that produces the committed value. That is the point:
    * the boundary drag used to clamp twice, in two spellings, and they disagreed.
+   *
+   * It is also where a Live session's edit lock is enforced, for the same reason:
+   * every grab passes through here, so one refusal covers all of them and a grab
+   * added later cannot slip past by forgetting to ask. The refusal is fail-safe —
+   * a grab runs during a Live session only if it declares itself `viewOnly`,
+   * which only the Playhead scrub does.
    */
   function beginGrab<P>(e: React.MouseEvent, spec: GrabSpec<P>): void {
+    if (running && spec.viewOnly !== true) return
     e.preventDefault()
     e.stopPropagation()
     const startX = e.clientX
@@ -1247,6 +1290,9 @@ export function TimelineEditor({
   }
 
   function handleMarkerTrackDblClick(e: React.MouseEvent<HTMLDivElement>): void {
+    // Adding a Marker is an edit. The lane also stops offering it while a Live
+    // session runs; this is the half that holds whatever the lane was told.
+    if (running) return
     const rect = e.currentTarget.getBoundingClientRect()
     // Markers may sit past the last shot, so they are not clamped to totalMs.
     const posMs = Math.round(
@@ -1289,6 +1335,9 @@ export function TimelineEditor({
       // where, and the Playhead module is what gets told, so it can seek the
       // Reference media and pull the view along as it does for every other jump.
       preview: ({ positionMs }) => placePlayhead(positionMs),
+      // Nothing to store is also why this is the one grab allowed during a Live
+      // session: an operator looking ahead mid-show changes no Rundown.
+      viewOnly: true,
     })
   }
 
@@ -1690,6 +1739,7 @@ export function TimelineEditor({
             zoomPxPerSec={zoomPxPerSec}
             width={totalPx}
             height={MARKER_ROW_HEIGHT}
+            running={running}
             onMarkerMouseDown={markerLaneHandlers.onMarkerMouseDown}
             onUpdateMarker={markerLaneHandlers.onUpdateMarker}
             onDeleteMarker={markerLaneHandlers.onDeleteMarker}
@@ -1708,6 +1758,7 @@ export function TimelineEditor({
             waveformData={waveformData}
             waveformError={waveformError}
             mediaFileNotFound={mediaFileNotFound}
+            running={running}
             onTrackMouseDown={mediaLaneHandlers.onTrackMouseDown}
             onImportMedia={mediaLaneHandlers.onImportMedia}
             onClearMedia={mediaLaneHandlers.onClearMedia}
@@ -1770,9 +1821,11 @@ export function TimelineEditor({
                 color: '#ccc',
                 fontSize: '13px',
                 padding: '6px 14px',
-                cursor: 'pointer',
+                cursor: running ? 'default' : 'pointer',
+                opacity: running ? 0.4 : 1,
                 whiteSpace: 'nowrap',
               }}
+              disabled={running}
               title="Find a part by name"
               onClick={() => setPartPickerOpen(true)}
             >
@@ -1791,12 +1844,16 @@ export function TimelineEditor({
                 color: '#ccc',
                 fontSize: '13px',
                 padding: '6px 14px',
-                cursor: 'pointer',
+                // Splitting is an edit, so these go the way of the toolbar's
+                // buttons during a Live session rather than silently doing nothing.
+                cursor: running ? 'default' : 'pointer',
+                opacity: running ? 0.4 : 1,
                 display: 'flex',
                 alignItems: 'center',
                 gap: '5px',
                 whiteSpace: 'nowrap',
               }}
+              disabled={running}
               title={`Split at playhead and assign CAM${cam.number} ${cam.name}`}
               onClick={() => handleCamButtonClick(cam)}
             >

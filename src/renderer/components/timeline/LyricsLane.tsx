@@ -49,7 +49,10 @@ interface LyricsLaneProps {
   pendingInLeftPx: number | null
   width: number
   height: number
-  /** Edge handles are hidden during a Live session: nothing here is editable. */
+  /**
+   * Edge handles and the delete button are hidden during a Live session: nothing
+   * here is editable. Re-wording is refused by the caller for the same reason.
+   */
   running: boolean
   handlers: LyricsLaneHandlers
 }
@@ -177,7 +180,7 @@ function LyricsLaneImpl({
                 />
               </>
             )}
-            {isHovered && (
+            {isHovered && !running && (
               <button
                 style={{
                   position: 'absolute',

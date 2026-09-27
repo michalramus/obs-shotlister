@@ -17,30 +17,43 @@ import type { Marker } from '../../../shared/types'
 
 const marker: Marker = { id: 'm1', rundownId: 'r1', positionMs: 1000, label: null }
 
-function renderLane(
-  onUpdateMarker: (id: string, positionMs: number, label?: string | null) => void,
-  dragOverride: Record<string, number>,
-): void {
-  render(
+interface LaneOptions {
+  onUpdateMarker?: (id: string, positionMs: number, label?: string | null) => void
+  onDeleteMarker?: (id: string) => void
+  dragOverride?: Record<string, number>
+  running?: boolean
+}
+
+/** Renders the lane, and can re-render it with one option changed. */
+function renderLane(options: LaneOptions = {}): { setRunning: (running: boolean) => void } {
+  const tree = (running: boolean): React.JSX.Element => (
     <MarkerLane
       markers={[marker]}
-      dragOverride={dragOverride}
+      dragOverride={options.dragOverride ?? {}}
       zoomPxPerSec={80}
       width={800}
       height={30}
+      running={running}
       onMarkerMouseDown={() => {}}
-      onUpdateMarker={onUpdateMarker}
-      onDeleteMarker={() => {}}
+      onUpdateMarker={options.onUpdateMarker ?? ((): void => {})}
+      onDeleteMarker={options.onDeleteMarker ?? ((): void => {})}
       onTrackDoubleClick={() => {}}
-    />,
+    />
   )
+  const result = render(tree(options.running ?? false))
+  return { setRunning: (running) => result.rerender(tree(running)) }
+}
+
+/** The label, which is the lane's only span until a Marker is being edited. */
+function labelSpan(): HTMLSpanElement {
+  const span = document.querySelector('span')
+  if (span === null) throw new Error('no marker label to click')
+  return span
 }
 
 /** Clicks the label, types, and presses Enter. */
 function label(text: string): void {
-  const span = document.querySelector('span')
-  if (span === null) throw new Error('no marker label to click')
-  fireEvent.click(span)
+  fireEvent.click(labelSpan())
   const input = screen.getByRole('textbox')
   fireEvent.change(input, { target: { value: text } })
   fireEvent.keyDown(input, { key: 'Enter' })
@@ -52,7 +65,7 @@ describe('labelling a Marker', () => {
   it('writes the dragged position, once, through onUpdateMarker', () => {
     // The Marker was dragged to 9s and the new props have not come back yet.
     const onUpdateMarker = vi.fn()
-    renderLane(onUpdateMarker, { m1: 9000 })
+    renderLane({ onUpdateMarker, dragOverride: { m1: 9000 } })
 
     label('Refren')
 
@@ -62,7 +75,7 @@ describe('labelling a Marker', () => {
 
   it('writes the stored position when no drag is in progress', () => {
     const onUpdateMarker = vi.fn()
-    renderLane(onUpdateMarker, {})
+    renderLane({ onUpdateMarker })
 
     label('Refren')
 
@@ -71,7 +84,7 @@ describe('labelling a Marker', () => {
 
   it('writes nothing when the label comes back unchanged', () => {
     const onUpdateMarker = vi.fn()
-    renderLane(onUpdateMarker, { m1: 9000 })
+    renderLane({ onUpdateMarker, dragOverride: { m1: 9000 } })
 
     // Empty trims to null, which is what this Marker's label already is.
     label('   ')
@@ -81,14 +94,62 @@ describe('labelling a Marker', () => {
 
   it('abandons the edit on Escape', () => {
     const onUpdateMarker = vi.fn()
-    renderLane(onUpdateMarker, { m1: 9000 })
+    renderLane({ onUpdateMarker, dragOverride: { m1: 9000 } })
 
-    const span = document.querySelector('span')
-    if (span === null) throw new Error('no marker label to click')
-    fireEvent.click(span)
+    fireEvent.click(labelSpan())
     const input = screen.getByRole('textbox')
     fireEvent.change(input, { target: { value: 'Refren' } })
     fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(onUpdateMarker).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * A Marker is a Rundown's, not a Live session's, so during a show the Marker
+ * Track is a read-out and nothing else. Both halves are asserted: the affordance
+ * is gone, and the write refuses anyway — an operator mid-edit when the show
+ * starts must not have their keystroke land in the database.
+ */
+describe('the Marker Track during a Live session', () => {
+  it('offers no label edit while a Live session is running', () => {
+    const onUpdateMarker = vi.fn()
+    renderLane({ onUpdateMarker, running: true })
+
+    fireEvent.click(labelSpan())
+
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(onUpdateMarker).not.toHaveBeenCalled()
+  })
+
+  it('offers no delete while a Live session is running', () => {
+    const onDeleteMarker = vi.fn()
+    const lane = renderLane({ onDeleteMarker })
+
+    // The delete button only exists while the Marker is hovered, so hover first
+    // and check it is there: otherwise this asserts nothing about `running`.
+    const line = labelSpan().parentElement
+    if (line === null) throw new Error('no marker to hover')
+    fireEvent.mouseEnter(line)
+    expect(screen.queryByTitle('Delete marker')).not.toBeNull()
+
+    lane.setRunning(true)
+
+    expect(screen.queryByTitle('Delete marker')).toBeNull()
+    expect(onDeleteMarker).not.toHaveBeenCalled()
+  })
+
+  it('refuses a label already being edited when the Live session starts', () => {
+    const onUpdateMarker = vi.fn()
+    const lane = renderLane({ onUpdateMarker })
+
+    fireEvent.click(labelSpan())
+    const input = screen.getByRole('textbox')
+    fireEvent.change(input, { target: { value: 'Refren' } })
+
+    // The operator presses Start with the input still open.
+    lane.setRunning(true)
+    fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(onUpdateMarker).not.toHaveBeenCalled()
   })

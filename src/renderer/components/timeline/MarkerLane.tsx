@@ -40,6 +40,13 @@ interface MarkerLaneProps {
    * position, deliberately without a ceiling: see below.
    */
   onTrackDoubleClick: (e: React.MouseEvent<HTMLDivElement>) => void
+  /**
+   * Whether a Live session is running, in which case nothing here is editable:
+   * no label edit, no delete, no double-click to add. Same contract as the Lyrics
+   * Track's `running`, and for the same reason — the affordance has to go, not
+   * just the write, or the operator clicks and watches nothing happen.
+   */
+  running: boolean
 }
 
 function MarkerLaneImpl({
@@ -52,6 +59,7 @@ function MarkerLaneImpl({
   onUpdateMarker,
   onDeleteMarker,
   onTrackDoubleClick,
+  running,
 }: MarkerLaneProps): React.JSX.Element {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingLabel, setEditingLabel] = useState('')
@@ -59,11 +67,17 @@ function MarkerLaneImpl({
 
   function beginEdit(e: React.MouseEvent, marker: Marker): void {
     e.stopPropagation()
+    if (running) return
     setEditingId(marker.id)
     setEditingLabel(marker.label ?? '')
   }
 
   function saveLabel(marker: Marker): void {
+    // An edit already open when the Live session starts is abandoned, not saved.
+    if (running) {
+      setEditingId(null)
+      return
+    }
     const trimmed = editingLabel.trim() || null
     // One write, through the one Marker seam, carrying the position the drag left
     // the Marker at rather than the one the props still say.
@@ -83,7 +97,7 @@ function MarkerLaneImpl({
         borderTop: '1px solid #2a2a2a',
         cursor: 'crosshair',
       }}
-      onDoubleClick={onTrackDoubleClick}
+      onDoubleClick={running ? undefined : onTrackDoubleClick}
     >
       {markers.map((marker) => {
         const effectivePositionMs = dragOverride[marker.id] ?? marker.positionMs
@@ -114,7 +128,7 @@ function MarkerLaneImpl({
                 width: '2px',
                 height,
                 borderLeft: '2px dashed #f39c12',
-                cursor: 'ew-resize',
+                cursor: running ? 'default' : 'ew-resize',
               }}
               onMouseDown={(e) => onMarkerMouseDown(e, marker)}
             />
@@ -153,7 +167,7 @@ function MarkerLaneImpl({
                   fontSize: '9px',
                   color: '#f39c12',
                   whiteSpace: 'nowrap',
-                  cursor: 'text',
+                  cursor: running ? 'default' : 'text',
                   userSelect: 'none',
                 }}
                 onClick={(e) => beginEdit(e, marker)}
@@ -162,8 +176,8 @@ function MarkerLaneImpl({
               </span>
             )}
 
-            {/* Delete button on hover */}
-            {isHovered && !isEditing && (
+            {/* Delete button on hover — never during a Live session */}
+            {isHovered && !isEditing && !running && (
               <button
                 style={{
                   position: 'absolute',
@@ -190,7 +204,8 @@ function MarkerLaneImpl({
         )
       })}
 
-      {markers.length === 0 && (
+      {/* The hint is also the only affordance, so it goes while it would be a lie */}
+      {markers.length === 0 && !running && (
         <span
           style={{
             position: 'absolute',

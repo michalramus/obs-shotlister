@@ -32,6 +32,12 @@ interface MediaLaneProps {
   onTrackMouseDown: (e: React.MouseEvent) => void
   onImportMedia: () => void
   onClearMedia: () => void
+  /**
+   * Whether a Live session is running. Attaching or clearing Reference media
+   * changes the Rundown, so neither is offered during one — same contract as the
+   * Lyrics and Marker Tracks. Dragging the offset is refused by the grab adapter.
+   */
+  running: boolean
 }
 
 const overlayText: React.CSSProperties = {
@@ -58,6 +64,7 @@ function MediaLaneImpl({
   onTrackMouseDown,
   onImportMedia,
   onClearMedia,
+  running,
 }: MediaLaneProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false)
   const offsetPx = pxAtMs(offsetOverrideMs ?? media?.offsetMs ?? 0, zoomPxPerSec)
@@ -77,9 +84,9 @@ function MediaLaneImpl({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onMouseDown={media ? onTrackMouseDown : undefined}
-      onDoubleClick={!media ? onImportMedia : undefined}
+      onDoubleClick={!media && !running ? onImportMedia : undefined}
     >
-      {!media && (
+      {!media && !running && (
         <span style={{ ...overlayText, color: '#333' }}>
           Double-click or use &apos;Import media&apos; to add a reference track
         </span>
@@ -138,25 +145,27 @@ function MediaLaneImpl({
               >
                 {media.filePath.split('/').pop() ?? media.filePath}
               </span>
-              <button
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: '#888',
-                  fontSize: '9px',
-                  cursor: 'pointer',
-                  padding: '0 2px',
-                  pointerEvents: 'all',
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onClearMedia()
-                }}
-                title="Remove media track"
-              >
-                × Clear
-              </button>
+              {!running && (
+                <button
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#888',
+                    fontSize: '9px',
+                    cursor: 'pointer',
+                    padding: '0 2px',
+                    pointerEvents: 'all',
+                  }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onClearMedia()
+                  }}
+                  title="Remove media track"
+                >
+                  × Clear
+                </button>
+              )}
             </div>
           )}
         </div>
