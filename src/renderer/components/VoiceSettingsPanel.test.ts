@@ -15,6 +15,11 @@ import {
   markLoopbackDevices,
   suggestLoopbackDevice,
   LOOPBACK_SUFFIX,
+  OUTPUT_CARRIES_LABEL,
+  OUTPUT_CARRIES_ORDER,
+  describeOutputDelay,
+  outputWith,
+  virtualOutputGuidanceIndex,
   toggleProjectSelection,
   summarizeClipSelection,
   describeClipSelection,
@@ -23,7 +28,13 @@ import {
   CONFIRM_NAMED_PROJECTS,
 } from './VoiceSettingsPanel'
 import { OUTPUT_DELAY_MAX_MS, OUTPUT_DELAY_MIN_MS } from '../../shared/audio/outputs'
-import type { PartRenderState, ProjectClipStats, RenderState } from '../../shared/ipc-contract'
+import type {
+  AudioDeviceSettings,
+  AudioOutput,
+  PartRenderState,
+  ProjectClipStats,
+  RenderState,
+} from '../../shared/ipc-contract'
 
 function part(name: string, state: RenderState): PartRenderState {
   return { partId: `id-${name}`, name, state }
@@ -305,6 +316,121 @@ describe('suggestLoopbackDevice', () => {
 
   it('offers nothing when no device looks like a loopback', () => {
     expect(suggestLoopbackDevice([{ deviceId: 'a', label: 'Speakers' }])).toBeNull()
+  })
+})
+
+describe('OUTPUT_CARRIES_LABEL', () => {
+  it('names the sound rather than the stored word', () => {
+    // "voice" is what the code calls the kind; in front of an operator it would
+    // read as a microphone rather than as the spoken part names.
+    expect(OUTPUT_CARRIES_LABEL.voice).toBe('Announcements')
+    expect(OUTPUT_CARRIES_LABEL.cues).toBe('Countdown and beeps')
+    expect(OUTPUT_CARRIES_LABEL.both).toBe('Both')
+  })
+
+  it('offers every choice exactly once, widest first', () => {
+    expect([...OUTPUT_CARRIES_ORDER]).toEqual(['both', 'voice', 'cues'])
+    expect(new Set(OUTPUT_CARRIES_ORDER).size).toBe(Object.keys(OUTPUT_CARRIES_LABEL).length)
+  })
+})
+
+describe('describeOutputDelay', () => {
+  it('says a positive delay plays things early, which is the whole point', () => {
+    // The sign is the one thing an operator can get backwards, and getting it
+    // backwards doubles the error.
+    const text = describeOutputDelay(400)
+    expect(text).toContain('400 ms')
+    expect(text).toContain('early')
+  })
+
+  it('says a negative delay plays things late', () => {
+    const text = describeOutputDelay(-120)
+    expect(text).toContain('120 ms')
+    expect(text).toContain('late')
+    expect(text).not.toContain('-120')
+  })
+
+  it('describes no delay without naming a number of milliseconds', () => {
+    expect(describeOutputDelay(0)).not.toMatch(/\dms|\d ms/)
+  })
+})
+
+describe('outputWith', () => {
+  const settings: AudioDeviceSettings = {
+    outputs: [
+      { enabled: true, sinkId: 'speakers', delayMs: 0, carries: 'both' },
+      { enabled: false, sinkId: null, delayMs: 0, carries: 'voice' },
+    ],
+  }
+
+  it('changes only the Output named', () => {
+    const next = outputWith(settings, 1, { enabled: true, delayMs: 400 })
+    expect(next.outputs[1]).toEqual({
+      enabled: true,
+      sinkId: null,
+      delayMs: 400,
+      carries: 'voice',
+    })
+    expect(next.outputs[0]).toEqual(settings.outputs[0])
+  })
+
+  it("keeps Output 1 in first place, which is what makes it the operator's own", () => {
+    const next = outputWith(settings, 0, { sinkId: 'headphones' })
+    expect(next.outputs[0].sinkId).toBe('headphones')
+    expect(next.outputs[1]).toEqual(settings.outputs[1])
+  })
+
+  it('does not touch the settings it was given', () => {
+    outputWith(settings, 0, { sinkId: 'headphones' })
+    expect(settings.outputs[0].sinkId).toBe('speakers')
+  })
+})
+
+describe('virtualOutputGuidanceIndex', () => {
+  const marked = markLoopbackDevices(
+    [
+      { deviceId: 'speakers', label: 'MacBook Pro Speakers' },
+      { deviceId: 'cable', label: 'BlackHole 2ch' },
+    ],
+    ['blackhole'],
+  )
+  const output = (patch: Partial<AudioOutput> = {}): AudioOutput => ({
+    enabled: true,
+    sinkId: null,
+    delayMs: 0,
+    carries: 'both',
+    ...patch,
+  })
+
+  it('follows the loopback device onto Output 1 when that is where it is', () => {
+    const outputs: [AudioOutput, AudioOutput] = [
+      output({ sinkId: 'cable' }),
+      output({ enabled: false }),
+    ]
+    expect(virtualOutputGuidanceIndex(outputs, marked)).toBe(0)
+  })
+
+  it('prefers Output 2 when both are pointed at a loopback device', () => {
+    const outputs: [AudioOutput, AudioOutput] = [
+      output({ sinkId: 'cable' }),
+      output({ sinkId: 'cable' }),
+    ]
+    expect(virtualOutputGuidanceIndex(outputs, marked)).toBe(1)
+  })
+
+  it('ignores a loopback device on an Output that is switched off', () => {
+    // A disabled Output is not a route, so it is not what the guidance is about.
+    const outputs: [AudioOutput, AudioOutput] = [
+      output({ sinkId: 'cable' }),
+      output({ enabled: false, sinkId: 'cable' }),
+    ]
+    expect(virtualOutputGuidanceIndex(outputs, marked)).toBe(0)
+  })
+
+  it('falls back to Output 2, where a second listener is set up', () => {
+    // An operator with nothing installed yet still has to be told what to install.
+    const outputs: [AudioOutput, AudioOutput] = [output({ sinkId: 'speakers' }), output()]
+    expect(virtualOutputGuidanceIndex(outputs, marked)).toBe(1)
   })
 })
 

@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAppStore } from '../store'
 import type {
   AudioDeviceSettings,
+  AudioOutput,
   GlobalVoiceSettings,
+  OutputCarries,
   PartRenderState,
   PhrasePlacement,
   ProjectClipStats,
@@ -42,10 +44,10 @@ export type CountdownParse = { ok: true; countdown: number[] } | { ok: false; er
 export type DelayParse = { ok: true; delayMs: number } | { ok: false; error: string }
 
 /**
- * Reads a path delay the operator typed.
+ * Reads an Output's delay, as the operator typed it.
  *
  * Rejects rather than repairs, like the countdown field: a silently corrected
- * delay would mis-time every Announcement without ever saying so.
+ * delay would mis-time everything that Output carries without ever saying so.
  */
 export function parseDelayInput(raw: string): DelayParse {
   const trimmed = raw.trim()
@@ -598,6 +600,8 @@ interface OutputDeviceSelectProps {
   hint: string
   devices: OutputDevice[]
   selectedId: string | null
+  /** True while the Output is switched off: shown, and not changeable. */
+  disabled?: boolean
   onChange: (sinkId: string | null) => void
 }
 
@@ -607,6 +611,7 @@ function OutputDeviceSelect({
   hint,
   devices,
   selectedId,
+  disabled = false,
   onChange,
 }: OutputDeviceSelectProps): React.JSX.Element {
   return (
@@ -618,6 +623,7 @@ function OutputDeviceSelect({
         id={id}
         style={s.select}
         value={selectedId ?? SYSTEM_DEFAULT_VALUE}
+        disabled={disabled}
         aria-label={title}
         onChange={(e) => onChange(e.target.value === SYSTEM_DEFAULT_VALUE ? null : e.target.value)}
       >
@@ -632,169 +638,14 @@ function OutputDeviceSelect({
   )
 }
 
-/**
- * How long the Announcement path takes to reach the band.
- *
- * Lives with the output devices rather than with the Voice settings because it
- * describes the same thing they do — this machine's route to Mumble — and not
- * the show being run over it.
- */
-function TransmissionDelayField({
-  onError,
-}: {
-  onError: (message: string | null) => void
-}): React.JSX.Element {
-  const voiceSettings = useAppStore((st) => st.voiceSettings)
-  const saveVoiceSettings = useAppStore((st) => st.saveVoiceSettings)
-
-  const stored = voiceSettings?.outputDelayMs ?? 0
-  const [draft, setDraft] = useState(String(stored))
-  const [problem, setProblem] = useState<string | null>(null)
-
-  // Follow the stored value when it changes underneath us, but never while the
-  // operator is mid-edit with something invalid in the box.
-  useEffect(() => {
-    if (problem === null) setDraft(String(stored))
-  }, [stored, problem])
-
-  function commit(): void {
-    const parsed = parseDelayInput(draft)
-    if (!parsed.ok) {
-      setProblem(parsed.error)
-      return
-    }
-    setProblem(null)
-    onError(null)
-    if (voiceSettings === null || parsed.delayMs === stored) return
-    saveVoiceSettings({ ...voiceSettings, outputDelayMs: parsed.delayMs }).catch(
-      (err: unknown) => onError(err instanceof Error ? err.message : 'Could not save the delay.'),
-    )
-  }
-
-  return (
-    <div style={{ marginTop: '8px' }}>
-      <label style={s.label} htmlFor="voice-transmission-delay">
-        Announcement delay (ms)
-      </label>
-      <input
-        id="voice-transmission-delay"
-        style={s.input}
-        value={draft}
-        onChange={(e) => {
-          setDraft(e.target.value)
-          setProblem(null)
-        }}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') commit()
-        }}
-        inputMode="numeric"
-        placeholder="0"
-      />
-      <p style={s.hint}>
-        How long Mumble takes to reach the band. The whole announcement plays this much earlier, so
-        they hear it on the beat. Measure it once and leave it.
-      </p>
-      {problem !== null && <p style={s.errorText}>{problem}</p>}
-    </div>
-  )
-}
-
-function OutputDevicesSection(): React.JSX.Element {
-  const audioDevices = useAppStore((st) => st.audioDevices)
-  const saveAudioDevices = useAppStore((st) => st.saveAudioDevices)
-
-  const [devices, setDevices] = useState<OutputDevice[]>([])
-  const [error, setError] = useState<string | null>(null)
-  const [labelsHidden, setLabelsHidden] = useState(false)
-
-  const refresh = useCallback(async (): Promise<void> => {
-    try {
-      const all = await navigator.mediaDevices.enumerateDevices()
-      const outputs = all
-        .filter((d) => d.kind === 'audiooutput')
-        .map((d) => ({ deviceId: d.deviceId, label: d.label }))
-      setDevices(outputs)
-      setLabelsHidden(outputs.length > 0 && outputs.every((d) => d.label.trim() === ''))
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not list output devices.')
-    }
-  }, [])
-
-  useEffect(() => {
-    void refresh()
-    // A cable plugged in while the panel is open should appear without reopening it.
-    const onDeviceChange = (): void => void refresh()
-    const media = navigator.mediaDevices as MediaDevices | undefined
-    media?.addEventListener('devicechange', onDeviceChange)
-    return () => media?.removeEventListener('devicechange', onDeviceChange)
-  }, [refresh])
-
-  async function handleRevealNames(): Promise<void> {
-    try {
-      // Chromium withholds device labels until a media permission is granted;
-      // the stream is released immediately, nothing is recorded.
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      for (const track of stream.getTracks()) track.stop()
-      await refresh()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Permission denied.')
-    }
-  }
-
-  function save(patch: Partial<AudioDeviceSettings>): void {
-    saveAudioDevices({ ...audioDevices, ...patch }).catch((err: unknown) =>
-      setError(err instanceof Error ? err.message : 'Could not save the device.'),
-    )
-  }
-
-  return (
-    <div>
-      <div style={{ ...s.summaryRow, marginBottom: '4px' }}>
-        <p style={{ ...s.sectionTitle, margin: 0 }}>Output devices</p>
-        <button style={s.smallBtn} onClick={() => void refresh()}>
-          Refresh
-        </button>
-      </div>
-
-      <OutputDeviceSelect
-        id="voice-cue-sink"
-        title="Countdown cues"
-        hint="Where the operator hears their own countdown cues."
-        devices={devices}
-        selectedId={audioDevices.cueSinkId}
-        onChange={(sinkId) => save({ cueSinkId: sinkId })}
-      />
-
-      <OutputDeviceSelect
-        id="voice-announcement-sink"
-        title="Announcements"
-        hint="Where the band hears the part names - a virtual cable feeding Mumble, typically."
-        devices={devices}
-        selectedId={audioDevices.announcementSinkId}
-        onChange={(sinkId) => save({ announcementSinkId: sinkId })}
-      />
-
-      <TransmissionDelayField onError={setError} />
-
-      <IntercomSection devices={devices} onSave={save} onError={setError} onRefresh={refresh} />
-
-      {labelsHidden && (
-        <p style={s.hint}>
-          Device names are hidden until microphone permission is granted.{' '}
-          <button
-            style={{ ...s.smallBtn, padding: '2px 6px' }}
-            onClick={() => void handleRevealNames()}
-          >
-            Show names
-          </button>
-        </p>
-      )}
-      {error !== null && <p style={s.errorText}>{error}</p>}
-    </div>
-  )
-}
+// ---------------------------------------------------------------------------
+// Outputs
+//
+// Two Outputs, each saying where it plays, how early, and what it carries (ADR
+// 0010). There is no Intercom section any more: a loopback device is simply what
+// an Output can be pointed at, so the guidance about that device follows whichever
+// Output is pointed at one.
+// ---------------------------------------------------------------------------
 
 /** Suffix marking a device the platform's loopback names matched. */
 export const LOOPBACK_SUFFIX = ' — loopback'
@@ -804,8 +655,8 @@ export const LOOPBACK_SUFFIX = ' — loopback'
  *
  * Matching on the name is the only option a renderer has: the device list carries
  * no "this is virtual" flag, and the device ids are opaque. It is a hint, not a
- * gate — every device stays selectable, because a cable somebody named themselves
- * is still a valid Intercom output.
+ * gate — every device stays selectable on every Output, because a cable somebody
+ * named themselves is still a valid route to a voice-chat client.
  */
 export function markLoopbackDevices(
   devices: OutputDevice[],
@@ -823,73 +674,187 @@ export function suggestLoopbackDevice(marked: OutputDevice[]): OutputDevice | nu
   return marked.find((device) => device.label.endsWith(LOOPBACK_SUFFIX)) ?? null
 }
 
-interface IntercomSectionProps {
-  devices: OutputDevice[]
-  onSave: (patch: Partial<AudioDeviceSettings>) => void
-  onError: (message: string) => void
-  /** Re-enumerates devices: a sink created just now is not in the list yet. */
-  onRefresh: () => Promise<void>
+/**
+ * What each choice of what an Output carries is called in front of the operator.
+ *
+ * The stored values are `voice` and `cues`, which are the words the code uses for
+ * the two kinds of sound. Neither is what an operator calls them, and an Output
+ * labelled "voice" would read as a microphone rather than as the thing that speaks
+ * the next Part's name — so the label names the sound, not the field.
+ */
+export const OUTPUT_CARRIES_LABEL: Record<OutputCarries, string> = {
+  both: 'Both',
+  voice: 'Announcements',
+  cues: 'Countdown and beeps',
+}
+
+/** The order the choices are offered in: the widest first, which is the default. */
+export const OUTPUT_CARRIES_ORDER: readonly OutputCarries[] = ['both', 'voice', 'cues']
+
+/**
+ * What an Output's delay does, in words.
+ *
+ * Spelled out because the sign is the one thing about a delay an operator can get
+ * backwards, and getting it backwards doubles the error: a delay makes a sound
+ * play *earlier*, to land on the beat after the route has buffered it. The field
+ * is the only place that can say so before a show rather than after one.
+ */
+export function describeOutputDelay(delayMs: number): string {
+  if (delayMs === 0) return 'Played at the moment it is wanted. Right for your own speakers.'
+  if (delayMs > 0) {
+    return `Everything this output carries plays ${delayMs} ms early, so it is heard on the beat after the route has buffered it.`
+  }
+  return `Everything this output carries plays ${-delayMs} ms late — only right for a route that somehow runs ahead.`
 }
 
 /**
- * The Intercom output: one more destination for everything the show produces, so
- * a voice-chat client on this machine can carry it to the intercom.
+ * The settings with one Output changed.
  *
- * The section says out loud where the device comes from, because that differs by
- * platform and the operator cannot be expected to know (ADR 0008): on Linux the
- * app makes it, elsewhere they install one and this only finds it.
+ * The pair is positional and Output 1 is the operator's own (see
+ * {@link AudioDeviceSettings}), so patching one by index — rather than rebuilding
+ * the array at each call site — is what keeps a save from quietly swapping them.
  */
-function IntercomSection({
-  devices,
-  onSave,
+export function outputWith(
+  settings: AudioDeviceSettings,
+  index: 0 | 1,
+  patch: Partial<AudioOutput>,
+): AudioDeviceSettings {
+  const outputs: [AudioOutput, AudioOutput] = [settings.outputs[0], settings.outputs[1]]
+  outputs[index] = { ...outputs[index], ...patch }
+  return { outputs }
+}
+
+/**
+ * Which Output the Virtual output's status and guidance belongs under.
+ *
+ * It follows the loopback device: whichever Output is pointed at one is the Output
+ * feeding a voice-chat client, and *“Shotlister Out is running, record Monitor of
+ * Shotlister Out”* is a sentence about that route rather than about the app. A
+ * disabled Output is not a route, so it does not claim the guidance.
+ *
+ * When no Output has one, it goes under Output 2: an operator with nothing
+ * installed still has to be told what to install (ADR 0008), and Output 2 is where
+ * a second listener is set up — it is also where an older install's Intercom
+ * output landed.
+ */
+export function virtualOutputGuidanceIndex(
+  outputs: readonly [AudioOutput, AudioOutput],
+  marked: OutputDevice[],
+): 0 | 1 {
+  const isLoopback = (sinkId: string | null): boolean =>
+    sinkId !== null &&
+    marked.some((d) => d.deviceId === sinkId && d.label.endsWith(LOOPBACK_SUFFIX))
+  if (outputs[1].enabled && isLoopback(outputs[1].sinkId)) return 1
+  if (outputs[0].enabled && isLoopback(outputs[0].sinkId)) return 0
+  return 1
+}
+
+/**
+ * One Output's delay, in milliseconds.
+ *
+ * Draft-and-commit like the countdown field: a delay is typed a digit at a time,
+ * and saving each keystroke would point the whole show at 4ms on the way to 400.
+ */
+function OutputDelayField({
+  id,
+  delayMs,
+  disabled,
+  onCommit,
   onError,
-  onRefresh,
-}: IntercomSectionProps): React.JSX.Element {
-  const audioDevices = useAppStore((st) => st.audioDevices)
-  const [virtual, setVirtual] = useState<VirtualOutputState | null>(null)
-  const [hints, setHints] = useState<string[]>([])
-  const [busy, setBusy] = useState(false)
+}: {
+  id: string
+  delayMs: number
+  disabled: boolean
+  onCommit: (delayMs: number) => void
+  onError: (message: string | null) => void
+}): React.JSX.Element {
+  const [draft, setDraft] = useState(String(delayMs))
+  const [problem, setProblem] = useState<string | null>(null)
 
-  const readState = useCallback(async (): Promise<void> => {
-    try {
-      const [state, loopbackHints] = await Promise.all([
-        window.api.audioDevices.virtualState(),
-        window.api.audioDevices.loopbackHints(),
-      ])
-      setVirtual(state)
-      setHints(loopbackHints)
-    } catch (err) {
-      onError(err instanceof Error ? err.message : 'Could not read the virtual output.')
-    }
-  }, [onError])
-
-  // Re-read after the toggle: enabling it is what creates the sink on Linux, and
-  // the status line is the only place the operator learns whether that worked.
+  // Follow the stored value when it changes underneath us, but never while the
+  // operator is mid-edit with something invalid in the box.
   useEffect(() => {
-    void readState()
-  }, [readState, audioDevices.intercomEnabled])
+    if (problem === null) setDraft(String(delayMs))
+  }, [delayMs, problem])
 
-  /** Devices whose name says they loop back, marked so they can be picked out. */
-  const marked = useMemo(() => markLoopbackDevices(devices, hints), [devices, hints])
-  const suggestion = useMemo(() => suggestLoopbackDevice(marked), [marked])
-
-  async function handleCreate(): Promise<void> {
-    setBusy(true)
-    try {
-      const state = await window.api.audioDevices.ensureVirtual()
-      setVirtual(state)
-      // The new sink is not in a device list enumerated before it existed.
-      await onRefresh()
-    } catch (err) {
-      onError(err instanceof Error ? err.message : 'Could not create the virtual output.')
-    } finally {
-      setBusy(false)
+  function commit(): void {
+    const parsed = parseDelayInput(draft)
+    if (!parsed.ok) {
+      setProblem(parsed.error)
+      return
     }
+    setProblem(null)
+    onError(null)
+    if (parsed.delayMs !== delayMs) onCommit(parsed.delayMs)
   }
 
+  return (
+    <div style={{ marginTop: '8px' }}>
+      <label style={s.label} htmlFor={id}>
+        Delay (ms)
+      </label>
+      <input
+        id={id}
+        style={s.input}
+        value={draft}
+        disabled={disabled}
+        onChange={(e) => {
+          setDraft(e.target.value)
+          setProblem(null)
+        }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit()
+        }}
+        inputMode="numeric"
+        placeholder="0"
+      />
+      <p style={s.hint}>{describeOutputDelay(delayMs)}</p>
+      {problem !== null && <p style={s.errorText}>{problem}</p>}
+    </div>
+  )
+}
+
+interface OutputSectionProps {
+  index: 0 | 1
+  output: AudioOutput
+  /** Devices with the loopback ones marked, so either Output can pick one out. */
+  marked: OutputDevice[]
+  suggestion: OutputDevice | null
+  /** The Virtual output's state, shown under the Output that feeds it. */
+  virtual: VirtualOutputState | null
+  showVirtual: boolean
+  creating: boolean
+  onCreateVirtual: () => void
+  onChange: (patch: Partial<AudioOutput>) => void
+  onError: (message: string | null) => void
+}
+
+/**
+ * One Output: its device, its delay, and what it carries.
+ *
+ * Output 1 has no switch — the operator's own copy is the one that must always
+ * exist — so the toggle is Output 2's alone, and Output 2's controls read as inert
+ * while it is off rather than disappearing: an operator who switched it off last
+ * week should still see what it was pointed at.
+ */
+function OutputSection({
+  index,
+  output,
+  marked,
+  suggestion,
+  virtual,
+  showVirtual,
+  creating,
+  onCreateVirtual,
+  onChange,
+  onError,
+}: OutputSectionProps): React.JSX.Element {
+  const number = index + 1
+  const off = !output.enabled
+
   function handleTest(): void {
-    if (audioDevices.intercomSinkId === null) return
-    const sinkId = audioDevices.intercomSinkId
+    const sinkId = output.sinkId
     window.api.assets
       .getAudioDir()
       .then(async (dir) => {
@@ -897,8 +862,9 @@ function IntercomSection({
           setSinkId?: (id: string) => Promise<void>
         }
         // Routed before playing, and the failure is reported rather than swallowed:
-        // proving the route is the entire point of the button.
-        if (typeof audio.setSinkId === 'function') await audio.setSinkId(sinkId)
+        // proving the route is the entire point of the button. '' is the API's way
+        // of naming the system default.
+        if (typeof audio.setSinkId === 'function') await audio.setSinkId(sinkId ?? '')
         await audio.play()
       })
       .catch((err: unknown) =>
@@ -908,74 +874,249 @@ function IntercomSection({
 
   return (
     <div style={{ marginTop: '16px', borderTop: '1px solid #333', paddingTop: '12px' }}>
-      <p style={s.sectionTitle}>Intercom output</p>
-
-      <div style={s.toggleRow}>
-        <button
-          style={s.toggleTrack(audioDevices.intercomEnabled)}
-          onClick={() => onSave({ intercomEnabled: !audioDevices.intercomEnabled })}
-          aria-label={
-            audioDevices.intercomEnabled ? 'Disable intercom output' : 'Enable intercom output'
-          }
-        >
-          <span style={s.toggleThumb(audioDevices.intercomEnabled)} />
-        </button>
-        <span>Also send cues and announcements to an intercom</span>
-      </div>
-      <p style={s.hint}>
-        A copy of every cue and announcement plays on the device below, so a voice-chat client can
-        carry it to the intercom. Nothing is taken away from your own speakers, and muting a cue
-        mutes only your copy.
-      </p>
-
-      {virtual !== null && (
-        <p style={s.hint}>
-          {virtual.present && virtual.monitorLabel !== null
-            ? `${virtual.label} is running. Select “${virtual.monitorLabel}” as the input in your intercom client.`
-            : (virtual.guidance ?? '')}
-          {virtual.creatable && !virtual.present && (
-            <>
-              {' '}
-              <button
-                style={{ ...s.smallBtn, padding: '2px 6px' }}
-                onClick={() => void handleCreate()}
-                disabled={busy}
-              >
-                Create Shotlister Out
-              </button>
-            </>
-          )}
-        </p>
+      {index === 0 ? (
+        <p style={s.sectionTitle}>Output 1 — your own</p>
+      ) : (
+        <div style={s.toggleRow}>
+          <button
+            style={s.toggleTrack(output.enabled)}
+            onClick={() => onChange({ enabled: !output.enabled })}
+            aria-label={output.enabled ? 'Disable output 2' : 'Enable output 2'}
+          >
+            <span style={s.toggleThumb(output.enabled)} />
+          </button>
+          <span>Output 2</span>
+        </div>
       )}
 
-      <OutputDeviceSelect
-        id="voice-intercom-sink"
-        title="Intercom device"
-        hint="The loopback device your intercom client records from."
-        devices={marked}
-        selectedId={audioDevices.intercomSinkId}
-        onChange={(sinkId) => onSave({ intercomSinkId: sinkId })}
-      />
+      {/* Inert rather than gone: what it was pointed at is worth seeing. */}
+      <div style={{ opacity: off ? 0.45 : 1 }}>
+        <OutputDeviceSelect
+          id={`audio-output-${number}-sink`}
+          title="Device"
+          hint={
+            index === 0
+              ? 'Where you hear the show. This is the copy your mute button silences, and the only one that falls back to the system default if its device disappears.'
+              : 'A second listener — typically the loopback device a voice-chat client sends on to the band. If its device disappears this copy goes silent rather than landing in your ears.'
+          }
+          devices={marked}
+          selectedId={output.sinkId}
+          disabled={off}
+          onChange={(sinkId) => onChange({ sinkId })}
+        />
 
-      <div style={s.fieldRow}>
-        <button
-          style={s.smallBtn}
-          onClick={handleTest}
-          disabled={audioDevices.intercomSinkId === null}
-          title="Play one beep on the intercom device only"
-        >
-          Test
-        </button>
-        {suggestion !== null && audioDevices.intercomSinkId !== suggestion.deviceId && (
+        <OutputDelayField
+          id={`audio-output-${number}-delay`}
+          delayMs={output.delayMs}
+          disabled={off}
+          onCommit={(delayMs) => onChange({ delayMs })}
+          onError={onError}
+        />
+
+        <div style={{ marginTop: '8px' }}>
+          <label style={s.label} htmlFor={`audio-output-${number}-carries`}>
+            Carries
+          </label>
+          <select
+            id={`audio-output-${number}-carries`}
+            style={s.select}
+            value={output.carries}
+            disabled={off}
+            aria-label={`Output ${number} carries`}
+            onChange={(e) => onChange({ carries: e.target.value as OutputCarries })}
+          >
+            {OUTPUT_CARRIES_ORDER.map((carries) => (
+              <option key={carries} value={carries}>
+                {OUTPUT_CARRIES_LABEL[carries]}
+              </option>
+            ))}
+          </select>
+          <p style={s.hint}>
+            Announcements are the spoken part names; countdown and beeps are the cues. An output
+            carrying neither is silent, which is a choice and not a fault.
+          </p>
+        </div>
+
+        {showVirtual && virtual !== null && (
+          <p style={s.hint}>
+            {virtual.present && virtual.monitorLabel !== null
+              ? `${virtual.label} is running. Select “${virtual.monitorLabel}” as the input in your intercom client.`
+              : (virtual.guidance ?? '')}
+            {virtual.creatable && !virtual.present && (
+              <>
+                {' '}
+                <button
+                  style={{ ...s.smallBtn, padding: '2px 6px' }}
+                  onClick={onCreateVirtual}
+                  disabled={creating}
+                >
+                  Create Shotlister Out
+                </button>
+              </>
+            )}
+          </p>
+        )}
+
+        <div style={s.fieldRow}>
           <button
             style={s.smallBtn}
-            onClick={() => onSave({ intercomSinkId: suggestion.deviceId })}
-            title={suggestion.label}
+            onClick={handleTest}
+            disabled={off}
+            title={`Play one beep on output ${number} only`}
           >
-            Use the loopback device
+            Test
           </button>
-        )}
+          {suggestion !== null && output.sinkId !== suggestion.deviceId && (
+            <button
+              style={s.smallBtn}
+              onClick={() => onChange({ sinkId: suggestion.deviceId })}
+              disabled={off}
+              title={suggestion.label}
+            >
+              Use the loopback device
+            </button>
+          )}
+        </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Both Outputs, and the device list they share.
+ *
+ * Enumerating devices, revealing their names and finding the loopback ones among
+ * them are one machine's business rather than one Output's, so they live here and
+ * each Output section is handed the answer.
+ */
+function OutputsSection(): React.JSX.Element {
+  const audioDevices = useAppStore((st) => st.audioDevices)
+  const saveAudioDevices = useAppStore((st) => st.saveAudioDevices)
+
+  const [devices, setDevices] = useState<OutputDevice[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [labelsHidden, setLabelsHidden] = useState(false)
+  const [virtual, setVirtual] = useState<VirtualOutputState | null>(null)
+  const [hints, setHints] = useState<string[]>([])
+  const [creating, setCreating] = useState(false)
+
+  const refresh = useCallback(async (): Promise<void> => {
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices()
+      const outputs = all
+        .filter((d) => d.kind === 'audiooutput')
+        .map((d) => ({ deviceId: d.deviceId, label: d.label }))
+      setDevices(outputs)
+      setLabelsHidden(outputs.length > 0 && outputs.every((d) => d.label.trim() === ''))
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not list output devices.')
+    }
+  }, [])
+
+  const readVirtualState = useCallback(async (): Promise<void> => {
+    try {
+      const [state, loopbackHints] = await Promise.all([
+        window.api.audioDevices.virtualState(),
+        window.api.audioDevices.loopbackHints(),
+      ])
+      setVirtual(state)
+      setHints(loopbackHints)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not read the virtual output.')
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+    void readVirtualState()
+    // A cable plugged in while the panel is open should appear without reopening it.
+    const onDeviceChange = (): void => void refresh()
+    const media = navigator.mediaDevices as MediaDevices | undefined
+    media?.addEventListener('devicechange', onDeviceChange)
+    return () => media?.removeEventListener('devicechange', onDeviceChange)
+  }, [refresh, readVirtualState])
+
+  async function handleRevealNames(): Promise<void> {
+    try {
+      // Chromium withholds device labels until a media permission is granted;
+      // the stream is released immediately, nothing is recorded.
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      for (const track of stream.getTracks()) track.stop()
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Permission denied.')
+    }
+  }
+
+  async function handleCreateVirtual(): Promise<void> {
+    setCreating(true)
+    try {
+      setVirtual(await window.api.audioDevices.ensureVirtual())
+      // The new sink is not in a device list enumerated before it existed.
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not create the virtual output.')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  function change(index: 0 | 1, patch: Partial<AudioOutput>): void {
+    saveAudioDevices(outputWith(audioDevices, index, patch)).catch((err: unknown) =>
+      setError(err instanceof Error ? err.message : 'Could not save the output.'),
+    )
+  }
+
+  /** Devices whose name says they loop back, marked so they can be picked out. */
+  const marked = useMemo(() => markLoopbackDevices(devices, hints), [devices, hints])
+  const suggestion = useMemo(() => suggestLoopbackDevice(marked), [marked])
+  const guidanceIndex = useMemo(
+    () => virtualOutputGuidanceIndex(audioDevices.outputs, marked),
+    [audioDevices.outputs, marked],
+  )
+
+  return (
+    <div>
+      <div style={{ ...s.summaryRow, marginBottom: '4px' }}>
+        <p style={{ ...s.sectionTitle, margin: 0 }}>Outputs</p>
+        <button style={s.smallBtn} onClick={() => void refresh()}>
+          Refresh
+        </button>
+      </div>
+      <p style={s.hint}>
+        Each output plays every sound it carries, on its own device and at its own moment. They
+        duplicate rather than divide: nothing is taken away from your own speakers.
+      </p>
+
+      {([0, 1] as const).map((index) => (
+        <OutputSection
+          key={index}
+          index={index}
+          output={audioDevices.outputs[index]}
+          marked={marked}
+          suggestion={suggestion}
+          virtual={virtual}
+          showVirtual={guidanceIndex === index}
+          creating={creating}
+          onCreateVirtual={() => void handleCreateVirtual()}
+          onChange={(patch) => change(index, patch)}
+          onError={setError}
+        />
+      ))}
+
+      {labelsHidden && (
+        <p style={s.hint}>
+          Device names are hidden until microphone permission is granted.{' '}
+          <button
+            style={{ ...s.smallBtn, padding: '2px 6px' }}
+            onClick={() => void handleRevealNames()}
+          >
+            Show names
+          </button>
+        </p>
+      )}
+      {error !== null && <p style={s.errorText}>{error}</p>}
     </div>
   )
 }
@@ -1626,7 +1767,7 @@ export function VoiceSettingsPanel({ onClose }: VoiceSettingsPanelProps): React.
         </div>
 
         {/* Output devices */}
-        <OutputDevicesSection />
+        <OutputsSection />
       </div>
     </div>
   )

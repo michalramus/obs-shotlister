@@ -16,7 +16,11 @@ import { TimelineEditor } from './components/TimelineEditor'
 import { TopBar } from './components/TopBar'
 import { createAnnouncementPlayer } from './audio/announcements'
 import { createCuePlayer, type CuePlayer } from '../shared/audio/cue-player'
-import type { SoundSinks } from '../shared/audio/routed-clip'
+import {
+  soundDestinations,
+  worstCaseDelayMs,
+  type SoundDestination,
+} from '../shared/audio/routed-clip'
 
 const styles = {
   root: {
@@ -86,14 +90,11 @@ export default function App(): React.JSX.Element {
   const effectiveVoiceSettings = useAppStore((s) => s.effectiveVoiceSettings)
   const loadVoiceSettings = useAppStore((s) => s.loadVoiceSettings)
   const unrenderedCount = useAppStore((s) => s.renderSummary?.unrenderedCount ?? 0)
-  const announcementSinkId = useAppStore((s) => s.audioDevices.announcementSinkId)
-  const cueSinkId = useAppStore((s) => s.audioDevices.cueSinkId)
-  const intercomEnabled = useAppStore((s) => s.audioDevices.intercomEnabled)
-  const intercomSinkId = useAppStore((s) => s.audioDevices.intercomSinkId)
-  // One value for "is there an Intercom output to duplicate into", so nothing
-  // downstream has to remember that a device chosen while the toggle is off is
-  // not a destination.
-  const intercomSink = intercomEnabled ? intercomSinkId : null
+  // The two Outputs, whole: which of them carries a given sound, and how early
+  // each one has to be played, is soundDestinations' answer and not this
+  // component's — so nothing here has to remember that a disabled Output is not a
+  // destination.
+  const outputs = useAppStore((s) => s.audioDevices.outputs)
   const loadLiveState = useAppStore((s) => s.loadLiveState)
   const activeProjectId = useAppStore((s) => s.activeProjectId)
   // The push listeners below are registered once on mount, so they cannot close
@@ -160,18 +161,22 @@ export default function App(): React.JSX.Element {
   const isFirstLiveIndexRef = useRef(true)
   // One player for the app's lifetime: a new plan cuts off the one in flight,
   // which only works if both went through the same instance.
-  const announcementSinksRef = useRef<SoundSinks>({
-    primary: announcementSinkId,
-    intercom: intercomSink,
-  })
-  announcementSinksRef.current = { primary: announcementSinkId, intercom: intercomSink }
-  const announcementPlayer = useRef(createAnnouncementPlayer(() => announcementSinksRef.current))
+  // Read through a ref at the moment a plan arrives rather than captured, so a
+  // device or delay changed between shows takes effect without rebuilding the
+  // player that a plan in flight belongs to.
+  const announcementDestinationsRef = useRef<readonly SoundDestination[]>(
+    soundDestinations(outputs, 'voice'),
+  )
+  announcementDestinationsRef.current = soundDestinations(outputs, 'voice')
+  const announcementPlayer = useRef(
+    createAnnouncementPlayer(() => announcementDestinationsRef.current),
+  )
 
   // Pushed into the player rather than passed down: routing is settled between
   // shows, so the pool is already pointing at the right devices when a beep is due.
   useEffect(() => {
-    cuePlayer?.setSinks({ cue: cueSinkId, intercom: intercomSink })
-  }, [cuePlayer, cueSinkId, intercomSink])
+    cuePlayer?.setOutputs(outputs)
+  }, [cuePlayer, outputs])
 
   useEffect(() => {
     cuePlayer?.setVolume(audioVolume)
@@ -387,7 +392,13 @@ export default function App(): React.JSX.Element {
     // The media track only applies to edit mode; live mode hides it.
     rundownMedia: uiMode === 'edit' ? rundownMedia : null,
     phraseDurationMsByPartId: phraseDurations,
-    announcementSettings: effectiveVoiceSettings ?? undefined,
+    announcementSettings:
+      effectiveVoiceSettings === null
+        ? undefined
+        : // Badged against the worst case: a Call that does not fit the most
+          // delayed Output is one somebody may not hear, and Edit mode is the last
+          // place the operator can lengthen it.
+          { ...effectiveVoiceSettings, worstOutputDelayMs: worstCaseDelayMs(outputs, 'voice') },
     onShotClick: (id: string) => setSelectedShotId(id),
     onSplitShot: (shotId: string, atMs: number, newCameraId: string) => {
       if (atMs <= 0) {
