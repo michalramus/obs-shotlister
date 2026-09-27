@@ -12,10 +12,11 @@ import {
   vanishedClips,
   clipsNeedingDurations,
   clipsOnlyUsedBy,
+  projectClipStats,
   phraseDurations,
 } from './speech'
 import { DEFAULT_VOICE, saveProjectVoiceSettings, saveGlobalVoiceSettings } from './settings'
-import { upsertPart } from './parts'
+import { deletePart, upsertPart } from './parts'
 import { ENGINE_ID, clipHash, partPhrase } from '../../shared/render-plan'
 import { numberTexts } from '../../shared/number-text'
 
@@ -26,8 +27,8 @@ function openMemoryDb(): Database.Database {
   return db
 }
 
-function insertProject(db: Database.Database, id: string): void {
-  db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(id, id, 1000)
+function insertProject(db: Database.Database, id: string, name = id): void {
+  db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(id, name, 1000)
 }
 
 /** Taken from the setting rather than spelled out: these tests are about what
@@ -185,6 +186,42 @@ describe('orphanedClips', () => {
 
     const wantedByP2 = phraseHash('gitara', 'za')
     expect(orphanedClips(db, [wantedByP2])).toEqual([])
+  })
+
+  it('sweeps the clip of a Part that was deleted', () => {
+    const part = upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    const gone = phraseHash('gitara', 'za')
+    deletePart(db, part.id)
+
+    expect(orphanedClips(db, [gone, ...numberHashes(VOICE)])).toEqual([gone])
+  })
+
+  it('sweeps what the Voice a Project left behind had rendered', () => {
+    // A Voice change orphans a whole set at once: the phrase *and* all sixty
+    // numbers, since a clip's hash carries the Voice it was spoken in.
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    const old = [phraseHash('gitara', 'za'), ...numberHashes(VOICE)]
+    saveProjectVoiceSettings(db, 'p1', {
+      voice: 'en_US-amy-medium',
+      countdown: null,
+      placement: null,
+      connector: 'za',
+    })
+
+    expect(orphanedClips(db, old).sort()).toEqual([...old].sort())
+  })
+
+  it('never sweeps a countdown number, however narrow the countdown is', () => {
+    // ADR 0005: 1..60 are rendered unconditionally, so narrowing the countdown
+    // can never require a re-render — and must never lose the other numbers.
+    saveProjectVoiceSettings(db, 'p1', {
+      voice: null,
+      countdown: [3, 2, 1],
+      placement: null,
+      connector: 'za',
+    })
+
+    expect(orphanedClips(db, numberHashes(VOICE))).toEqual([])
   })
 
   it('sweeps everything when there are no Projects left', () => {
@@ -431,6 +468,70 @@ describe('clipsOnlyUsedBy', () => {
     const orphan = phraseHash('stara nazwa', 'za')
 
     expect(clipsOnlyUsedBy(db, 'p1', [phraseHash('gitara', 'za'), orphan])).not.toContain(orphan)
+  })
+})
+
+describe('projectClipStats', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openMemoryDb()
+    insertProject(db, 'p1', 'Kolonia')
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('counts the clips only that Project uses, and names it', () => {
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+
+    expect(projectClipStats(db, [phraseHash('gitara', 'za')])).toEqual([
+      { projectId: 'p1', name: 'Kolonia', clipCount: 1 },
+    ])
+  })
+
+  it('counts a clip two Projects share for neither of them', () => {
+    insertProject(db, 'p2', 'Oboz')
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    upsertPart(db, { projectId: 'p2', name: 'gitara' })
+
+    expect(projectClipStats(db, [phraseHash('gitara', 'za')])).toEqual([
+      { projectId: 'p1', name: 'Kolonia', clipCount: 0 },
+      { projectId: 'p2', name: 'Oboz', clipCount: 0 },
+    ])
+  })
+
+  it('lists a Project with nothing of its own rather than hiding it', () => {
+    // A zero is the answer to "why did deleting that free nothing?", so the row
+    // has to be there to carry it.
+    insertProject(db, 'p2', 'Oboz')
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+
+    expect(projectClipStats(db, [phraseHash('gitara', 'za')]).map((row) => row.clipCount)).toEqual([
+      1, 0,
+    ])
+  })
+
+  it('does not sum to the cache size, because a shared clip belongs to nobody', () => {
+    insertProject(db, 'p2', 'Oboz')
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    upsertPart(db, { projectId: 'p2', name: 'perkusja' })
+
+    // Both Projects share every number clip; only the two phrases are exclusive.
+    const cached = [
+      ...numberHashes(VOICE),
+      phraseHash('gitara', 'za'),
+      phraseHash('perkusja', 'za'),
+    ]
+    const stats = projectClipStats(db, cached)
+    expect(stats.map((row) => row.clipCount)).toEqual([1, 1])
+    expect(stats.reduce((sum, row) => sum + row.clipCount, 0)).toBeLessThan(cached.length)
+  })
+
+  it('reports nothing at all when there are no Projects', () => {
+    db.prepare('DELETE FROM projects').run()
+    expect(projectClipStats(db, [phraseHash('gitara', 'za')])).toEqual([])
   })
 })
 

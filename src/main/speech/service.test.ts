@@ -12,15 +12,25 @@
  * whole reason these rules are now assertable.
  */
 
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
 import { applyMigrations } from '../db/index'
-import { DEFAULT_VOICE, saveGlobalVoiceSettings, getGlobalVoiceSettings } from '../ipc/settings'
+import {
+  DEFAULT_VOICE,
+  saveGlobalVoiceSettings,
+  getGlobalVoiceSettings,
+  saveProjectVoiceSettings,
+} from '../ipc/settings'
 import { upsertPart } from '../ipc/parts'
-import { recordPartRenders } from '../ipc/speech'
+import { recordClip, recordPartRenders } from '../ipc/speech'
 import { ENGINE_ID, clipHash, partPhrase } from '../../shared/render-plan'
 import { numberTexts } from '../../shared/number-text'
 import { EngineUnusableError } from './batch'
+import { clipsDir } from './cache'
+import { createFileClipStore } from './clip-store'
 import { AUTO_RENDER_DEBOUNCE_MS, createRenderService } from './service'
 import type { RenderService, VoiceInstaller } from './service'
 import {
@@ -444,5 +454,228 @@ describe('backfillDurations', () => {
     upsertPart(h.db, { projectId: 'p1', name: 'gitara' })
     expect(await h.service.backfillDurations()).toBe(0)
     h.db.close()
+  })
+})
+
+describe('clipStats', () => {
+  it('reads the cache on disk, so the picker counts what is really there', async () => {
+    const h = harness()
+    upsertPart(h.db, { projectId: 'p1', name: 'gitara' })
+
+    // Nothing rendered yet: the Project wants a clip, the cache has none.
+    expect(await h.service.clipStats()).toEqual([{ projectId: 'p1', name: 'p1', clipCount: 0 }])
+
+    h.clips.seed(phraseHash('gitara'))
+    expect(await h.service.clipStats()).toEqual([{ projectId: 'p1', name: 'p1', clipCount: 1 }])
+    h.db.close()
+  })
+
+  it('counts a clip two Projects share for neither of them', async () => {
+    const h = harness()
+    insertProject(h.db, 'p2')
+    upsertPart(h.db, { projectId: 'p1', name: 'gitara' })
+    upsertPart(h.db, { projectId: 'p2', name: 'gitara' })
+    h.clips.seed(phraseHash('gitara'))
+
+    // Deleting either Project's recordings leaves the clip in place, so neither
+    // Project may claim it in the count the operator decides on.
+    expect((await h.service.clipStats()).map((row) => row.clipCount)).toEqual([0, 0])
+    h.db.close()
+  })
+
+  it('answers during a Live session, because counting files changes nothing', async () => {
+    const h = harness()
+    upsertPart(h.db, { projectId: 'p1', name: 'gitara' })
+    h.clips.seed(phraseHash('gitara'))
+    h.live.running = true
+
+    expect(await h.service.clipStats()).toEqual([{ projectId: 'p1', name: 'p1', clipCount: 1 }])
+    expect(h.clips.removeAttempts).toEqual([])
+    h.db.close()
+  })
+})
+
+describe('cleanOrphans', () => {
+  it('deletes the clip a renamed Part left behind, and drops its row', async () => {
+    // The whole reason the button exists: the cache is content-addressed (ADR
+    // 0005), so renaming a Part silently strands the clip its old name hashed to.
+    const h = harness()
+    const part = upsertPart(h.db, { projectId: 'p1', name: 'gitara' })
+    recordPartRenders(h.db, 'p1')
+    const stranded = phraseHash('gitara')
+    h.clips.seed(stranded)
+    recordClip(h.db, { hash: stranded, text: 'gitara za', voice: VOICE, engine: ENGINE_ID }, 400)
+    upsertPart(h.db, { id: part.id, projectId: 'p1', name: 'wokal' })
+
+    expect(await h.service.cleanOrphans('p1')).toBe(1)
+
+    expect(await h.clips.hashes()).toEqual([])
+    // The row goes with the file: a row is a promise that a clip exists, and the
+    // announcer resolves clips through this table.
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM speech_clips').get()).toEqual({ n: 0 })
+    // Which is what the operator then sees: stale before the clean, missing after.
+    expect((await h.service.status('p1')).parts[0].state).toBe('missing')
+    // And the panel is told without being asked.
+    expect(h.statuses).toBeGreaterThan(0)
+    h.db.close()
+  })
+
+  it('keeps a clip a second Project still wants, even when this one does not', async () => {
+    // A clip is an orphan only when *every* Project agrees it is one. Sweeping a
+    // Project's own `toSweep` would strip the audio from the Project next to it
+    // the moment the two used different Voices.
+    const h = harness()
+    insertProject(h.db, 'p2')
+    upsertPart(h.db, { projectId: 'p2', name: 'gitara' })
+    saveProjectVoiceSettings(h.db, 'p1', {
+      voice: 'en_US-amy-medium',
+      countdown: null,
+      placement: null,
+      connector: 'in',
+    })
+    const sharedByP2 = phraseHash('gitara')
+    h.clips.seed(sharedByP2)
+
+    // Asked for from p1, which wants nothing of the sort.
+    expect(await h.service.cleanOrphans('p1')).toBe(0)
+    expect(await h.clips.hashes()).toEqual([sharedByP2])
+    h.db.close()
+  })
+
+  it('forgets a row whose file has vanished, without counting it as a clip deleted', async () => {
+    // The sweep alone can never reach these: it reasons about hashes listed from
+    // the cache directory, so a file removed by some other route leaves a row
+    // that nothing would ever look at or delete.
+    const h = harness()
+    const vanished = phraseHash('gitara')
+    recordClip(h.db, { hash: vanished, text: 'gitara za', voice: VOICE, engine: ENGINE_ID }, 400)
+
+    // Zero, not one: the count is clips deleted, and no clip was.
+    expect(await h.service.cleanOrphans('p1')).toBe(0)
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM speech_clips').get()).toEqual({ n: 0 })
+    expect(h.clips.removeAttempts).toEqual([])
+    h.db.close()
+  })
+
+  it('never sweeps a countdown number, whatever the countdown is set to', async () => {
+    // ADR 0005: numbers are rendered 1..60 unconditionally, so narrowing the
+    // countdown is a settings change that can never require a re-render — and
+    // must never let a clean throw the other numbers away.
+    const h = harness()
+    upsertPart(h.db, { projectId: 'p1', name: 'gitara' })
+    saveProjectVoiceSettings(h.db, 'p1', {
+      voice: null,
+      countdown: [3, 2, 1],
+      placement: null,
+      connector: 'za',
+    })
+    for (const hash of numberHashes()) h.clips.seed(hash)
+
+    expect(await h.service.cleanOrphans('p1')).toBe(0)
+    expect((await h.clips.hashes()).sort()).toEqual(numberHashes().sort())
+    h.db.close()
+  })
+
+  it('keeps the row of a clip it could not delete', async () => {
+    // A locked file still exists and still answers a lookup, so forgetting its
+    // row would make the index disagree with the disk.
+    const h = harness()
+    const locked = phraseHash('gitara')
+    h.clips.seed(locked)
+    recordClip(h.db, { hash: locked, text: 'gitara za', voice: VOICE, engine: ENGINE_ID }, 400)
+    h.clips.locked.add(locked)
+
+    expect(await h.service.cleanOrphans('p1')).toBe(0)
+
+    expect(h.clips.removeAttempts).toEqual([locked])
+    expect(await h.clips.hashes()).toEqual([locked])
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM speech_clips').get()).toEqual({ n: 1 })
+    h.db.close()
+  })
+
+  it('refuses while a render is running, and says why', async () => {
+    // Nothing may delete from the cache while a batch is writing into it, and
+    // someone who pressed a button is owed the reason nothing happened.
+    let release = (): void => {}
+    const h = harness({
+      behaviour: () => 400,
+      installVoice: () =>
+        new Promise<void>((resolve) => {
+          release = () => resolve()
+        }),
+    })
+    upsertPart(h.db, { projectId: 'p1', name: 'gitara' })
+    const orphan = phraseHash('obsolete')
+    h.clips.seed(orphan)
+
+    const inFlight = h.service.renderMissing('p1')
+    // The render is parked inside the voice install, which happens after the
+    // `rendering` latch is set and before a single clip is written.
+    await vi.waitFor(() => expect(h.statuses).toBeGreaterThan(0))
+
+    await expect(h.service.cleanOrphans('p1')).rejects.toThrow(/render is running/)
+    expect(h.clips.removeAttempts).toEqual([])
+
+    release()
+    await inFlight
+    h.db.close()
+  })
+})
+
+describe('cleanOrphans against the real cache directory', () => {
+  // The memory store cannot catch a filesystem-level bug: the extension
+  // filtering, the staged `.part` names `put` leaves in the same directory, and
+  // the unlink itself only exist in `cache`/`clip-store`.
+  let userData: string
+
+  beforeEach(async () => {
+    userData = await mkdtemp(join(tmpdir(), 'shotlister-clips-'))
+  })
+
+  afterEach(async () => {
+    await rm(userData, { recursive: true, force: true })
+  })
+
+  it('unlinks the orphan WAV and nothing else in the directory', async () => {
+    const db = openMemoryDb()
+    insertProject(db, 'p1')
+    const clips = createFileClipStore(userData)
+    const service = createRenderService({
+      db,
+      clips,
+      synthesise: createFakeSynthesiser(clips).synthesise,
+      installVoice: () => Promise.resolve(),
+      isLive: () => false,
+    })
+
+    const part = upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    const stranded = phraseHash('gitara')
+    await clips.put({ hash: stranded }, wavOf(400))
+    recordClip(db, { hash: stranded, text: 'gitara za', voice: VOICE, engine: ENGINE_ID }, 400)
+    upsertPart(db, { id: part.id, projectId: 'p1', name: 'wokal' })
+
+    const wanted = phraseHash('wokal')
+    await clips.put({ hash: wanted }, wavOf(400))
+    const number = clipHash('3', VOICE, ENGINE_ID)
+    await clips.put({ hash: number }, wavOf(200))
+
+    // A write that crashed part-way leaves one of these behind. It is not a clip
+    // — `hashes()` filters it out by extension — so a clean must neither count it
+    // nor mistake the hash in its name for a clip that exists.
+    const staged = `.${stranded}.a1b2c3d4e5f6.part`
+    await writeFile(join(clipsDir(userData), staged), 'half a clip')
+    // Nor is anything else an operator may have dropped in the folder.
+    await writeFile(join(clipsDir(userData), 'notes.txt'), 'mine')
+
+    expect(await service.cleanOrphans('p1')).toBe(1)
+
+    expect((await readdir(clipsDir(userData))).sort()).toEqual(
+      [staged, 'notes.txt', `${wanted}.wav`, `${number}.wav`].sort(),
+    )
+    expect(db.prepare('SELECT COUNT(*) AS n FROM speech_clips').get()).toEqual({ n: 0 })
+    // The clip that survived is still readable, which is the other half of
+    // "deleted the right one".
+    expect((await clips.read(wanted)).length).toBeGreaterThan(44)
+    db.close()
   })
 })

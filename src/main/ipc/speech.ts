@@ -14,7 +14,11 @@
  */
 
 import type Database from 'better-sqlite3'
-import type { PartRenderState, ProjectRenderSummary } from '../../shared/ipc-contract'
+import type {
+  PartRenderState,
+  ProjectClipStats,
+  ProjectRenderSummary,
+} from '../../shared/ipc-contract'
 import type { Part } from '../../shared/types'
 import {
   ENGINE_ID,
@@ -25,6 +29,7 @@ import {
 } from '../../shared/render-plan'
 import { numberTexts } from '../../shared/number-text'
 import { listParts } from './parts'
+import { listProjects } from './projects'
 import { getEffectiveVoiceSettings } from './settings'
 
 interface PartRenderRow {
@@ -195,6 +200,30 @@ export function clipsOnlyUsedBy(
     if (mine.size === 0) break
   }
   return [...mine]
+}
+
+/**
+ * What deleting each Project's recordings would actually remove.
+ *
+ * Read-only, and the picker in the Voice panel is the whole reason it exists:
+ * "delete this Project's recordings" is a one-way action whose size the operator
+ * could not otherwise see. Every Project is listed, including those with nothing
+ * of their own — a zero is the answer to "why did that free nothing?".
+ *
+ * The counts are per-Project *exclusive*, so they do not sum to the cache size:
+ * a clip two Projects want is counted for neither, because deleting either
+ * Project's recordings leaves it in place ({@link clipsOnlyUsedBy}).
+ */
+export function projectClipStats(
+  db: Database.Database,
+  cachedHashes: Iterable<string>,
+): ProjectClipStats[] {
+  const cached = [...cachedHashes]
+  return listProjects(db).map((project) => ({
+    projectId: project.id,
+    name: project.name,
+    clipCount: clipsOnlyUsedBy(db, project.id, cached).length,
+  }))
 }
 
 /**

@@ -436,6 +436,8 @@ function registerIpcHandlers(): void {
     render.deleteProjectClips(projectId),
   )
 
+  registerIpcHandler('speech:projectClipStats', () => render.clipStats())
+
   registerIpcHandler('project:setActive', (payload: { projectId: string | null }) => {
     live.setActiveProject(payload.projectId)
     // The Project the operator just opened is the one whose missing audio

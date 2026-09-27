@@ -648,6 +648,7 @@ export const API_SURFACE = {
     phraseDurations: 'speech:phraseDurations',
     cleanOrphans: 'speech:cleanOrphans',
     deleteProjectClips: 'speech:deleteProjectClips',
+    projectClipStats: 'speech:projectClipStats',
     onStatusPush: { push: 'speech:renderSummary-push' },
   },
   shots: {

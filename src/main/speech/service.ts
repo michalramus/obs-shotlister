@@ -14,10 +14,11 @@
  */
 
 import type Database from 'better-sqlite3'
-import type { ProjectRenderSummary } from '../../shared/ipc-contract'
+import type { ProjectClipStats, ProjectRenderSummary } from '../../shared/ipc-contract'
 import {
   clipsNeedingDurations,
   clipsOnlyUsedBy,
+  projectClipStats,
   forgetClips,
   vanishedClips,
   forgetPartRenders,
@@ -104,6 +105,14 @@ export interface RenderService {
    * brings the audio back.
    */
   deleteProjectClips: (projectId: string) => Promise<number>
+  /**
+   * What {@link deleteProjectClips} would remove, per Project.
+   *
+   * Read-only, so it answers during a Live session too: the operator may be
+   * looking at the panel, and refusing to *count* files would be a refusal with
+   * nothing behind it.
+   */
+  clipStats: () => Promise<ProjectClipStats[]>
   /**
    * Renders whatever a Project is missing, when the operator has asked for that
    * to happen by itself.
@@ -328,6 +337,10 @@ export function createRenderService(deps: RenderServiceDeps): RenderService {
 
       onStatus?.(await statusFor(projectId))
       return gone.length
+    },
+
+    async clipStats() {
+      return projectClipStats(db, await clips.hashes())
     },
 
     scheduleAutoRender(projectId) {
