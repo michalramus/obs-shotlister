@@ -8,7 +8,7 @@ import { clipHash } from '../../shared/render-plan'
 import { numberTexts } from '../../shared/number-text'
 import { toMediaUrl } from '../../shared/media-url'
 import { PHRASE_GAP_MS } from '../../shared/announcement'
-import { DEFAULT_VOICE } from '../ipc/settings'
+import { DEFAULT_VOICE, saveAudioDevices } from '../ipc/settings'
 
 function openMemoryDb(): Database.Database {
   const db = new Database(':memory:')
@@ -486,13 +486,18 @@ describe('LiveSession announcements', () => {
       expect(plans).toEqual([
         {
           callId: 'call-1',
-          clips: [
-            { url: clipUrl('wokal za'), atMs: 2000 - PHRASE_MS - PHRASE_GAP_MS },
-            { url: numberUrl(10), atMs: 2000 },
-            { url: numberUrl(5), atMs: 7000 },
-            { url: numberUrl(3), atMs: 9000 },
-            { url: numberUrl(2), atMs: 10000 },
-            { url: numberUrl(1), atMs: 11000 },
+          routes: [
+            {
+              delayMs: 0,
+              clips: [
+                { url: clipUrl('wokal za'), atMs: 2000 - PHRASE_MS - PHRASE_GAP_MS },
+                { url: numberUrl(10), atMs: 2000 },
+                { url: numberUrl(5), atMs: 7000 },
+                { url: numberUrl(3), atMs: 9000 },
+                { url: numberUrl(2), atMs: 10000 },
+                { url: numberUrl(1), atMs: 11000 },
+              ],
+            },
           ],
         },
       ])
@@ -512,7 +517,7 @@ describe('LiveSession announcements', () => {
 
       // Unrendered speech warns rather than blocks (ADR 0005): the show runs,
       // and the band still gets the numbers.
-      expect(plans[0]?.clips).toEqual([
+      expect(plans[0]?.routes[0].clips).toEqual([
         { url: numberUrl(10), atMs: 2000 },
         { url: numberUrl(5), atMs: 7000 },
         { url: numberUrl(3), atMs: 9000 },
@@ -546,13 +551,18 @@ describe('LiveSession announcements', () => {
       // live Call (11s) plus the skipped Call's planned 12s.
       expect(plans[1]).toEqual({
         callId: 'call-2',
-        clips: [
-          { url: clipUrl('refren za'), atMs: 13000 - PHRASE_MS - PHRASE_GAP_MS },
-          { url: numberUrl(10), atMs: 13000 },
-          { url: numberUrl(5), atMs: 18000 },
-          { url: numberUrl(3), atMs: 20000 },
-          { url: numberUrl(2), atMs: 21000 },
-          { url: numberUrl(1), atMs: 22000 },
+        routes: [
+          {
+            delayMs: 0,
+            clips: [
+              { url: clipUrl('refren za'), atMs: 13000 - PHRASE_MS - PHRASE_GAP_MS },
+              { url: numberUrl(10), atMs: 13000 },
+              { url: numberUrl(5), atMs: 18000 },
+              { url: numberUrl(3), atMs: 20000 },
+              { url: numberUrl(2), atMs: 21000 },
+              { url: numberUrl(1), atMs: 22000 },
+            ],
+          },
         ],
       })
     })
@@ -565,17 +575,21 @@ describe('LiveSession announcements', () => {
       expect(plans[plans.length - 1]).toBeNull()
     })
 
-    it('plays the whole Announcement earlier when the path adds delay', () => {
+    it('plays the whole Announcement earlier when the Output adds delay', () => {
       // The operator's Mumble route buffers 400ms, so every clip fires that
       // much sooner and the band still hears "10" ten seconds out.
       seedVoice(db)
-      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
-        'voice_transmission_delay',
-        '400',
-      )
+      saveAudioDevices(db, {
+        outputs: [
+          { enabled: true, sinkId: null, delayMs: 400, carries: 'both' },
+          { enabled: false, sinkId: null, delayMs: 0, carries: 'voice' },
+        ],
+      })
       session.start('rd-1')
 
-      expect(plans[0]!.clips).toEqual([
+      expect(plans[0]!.routes).toHaveLength(1)
+      expect(plans[0]!.routes[0]).toMatchObject({ delayMs: 400 })
+      expect(plans[0]!.routes[0].clips).toEqual([
         { url: clipUrl('wokal za'), atMs: 1600 - PHRASE_MS - PHRASE_GAP_MS },
         { url: numberUrl(10), atMs: 1600 },
         { url: numberUrl(5), atMs: 6600 },
@@ -583,6 +597,49 @@ describe('LiveSession announcements', () => {
         { url: numberUrl(2), atMs: 9600 },
         { url: numberUrl(1), atMs: 10600 },
       ])
+    })
+
+    it('gives each delay its own route, so the nearer Output keeps what the slower one loses', () => {
+      // 2.5s of buffering leaves no room to play "10" before the previous Call
+      // went live, but the operator's own speakers have all the room in the
+      // world. One plan scheduled at the worst delay would have dropped that
+      // number for both listeners.
+      seedVoice(db)
+      saveAudioDevices(db, {
+        outputs: [
+          { enabled: true, sinkId: null, delayMs: 0, carries: 'both' },
+          { enabled: true, sinkId: 'mumble', delayMs: 2500, carries: 'voice' },
+        ],
+      })
+      session.start('rd-1')
+
+      // Earliest moment first: the route with the least time to spare.
+      expect(plans[0]!.routes.map((r) => r.delayMs)).toEqual([2500, 0])
+      expect(plans[0]!.routes[0].clips).toEqual([
+        { url: clipUrl('wokal za'), atMs: 4500 - PHRASE_MS - PHRASE_GAP_MS },
+        { url: numberUrl(5), atMs: 4500 },
+        { url: numberUrl(3), atMs: 6500 },
+        { url: numberUrl(2), atMs: 7500 },
+        { url: numberUrl(1), atMs: 8500 },
+      ])
+      expect(plans[0]!.routes[1].clips.map((c) => c.atMs)).toEqual([
+        900, 2000, 7000, 9000, 10000, 11000,
+      ])
+    })
+
+    it('says nothing at all when no Output carries Announcements', () => {
+      // An operator who has pointed both Outputs at Cues only has chosen
+      // silence, which is a setting and not a fault.
+      seedVoice(db)
+      saveAudioDevices(db, {
+        outputs: [
+          { enabled: true, sinkId: null, delayMs: 0, carries: 'cues' },
+          { enabled: false, sinkId: null, delayMs: 0, carries: 'voice' },
+        ],
+      })
+      session.start('rd-1')
+
+      expect(plans[0]).toBeNull()
     })
 
     it('says nothing during overrun', () => {

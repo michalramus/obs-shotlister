@@ -284,13 +284,30 @@ export interface ScheduledClip {
 }
 
 /**
+ * The clips one Output's listener hears, and when.
+ *
+ * An Announcement is planned once per distinct delay among the Outputs that carry
+ * it, rather than once with the copies offset afterwards: every `atMs` here is a
+ * *play* time on a route that takes `delayMs` to arrive, so a less delayed Output
+ * still gets a number that the most delayed one had no room for. Offsetting one
+ * plan would have dropped that number for everybody (ADR 0010).
+ */
+export interface AnnouncementRoute {
+  /** The delay of the Outputs this route is for. */
+  delayMs: number
+  clips: ScheduledClip[]
+}
+
+/**
  * What to speak before one Call, pushed to the renderer when that Call becomes
  * next. A plan arriving cuts off whatever is still speaking — Announcements are
  * never queued — and `null` cancels without starting anything.
+ *
+ * Usually one route, at most one per Output.
  */
 export interface AnnouncementPlan {
   callId: string
-  clips: ScheduledClip[]
+  routes: AnnouncementRoute[]
 }
 
 // ---------------------------------------------------------------------------

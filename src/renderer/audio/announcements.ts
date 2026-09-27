@@ -62,7 +62,7 @@ interface PreparedClip {
 }
 
 /**
- * Every copy of one scheduled clip: one per Output that carries Announcements.
+ * Every copy of one scheduled clip: one per Output on the route it belongs to.
  *
  * The routed clip decides which device each opens; the waiting-to-be-loaded part
  * is this module's, because only an Announcement is played once, cold, at an
@@ -95,6 +95,13 @@ function prepare(url: string, destinations: readonly SoundDestination[]): Prepar
  *   every enabled Output carrying Announcements — read at the moment a plan
  *   arrives rather than held, so a device changed between shows takes effect
  *   without rebuilding the player.
+ *
+ *   A plan's routes are matched to these by delay, which is the same reading the
+ *   main process planned against unless the operator changed a delay in the
+ *   seconds between. That is why a route whose delay nothing now carries is
+ *   dropped rather than played on whatever is left: its times were computed for a
+ *   route that no longer exists, so playing them would put the whole utterance at
+ *   the wrong moment. The next Call is planned against the new setting.
  */
 export function createAnnouncementPlayer(
   getDestinations: () => readonly SoundDestination[],
@@ -132,21 +139,29 @@ export function createAnnouncementPlayer(
       if (!plan) return
 
       const destinations = getDestinations()
-      for (const scheduled of plan.clips) {
-        const copies = prepare(scheduled.url, destinations)
-        prepared.push(...copies)
+      // One route per delay, so a clip's `atMs` is only right for the Outputs
+      // with that delay. Each route is prepared against its own destinations,
+      // which is also why no copy is ever made for a route nothing carries.
+      for (const route of plan.routes) {
+        const routeDestinations = destinations.filter((d) => d.delayMs === route.delayMs)
+        if (routeDestinations.length === 0) continue
 
-        // A clip due now is played now rather than through a zero timer, so the
-        // first syllable is not pushed into the next frame.
-        if (scheduled.atMs <= 0) {
-          for (const copy of copies) speak(copy)
-          continue
-        }
-        timers.push(
-          setTimeout(() => {
+        for (const scheduled of route.clips) {
+          const copies = prepare(scheduled.url, routeDestinations)
+          prepared.push(...copies)
+
+          // A clip due now is played now rather than through a zero timer, so the
+          // first syllable is not pushed into the next frame.
+          if (scheduled.atMs <= 0) {
             for (const copy of copies) speak(copy)
-          }, scheduled.atMs),
-        )
+            continue
+          }
+          timers.push(
+            setTimeout(() => {
+              for (const copy of copies) speak(copy)
+            }, scheduled.atMs),
+          )
+        }
       }
     },
 

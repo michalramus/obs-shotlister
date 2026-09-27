@@ -20,7 +20,6 @@ function makeNumbers(ns: number[] = DEFAULT_COUNTDOWN): Map<number, Announcement
 
 function makeInput(overrides: Partial<ScheduleInput> = {}): ScheduleInput {
   return {
-    callId: 'call-1',
     leadMs: 15000,
     phrase: PHRASE,
     numbers: makeNumbers(),
@@ -58,10 +57,12 @@ describe('scheduleAnnouncement — countdown', () => {
     ])
   })
 
-  it('carries the callId through', () => {
-    const plan = scheduleAnnouncement(makeInput({ callId: 'call-42' }))
+  it('carries the delay of the Output it was scheduled for', () => {
+    // The renderer plays a route on the Outputs with that delay, so the plan has
+    // to say which delay it was built for.
+    const route = scheduleAnnouncement(makeInput({ outputDelayMs: 400 }))
 
-    expect(plan!.callId).toBe('call-42')
+    expect(route!.delayMs).toBe(400)
   })
 
   it('returns clips sorted by atMs ascending whatever order the countdown is in', () => {

@@ -17,13 +17,13 @@
 import { join } from 'node:path'
 import type Database from 'better-sqlite3'
 import type { Shot } from '../../shared/types'
-import type { AnnouncementPlan } from '../../shared/ipc-contract'
+import type { AnnouncementPlan, AnnouncementRoute } from '../../shared/ipc-contract'
 import { type AnnouncementClip, scheduleAnnouncement } from '../../shared/announcement'
 import { ENGINE_ID, clipHash, partClipHash } from '../../shared/render-plan'
 import { numberTexts } from '../../shared/number-text'
 import { targetIdOf } from '../../shared/rundown-item'
 import { toMediaUrl } from '../../shared/media-url'
-import { worstCaseDelayMs } from '../../shared/audio/outputs'
+import { soundDelaysMs } from '../../shared/audio/outputs'
 import { getAudioDevices, getEffectiveVoiceSettings } from '../ipc/settings'
 import { getPart } from '../ipc/parts'
 
@@ -32,7 +32,8 @@ import { CLIP_EXTENSION } from '../speech/cache'
 export interface AnnouncementBuilder {
   /**
    * The Announcement to speak before `call`, or `null` when there is nothing to
-   * say — no Part, nothing rendered, or no room left before the Call starts.
+   * say — no Part, nothing rendered, no Output carrying Announcements, or no room
+   * left before the Call starts.
    *
    * `leadMs` is how long the operator's plan says is left before `call` goes
    * live; cue times come back relative to now, so the caller issues the plan
@@ -97,18 +98,28 @@ export function createAnnouncementBuilder(
           if (clip) numbers.set(n, clip)
         }
 
-        return scheduleAnnouncement({
-          callId: call.id,
-          leadMs,
-          phrase,
-          numbers,
-          countdown: settings.countdown,
-          placement: settings.placement,
-          // The delay belongs to the Output, not to the Project: this plan is
-          // scheduled for the Output that needs the most warning, so nothing the
-          // band hears arrives late.
-          outputDelayMs: worstCaseDelayMs(getAudioDevices(db).outputs, 'voice'),
-        })
+        // One route per distinct delay among the Outputs that carry Announcements
+        // — usually one, at most two. Scheduling once at the largest delay and
+        // offsetting the copies would be simpler, but the filtering that drops a
+        // clip with no room left runs against that largest delay, so an Output
+        // with more room would silently lose a countdown number it had time for.
+        // The cost of doing it properly is one extra pass over five durations.
+        const routes: AnnouncementRoute[] = []
+        for (const outputDelayMs of soundDelaysMs(getAudioDevices(db).outputs, 'voice')) {
+          const route = scheduleAnnouncement({
+            leadMs,
+            phrase,
+            numbers,
+            countdown: settings.countdown,
+            placement: settings.placement,
+            outputDelayMs,
+          })
+          if (route) routes.push(route)
+        }
+
+        // Nothing to say on any route: `null` rather than an empty plan, so the
+        // caller's "a plan arriving cuts off what is speaking" stays one rule.
+        return routes.length > 0 ? { callId: call.id, routes } : null
       } catch (err) {
         // A show keeps running even when speech does not: a broken lookup must
         // never be able to abort the Next that asked for it.

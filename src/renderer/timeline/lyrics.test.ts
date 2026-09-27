@@ -140,7 +140,7 @@ describe('announcementProblemsByCallId', () => {
   const settings = {
     countdown: [10, 5, 3, 2, 1],
     placement: 'flush' as const,
-    outputDelayMs: 0,
+    worstOutputDelayMs: 0,
   }
 
   it('badges as dropped the Call whose phrase does not fit the Call before it', () => {
@@ -191,10 +191,19 @@ describe('announcementProblemsByCallId', () => {
     expect(announcementProblemsByCallId(items, phrase, settings).size).toBe(0)
   })
 
-  it('accounts for the path delay eating the lead', () => {
+  it("accounts for the worst Output's delay eating the lead", () => {
     const items = [item('a', 15000, { partId: 'short' }), item('b', 5000, { partId: 'short' })]
-    const withDelay = { ...settings, outputDelayMs: 400 }
+    const withDelay = { ...settings, worstOutputDelayMs: 400 }
     // Still plenty of room at 15s; the delay only shifts things.
     expect(announcementProblemsByCallId(items, phrase, withDelay).size).toBe(0)
+  })
+
+  it('badges against the worst Output, not against a route with room to spare', () => {
+    // 1.4s of lead is ample at no delay, but an Output that buffers a second
+    // leaves 400ms — not enough for 500ms of phrase. Somebody will not hear this
+    // Call named, so it is badged even though the operator's own speakers would.
+    const items = [item('a', 1400, { partId: 'short' }), item('b', 5000, { partId: 'short' })]
+    const withDelay = { ...settings, worstOutputDelayMs: 1000 }
+    expect(announcementProblemsByCallId(items, phrase, withDelay).get('b')).toBe('dropped')
   })
 })

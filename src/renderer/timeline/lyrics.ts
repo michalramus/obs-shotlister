@@ -103,17 +103,29 @@ export function lyricBlocks(lyrics: Lyric[], zoomPxPerSec: number, minWidthPx = 
 // defined once in shared/rundown-item — the Phone view needs the same answer.
 export { isUnassigned } from '../../shared/rundown-item'
 
-/**
- * How an Announcement settings affect what fits. Exactly the fields
- * {@link announcementShape} needs beyond the Call's own timings.
- */
 /** An Announcement shape worth warning about: everything but `full`. */
 export type AnnouncementProblem = Exclude<AnnouncementShape, 'full'>
 
+/**
+ * What decides whether an Announcement fits, beyond the Call's own timings.
+ * Exactly the fields {@link announcementShape} needs.
+ */
 export interface AnnouncementSettings {
   countdown: number[]
   placement: PhrasePlacement
-  outputDelayMs: number
+  /**
+   * The largest delay among the enabled Outputs that carry Announcements.
+   *
+   * A badge is a warning, so it is drawn against the worst case rather than an
+   * average or Output 1's: an Announcement that does not fit the most delayed
+   * Output is one somebody may not hear, and the operator has to be told while
+   * they can still lengthen the Call. The other Outputs get their own routes at
+   * show time and may well keep numbers this badge counted as lost — a badge that
+   * is pessimistic by a number is the harmless direction to be wrong in.
+   *
+   * {@link worstCaseDelayMs} computes it from the Outputs.
+   */
+  worstOutputDelayMs: number
 }
 
 /**
@@ -157,7 +169,7 @@ export function announcementProblemsByCallId(
           phraseDurationMs: phrase,
           countdown: settings.countdown,
           placement: settings.placement,
-          outputDelayMs: settings.outputDelayMs,
+          outputDelayMs: settings.worstOutputDelayMs,
         })
         if (shape !== 'full') problems.set(item.id, shape)
       }

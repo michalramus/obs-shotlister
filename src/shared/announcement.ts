@@ -14,7 +14,7 @@
  * a plan, and the renderer plays it (ADR 0002 — nothing here advances anything).
  */
 
-import type { ScheduledClip, AnnouncementPlan, PhrasePlacement } from './ipc-contract'
+import type { ScheduledClip, AnnouncementRoute, PhrasePlacement } from './ipc-contract'
 
 /**
  * The countdown a Project gets before it overrides anything. Exported so the
@@ -47,9 +47,7 @@ export interface AnnouncementClip {
 }
 
 export interface ScheduleInput {
-  /** The Call being announced — the next *visible* item, resolved by the caller. */
-  callId: string
-  /** How long the operator has until that Call is due, measured from now. */
+  /** How long the operator has until the Call is due, measured from now. */
   leadMs: number
   /** The phrase clip: "<part name> <connector>", e.g. "gitara za". */
   phrase: AnnouncementClip | null
@@ -58,13 +56,17 @@ export interface ScheduleInput {
   countdown: number[]
   placement: PhrasePlacement
   /**
-   * How long the audio path takes to reach the band, in milliseconds.
+   * How long the Output this plan is for takes to reach its listener, in
+   * milliseconds.
    *
-   * Announcements are piped into Mumble, which buffers: the band hears a clip
-   * some way after it is played. Every time here is a *play* time, so the whole
-   * utterance is shifted this much earlier to make the band hear it on the beat
-   * it was scheduled for. Positive is the normal case; negative plays later,
-   * for a path that somehow runs ahead.
+   * An Output feeding Mumble buffers: the band hears a clip some way after it is
+   * played. Every time here is a *play* time, so the whole utterance is shifted
+   * this much earlier to make the band hear it on the beat it was scheduled for.
+   * Positive is the normal case; negative plays later, for a route that somehow
+   * runs ahead.
+   *
+   * One plan per delay, so this is one Output's delay and never the worst of
+   * several: a route with more room keeps the numbers a slower one loses.
    *
    * Defaults to 0, which is the behaviour of a local speaker.
    */
@@ -132,18 +134,19 @@ export function announcementShape(input: AnnouncementShapeInput): AnnouncementSh
 }
 
 /**
- * Builds the plan for one Call, or `null` when nothing should be spoken.
+ * Builds one Output's route for one Call, or `null` when nothing should be spoken
+ * on it.
  *
  * `atMs` is measured from the moment the previous Call goes live, which is the
  * moment the plan is issued, so the renderer needs no clock of its own.
  *
  * `null` covers both "there is no room for the phrase" — which Edit mode badges
  * so the operator finds out while editing — and "there is nothing left to play
- * at all", because a plan with no clips would only cut off the Announcement in
+ * at all", because a route with no clips would only cut off the Announcement in
  * flight for no gain.
  */
-export function scheduleAnnouncement(input: ScheduleInput): AnnouncementPlan | null {
-  const { callId, leadMs, phrase, numbers, countdown, placement } = input
+export function scheduleAnnouncement(input: ScheduleInput): AnnouncementRoute | null {
+  const { leadMs, phrase, numbers, countdown, placement } = input
   const delayMs = input.outputDelayMs ?? 0
   const gapMs = input.phraseGapMs ?? PHRASE_GAP_MS
 
@@ -170,7 +173,7 @@ export function scheduleAnnouncement(input: ScheduleInput): AnnouncementPlan | n
 
   if (!phrase) {
     // Nothing to name, but the numbers still tell the band when.
-    return numberClips.length > 0 ? { callId, clips: sortByTime(numberClips) } : null
+    return numberClips.length > 0 ? { delayMs, clips: sortByTime(numberClips) } : null
   }
 
   const placed = placePhrase(placement, phrase, numberClips, leadMs, delayMs, gapMs)
@@ -181,7 +184,7 @@ export function scheduleAnnouncement(input: ScheduleInput): AnnouncementPlan | n
 
   const clips = [...placed.numbers, { url: phrase.url, atMs: placed.phraseAtMs }]
 
-  return { callId, clips: sortByTime(clips) }
+  return { delayMs, clips: sortByTime(clips) }
 }
 
 function sortByTime(clips: ScheduledClip[]): ScheduledClip[] {
