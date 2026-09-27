@@ -15,9 +15,15 @@ import {
   markLoopbackDevices,
   suggestLoopbackDevice,
   LOOPBACK_SUFFIX,
+  toggleProjectSelection,
+  summarizeClipSelection,
+  describeClipSelection,
+  deleteClipsConfirmation,
+  describeClipDeletion,
+  CONFIRM_NAMED_PROJECTS,
 } from './VoiceSettingsPanel'
 import { TRANSMISSION_DELAY_MAX_MS, TRANSMISSION_DELAY_MIN_MS } from '../../shared/announcement'
-import type { PartRenderState, RenderState } from '../../shared/ipc-contract'
+import type { PartRenderState, ProjectClipStats, RenderState } from '../../shared/ipc-contract'
 
 function part(name: string, state: RenderState): PartRenderState {
   return { partId: `id-${name}`, name, state }
@@ -337,5 +343,117 @@ describe('visibleRenderRows', () => {
 
   it('handles no parts at all', () => {
     expect(visibleRenderRows([], false)).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Deleting recordings, per Project
+// ---------------------------------------------------------------------------
+
+function stats(...rows: [string, string, number][]): ProjectClipStats[] {
+  return rows.map(([projectId, name, clipCount]) => ({ projectId, name, clipCount }))
+}
+
+const THREE = stats(['p1', 'Kolonia', 12], ['p2', 'Oboz', 0], ['p3', 'Zlot', 1])
+
+describe('toggleProjectSelection', () => {
+  it('ticks a project that was not picked', () => {
+    expect(toggleProjectSelection(['p1'], 'p2')).toEqual(['p1', 'p2'])
+  })
+
+  it('unticks one that was', () => {
+    expect(toggleProjectSelection(['p1', 'p2'], 'p1')).toEqual(['p2'])
+  })
+
+  it('never returns the same project twice', () => {
+    const once = toggleProjectSelection([], 'p1')
+    expect(toggleProjectSelection(once, 'p1')).toEqual([])
+  })
+})
+
+describe('summarizeClipSelection', () => {
+  it('adds up the exclusive counts of the picked projects only', () => {
+    expect(summarizeClipSelection(THREE, ['p1', 'p3'])).toEqual({ projects: 2, clips: 13 })
+  })
+
+  it('reports nothing for an empty selection', () => {
+    expect(summarizeClipSelection(THREE, [])).toEqual({ projects: 0, clips: 0 })
+  })
+
+  it('counts a project with no recordings of its own as a project still', () => {
+    // It is a real pick with a real outcome: nothing is freed, and the note has
+    // to be able to say so.
+    expect(summarizeClipSelection(THREE, ['p2'])).toEqual({ projects: 1, clips: 0 })
+  })
+
+  it('ignores a selected project the counts do not mention', () => {
+    // A Project deleted while the picker was open must not be counted as zero
+    // recordings *and* one project.
+    expect(summarizeClipSelection(THREE, ['p1', 'gone'])).toEqual({ projects: 1, clips: 12 })
+  })
+})
+
+describe('describeClipSelection', () => {
+  it('names the scale of what is about to go', () => {
+    expect(describeClipSelection(THREE, ['p1', 'p3'])).toBe(
+      '13 recordings from 2 projects will be deleted.',
+    )
+  })
+
+  it('says it in the singular for one project and one recording', () => {
+    expect(describeClipSelection(THREE, ['p3'])).toBe('1 recording from 1 project will be deleted.')
+  })
+
+  it('says nothing is picked rather than offering "0 recordings"', () => {
+    expect(describeClipSelection(THREE, [])).toBe('No project picked.')
+  })
+})
+
+describe('deleteClipsConfirmation', () => {
+  it('names how many recordings from how many projects', () => {
+    const text = deleteClipsConfirmation(THREE, ['p1', 'p3'])
+    expect(text).toContain('Delete 13 recordings from 2 projects?')
+  })
+
+  it('names the projects while there are few enough to read', () => {
+    const text = deleteClipsConfirmation(THREE, ['p1', 'p3'])
+    expect(text).toContain('Kolonia, Zlot')
+  })
+
+  it('falls back to the count once there are too many to name', () => {
+    const many = stats(
+      ...(Array.from({ length: CONFIRM_NAMED_PROJECTS + 1 }, (_, i) => [
+        `p${i}`,
+        `Project ${i}`,
+        1,
+      ]) as [string, string, number][]),
+    )
+    const text = deleteClipsConfirmation(
+      many,
+      many.map((row) => row.projectId),
+    )
+    expect(text).toContain(`from ${CONFIRM_NAMED_PROJECTS + 1} projects?`)
+    expect(text).not.toContain('Project 0,')
+  })
+
+  it('keeps both standing warnings, which are the reason it is a confirm at all', () => {
+    const text = deleteClipsConfirmation(THREE, ['p1'])
+    expect(text).toContain('shared with another project are kept')
+    expect(text).toContain('missing until you render again')
+  })
+})
+
+describe('describeClipDeletion', () => {
+  it('reports the total the deletions returned, not the total that was picked', () => {
+    expect(describeClipDeletion(13, 2)).toBe('Deleted 13 recordings from 2 projects.')
+  })
+
+  it('uses the singular for one recording from one project', () => {
+    expect(describeClipDeletion(1, 1)).toBe('Deleted 1 recording from 1 project.')
+  })
+
+  it('explains a deletion that freed nothing', () => {
+    expect(describeClipDeletion(0, 1)).toContain('had no recordings of its own')
+    expect(describeClipDeletion(0, 3)).toContain('had no recordings of their own')
   })
 })

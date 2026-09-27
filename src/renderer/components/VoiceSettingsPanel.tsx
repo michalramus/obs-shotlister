@@ -5,6 +5,7 @@ import type {
   GlobalVoiceSettings,
   PartRenderState,
   PhrasePlacement,
+  ProjectClipStats,
   ProjectVoiceSettings,
   RenderState,
   VirtualOutputState,
@@ -174,6 +175,101 @@ export const RENDER_ROWS_COLLAPSED = 5
  */
 export function visibleRenderRows(parts: PartRenderState[], expanded: boolean): PartRenderState[] {
   return expanded ? parts : parts.slice(0, RENDER_ROWS_COLLAPSED)
+}
+
+// ---------------------------------------------------------------------------
+// Deleting recordings, per Project
+//
+// Deleting is one-way and the cache is shared, so every number here exists to
+// stop the operator guessing: which Projects are picked, how many recordings
+// that actually frees, and the fact that a recording two Projects want is freed
+// by neither. The counts arrive from the main process already exclusive
+// (`ProjectClipStats`); nothing below recomputes one.
+// ---------------------------------------------------------------------------
+
+/** Adds or removes one Project from the picker's selection. */
+export function toggleProjectSelection(selected: readonly string[], projectId: string): string[] {
+  return selected.includes(projectId)
+    ? selected.filter((id) => id !== projectId)
+    : [...selected, projectId]
+}
+
+export interface ClipSelectionSummary {
+  /** Projects picked. Rows the stats do not know about are ignored. */
+  projects: number
+  /** Recordings those Projects would lose between them. */
+  clips: number
+}
+
+/**
+ * What the picked Projects add up to.
+ *
+ * Sums the exclusive counts, which is safe precisely because they are exclusive:
+ * no recording is counted twice, because a recording two Projects share is
+ * counted for neither.
+ */
+export function summarizeClipSelection(
+  stats: readonly ProjectClipStats[],
+  selected: readonly string[],
+): ClipSelectionSummary {
+  const picked = stats.filter((row) => selected.includes(row.projectId))
+  return {
+    projects: picked.length,
+    clips: picked.reduce((total, row) => total + row.clipCount, 0),
+  }
+}
+
+/** The line beside the picker's button, so the scale is visible before the confirm. */
+export function describeClipSelection(
+  stats: readonly ProjectClipStats[],
+  selected: readonly string[],
+): string {
+  const { projects, clips } = summarizeClipSelection(stats, selected)
+  if (projects === 0) return 'No project picked.'
+  return `${clips} recording${clips === 1 ? '' : 's'} from ${projects} project${
+    projects === 1 ? '' : 's'
+  } will be deleted.`
+}
+
+/** How many Projects the confirmation names before it falls back to a count. */
+export const CONFIRM_NAMED_PROJECTS = 3
+
+/**
+ * What the operator has to agree to before anything is deleted.
+ *
+ * Names the scale first — how many recordings from how many Projects — then the
+ * Projects themselves while there are few enough to read, and keeps both
+ * standing warnings: shared recordings survive, and the Parts will read as
+ * missing until they are rendered again.
+ */
+export function deleteClipsConfirmation(
+  stats: readonly ProjectClipStats[],
+  selected: readonly string[],
+): string {
+  const { projects, clips } = summarizeClipSelection(stats, selected)
+  const names = stats.filter((row) => selected.includes(row.projectId)).map((row) => row.name)
+
+  const head = `Delete ${clips} recording${clips === 1 ? '' : 's'} from ${projects} project${
+    projects === 1 ? '' : 's'
+  }?`
+  const who = names.length <= CONFIRM_NAMED_PROJECTS ? `\n\n${names.join(', ')}` : ''
+  return (
+    `${head}${who}\n\n` +
+    'Recordings shared with another project are kept. Parts are not touched — ' +
+    'they will read as missing until you render again.'
+  )
+}
+
+/** What the note line says once the deletions have run. */
+export function describeClipDeletion(removed: number, projects: number): string {
+  if (removed === 0) {
+    return projects === 1
+      ? 'Nothing deleted — that project had no recordings of its own.'
+      : 'Nothing deleted — those projects had no recordings of their own.'
+  }
+  return `Deleted ${removed} recording${removed === 1 ? '' : 's'} from ${projects} project${
+    projects === 1 ? '' : 's'
+  }.`
 }
 
 // ---------------------------------------------------------------------------
@@ -390,6 +486,15 @@ const s = {
     // Three buttons, and the middle one has a long label: wrapping beats
     // squeezing them on a narrow window.
     flexWrap: 'wrap' as const,
+  } satisfies React.CSSProperties,
+
+  /** The per-Project delete picker, set apart because everything in it deletes. */
+  picker: {
+    marginTop: '10px',
+    padding: '8px 10px',
+    border: '1px solid #7a3630',
+    borderRadius: '4px',
+    background: '#241d1d',
   } satisfies React.CSSProperties,
 
   toggleRow: {
@@ -903,15 +1008,43 @@ function RenderStateSection({ projectId }: RenderStateSectionProps): React.JSX.E
   const renderMissing = useAppStore((st) => st.renderMissing)
   const cleanOrphanClips = useAppStore((st) => st.cleanOrphanClips)
   const deleteProjectClips = useAppStore((st) => st.deleteProjectClips)
+  const loadProjectClipStats = useAppStore((st) => st.loadProjectClipStats)
   const openAppDataDir = useAppStore((st) => st.openAppDataDir)
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [partsExpanded, setPartsExpanded] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [clipStats, setClipStats] = useState<ProjectClipStats[] | null>(null)
+  // The Project on screen starts picked, which is the deletion the single
+  // button used to be. Every other Project has to be ticked on purpose.
+  const [selectedProjects, setSelectedProjects] = useState<string[]>([projectId])
 
   const parts = renderSummary?.parts ?? []
   const summary = summarizeRenderStates(parts)
   const rendering = renderSummary?.rendering === true
+  const selection = summarizeClipSelection(clipStats ?? [], selectedProjects)
+
+  /**
+   * Counts every Project's recordings again.
+   *
+   * Asked for when the picker opens and after every deletion: a count is a
+   * listing of the cache against every Project's render plan, and it is wrong
+   * the moment anything is rendered or deleted.
+   */
+  const refreshClipStats = useCallback(async (): Promise<void> => {
+    setClipStats(await loadProjectClipStats())
+  }, [loadProjectClipStats])
+
+  // Recounted when the picker opens and whenever a render stops, which is the
+  // other thing that changes what is on disk. Not on every pushed summary: a
+  // batch pushes one per clip, and each count is a whole cache listing.
+  useEffect(() => {
+    if (!pickerOpen) return
+    refreshClipStats().catch((err: unknown) =>
+      setError(err instanceof Error ? err.message : 'Could not count the recordings.'),
+    )
+  }, [pickerOpen, rendering, refreshClipStats])
 
   function handleRenderMissing(): void {
     setError(null)
@@ -944,19 +1077,23 @@ function RenderStateSection({ projectId }: RenderStateSectionProps): React.JSX.E
     )
   }
 
-  function handleDeleteAll(): void {
-    const confirmed = window.confirm(
-      "Delete this project's recordings?\n\n" +
-        'Recordings shared with another project are kept. Parts are not touched — ' +
-        'they will read as missing until you render again.',
-    )
-    if (!confirmed) return
+  function handleDeleteSelected(): void {
+    if (clipStats === null || selectedProjects.length === 0) return
+    if (!window.confirm(deleteClipsConfirmation(clipStats, selectedProjects))) return
+
+    const picked = [...selectedProjects]
     runCacheAction(
-      () => deleteProjectClips(projectId),
-      (removed) =>
-        removed === 0
-          ? 'Nothing deleted — this project had no recordings of its own.'
-          : `Deleted ${removed} recording${removed === 1 ? '' : 's'}.`,
+      async () => {
+        // One Project at a time, through the same call the single button used:
+        // the main process keeps one deletion path, so the rule about shared
+        // recordings is applied once and the refusals it makes are per Project
+        // rather than half-way through a batch it had to invent.
+        let removed = 0
+        for (const id of picked) removed += await deleteProjectClips(id)
+        await refreshClipStats()
+        return removed
+      },
+      (removed) => describeClipDeletion(removed, picked.length),
     )
   }
 
@@ -1009,11 +1146,12 @@ function RenderStateSection({ projectId }: RenderStateSectionProps): React.JSX.E
             opacity: locked ? 0.5 : 1,
             cursor: locked ? 'default' : 'pointer',
           }}
-          onClick={handleDeleteAll}
+          onClick={() => setPickerOpen((on) => !on)}
           disabled={locked}
-          title="Delete this project's recordings — for an archived project that no longer needs them"
+          aria-expanded={pickerOpen}
+          title="Choose which projects' recordings to delete — for projects that no longer need them"
         >
-          Delete this project's recordings
+          {pickerOpen ? '▾' : '▸'} Delete recordings...
         </button>
         {/*
           Never disabled by `locked`: looking at the folder is the one thing that
@@ -1027,6 +1165,69 @@ function RenderStateSection({ projectId }: RenderStateSectionProps): React.JSX.E
           Open app folder
         </button>
       </div>
+      {pickerOpen && (
+        <div style={s.picker}>
+          <p style={s.hint}>
+            Each count is the recordings only that project uses, so the counts do not add up to the
+            size of the cache — a recording two projects share is freed by neither.
+          </p>
+          {clipStats === null && <p style={s.hint}>Counting recordings...</p>}
+          {clipStats !== null && clipStats.length === 0 && (
+            <p style={s.hint}>There are no projects yet.</p>
+          )}
+          {clipStats !== null && clipStats.length > 0 && (
+            <table style={s.table}>
+              <thead>
+                <tr>
+                  <th style={s.th}>Delete</th>
+                  <th style={s.th}>Project</th>
+                  <th style={s.th}>Recordings</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clipStats.map((row) => (
+                  <tr key={row.projectId}>
+                    <td style={s.td}>
+                      <input
+                        type="checkbox"
+                        checked={selectedProjects.includes(row.projectId)}
+                        onChange={() =>
+                          setSelectedProjects((picked) =>
+                            toggleProjectSelection(picked, row.projectId),
+                          )
+                        }
+                        disabled={locked}
+                        aria-label={`Delete the recordings of ${row.name}`}
+                      />
+                    </td>
+                    <td style={s.td}>
+                      {row.name}
+                      {row.projectId === projectId ? ' (open)' : ''}
+                    </td>
+                    <td style={s.td}>{row.clipCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div style={s.cacheRow}>
+            <button
+              style={{
+                ...s.dangerBtn,
+                opacity: locked || selection.projects === 0 ? 0.5 : 1,
+                cursor: locked || selection.projects === 0 ? 'default' : 'pointer',
+              }}
+              onClick={handleDeleteSelected}
+              disabled={locked || selection.projects === 0}
+              title="Delete the recordings of every ticked project"
+            >
+              Delete selected recordings
+            </button>
+            <span style={s.hint}>{describeClipSelection(clipStats ?? [], selectedProjects)}</span>
+          </div>
+        </div>
+      )}
+
       {error !== null && <p style={s.errorText}>{error}</p>}
       {note !== null && <p style={s.noteText}>{note}</p>}
 

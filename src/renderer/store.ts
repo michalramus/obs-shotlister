@@ -20,6 +20,7 @@ import type {
   PartScope,
   PartUpsertInput,
   LyricUpsertInput,
+  ProjectClipStats,
   ProjectRenderSummary,
   AudioDeviceSettings,
   EffectiveVoiceSettings,
@@ -111,6 +112,13 @@ interface AppStore {
   cleanOrphanClips: (projectId: string) => Promise<number>
   /** Deletes this Project's audio; resolves with how many clips went. */
   deleteProjectClips: (projectId: string) => Promise<number>
+  /**
+   * How many recordings each Project alone uses, so the picker is not blind.
+   *
+   * Returned rather than held in the store: only the Voice panel's picker asks,
+   * and the answer goes stale the moment anything is rendered or deleted.
+   */
+  loadProjectClipStats: () => Promise<ProjectClipStats[]>
   /** Opens the app's data folder in Finder/Explorer; resolves with its path. */
   openAppDataDir: () => Promise<string>
 
@@ -584,12 +592,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   deleteProjectClips: async (projectId) => {
     const removed = await window.api.speech.deleteProjectClips({ projectId })
-    await get().loadRenderSummary(projectId)
-    // Deleting audio changes what Edit mode knows a Part's phrase to be worth
-    // as surely as rendering it does.
-    await get().loadPhraseDurations(projectId)
+    // Only when it is the Project on screen: the summary and the phrase
+    // durations are the *active* Project's, so loading another Project's would
+    // put its Parts in the panel and its lengths on the timeline. Deleting
+    // another Project's recordings cannot change this one's anyway — a clip the
+    // two share is never deleted.
+    if (get().activeProjectId === projectId) {
+      await get().loadRenderSummary(projectId)
+      // Deleting audio changes what Edit mode knows a Part's phrase to be worth
+      // as surely as rendering it does.
+      await get().loadPhraseDurations(projectId)
+    }
     return removed
   },
+
+  loadProjectClipStats: async () => window.api.speech.projectClipStats(),
 
   // Audio output devices
   loadAudioDevices: async () => {
