@@ -45,11 +45,13 @@ interface PartRenderRow {
  * which is what makes changing the Voice report *stale* rather than *missing* —
  * a clip still exists and would play, it just says it in the wrong voice.
  */
-function lastRenderedByPart(db: Database.Database, voice: string): Map<string, string> {
-  const rows = db
+function partRenderRows(db: Database.Database): PartRenderRow[] {
+  return db
     .prepare('SELECT part_id, voice, hash FROM part_renders WHERE engine = ?')
     .all(ENGINE_ID) as PartRenderRow[]
+}
 
+function lastRenderedFrom(rows: PartRenderRow[], voice: string): Map<string, string> {
   // Any row first, then let the current Voice overwrite it. Two passes rather
   // than one conditional, because "prefer this voice, else anything" is not
   // expressible in a single pass without depending on row order.
@@ -57,6 +59,67 @@ function lastRenderedByPart(db: Database.Database, voice: string): Map<string, s
   for (const row of rows) if (!byPart.has(row.part_id)) byPart.set(row.part_id, row.hash)
   for (const row of rows) if (row.voice === voice) byPart.set(row.part_id, row.hash)
   return byPart
+}
+
+function lastRenderedByPart(db: Database.Database, voice: string): Map<string, string> {
+  return lastRenderedFrom(partRenderRows(db), voice)
+}
+
+/**
+ * What every Project wants, in one pass.
+ *
+ * The four questions below — what is orphaned, what needs measuring, what only
+ * one Project claims, and what each Project's delete button would remove — are
+ * all answered from the same table. Asked separately they cost a render plan
+ * per Project per question, and `projectClipStats` asked `clipsOnlyUsedBy` once
+ * per Project, each of which walked every *other* Project: P² plans, each one a
+ * full scan of `part_renders`, all synchronous on the thread that also drives
+ * OBS. Ten Projects meant a hundred plans when the Voice panel opened.
+ */
+interface RenderDemand {
+  /** Hashes each Project wants, keyed by Project id. */
+  wantedByProject: Map<string, Set<string>>
+  /** Every wanted item, so a hash can be turned back into text and Voice. */
+  itemsByHash: Map<string, RenderPlanItem>
+  /** How many Projects claim each hash. */
+  claimants: Map<string, number>
+}
+
+function renderDemand(db: Database.Database, cached: Iterable<string>): RenderDemand {
+  const rows = partRenderRows(db)
+  const perVoice = new Map<string, Map<string, string>>()
+  const countdownNumberTexts = numberTexts()
+
+  const wantedByProject = new Map<string, Set<string>>()
+  const itemsByHash = new Map<string, RenderPlanItem>()
+  const claimants = new Map<string, number>()
+
+  const projects = db.prepare('SELECT id FROM projects').all() as { id: string }[]
+  for (const { id } of projects) {
+    const settings = getEffectiveVoiceSettings(db, id)
+    let lastRendered = perVoice.get(settings.voice)
+    if (!lastRendered) {
+      lastRendered = lastRenderedFrom(rows, settings.voice)
+      perVoice.set(settings.voice, lastRendered)
+    }
+    const plan = computeRenderPlan({
+      parts: listParts(db, id),
+      connector: settings.connector,
+      voice: settings.voice,
+      engine: ENGINE_ID,
+      cachedHashes: cached,
+      lastRendered,
+      countdownNumberTexts,
+    })
+    const mine = new Set<string>()
+    for (const item of plan.wanted) {
+      mine.add(item.hash)
+      if (!itemsByHash.has(item.hash)) itemsByHash.set(item.hash, item)
+    }
+    for (const hash of mine) claimants.set(hash, (claimants.get(hash) ?? 0) + 1)
+    wantedByProject.set(id, mine)
+  }
+  return { wantedByProject, itemsByHash, claimants }
 }
 
 /** The render plan for one Project, against the clips actually on disk. */
@@ -118,16 +181,11 @@ export function missingClips(
  */
 export function orphanedClips(db: Database.Database, cachedHashes: Iterable<string>): string[] {
   const cached = [...cachedHashes]
-  const projects = db.prepare('SELECT id FROM projects').all() as { id: string }[]
-
-  // With no Projects at all nothing is wanted, so everything cached is orphaned.
-  let orphans = new Set(cached)
-  for (const { id } of projects) {
-    const sweepable = new Set(projectRenderPlan(db, id, cached).toSweep)
-    orphans = new Set([...orphans].filter((hash) => sweepable.has(hash)))
-    if (orphans.size === 0) break
-  }
-  return [...orphans]
+  // A Project's `toSweep` is exactly the cache minus what it wants, so the
+  // intersection across every Project is the cache minus what any of them
+  // wants. With no Projects at all nothing is wanted and everything is orphaned.
+  const { claimants } = renderDemand(db, cached)
+  return cached.filter((hash) => !claimants.has(hash))
 }
 
 /**
@@ -157,14 +215,8 @@ export function clipsNeedingDurations(
     (db.prepare('SELECT hash FROM speech_clips').all() as { hash: string }[]).map((r) => r.hash),
   )
 
-  const projects = db.prepare('SELECT id FROM projects').all() as { id: string }[]
-  const byHash = new Map<string, RenderPlanItem>()
-  for (const { id } of projects) {
-    for (const item of projectRenderPlan(db, id, cached).wanted) {
-      if (cached.has(item.hash) && !known.has(item.hash)) byHash.set(item.hash, item)
-    }
-  }
-  return [...byHash.values()]
+  const { itemsByHash } = renderDemand(db, cached)
+  return [...itemsByHash.values()].filter((item) => cached.has(item.hash) && !known.has(item.hash))
 }
 
 /**
@@ -184,22 +236,12 @@ export function clipsOnlyUsedBy(
   projectId: string,
   cachedHashes: Iterable<string>,
 ): string[] {
-  const cached = [...cachedHashes]
-  const mine = new Set(
-    projectRenderPlan(db, projectId, cached)
-      .wanted.map((item) => item.hash)
-      .filter((hash) => cached.includes(hash)),
-  )
-  if (mine.size === 0) return []
-
-  const others = db.prepare('SELECT id FROM projects WHERE id != ?').all(projectId) as {
-    id: string
-  }[]
-  for (const { id } of others) {
-    for (const item of projectRenderPlan(db, id, cached).wanted) mine.delete(item.hash)
-    if (mine.size === 0) break
-  }
-  return [...mine]
+  const cached = new Set(cachedHashes)
+  const { wantedByProject, claimants } = renderDemand(db, cached)
+  const mine = wantedByProject.get(projectId)
+  if (!mine) return []
+  // Claimed by exactly one Project, and that Project is this one.
+  return [...mine].filter((hash) => cached.has(hash) && claimants.get(hash) === 1)
 }
 
 /**
@@ -218,12 +260,15 @@ export function projectClipStats(
   db: Database.Database,
   cachedHashes: Iterable<string>,
 ): ProjectClipStats[] {
-  const cached = [...cachedHashes]
-  return listProjects(db).map((project) => ({
-    projectId: project.id,
-    name: project.name,
-    clipCount: clipsOnlyUsedBy(db, project.id, cached).length,
-  }))
+  const cached = new Set(cachedHashes)
+  const { wantedByProject, claimants } = renderDemand(db, cached)
+  return listProjects(db).map((project) => {
+    const mine = wantedByProject.get(project.id)
+    const clipCount = mine
+      ? [...mine].filter((hash) => cached.has(hash) && claimants.get(hash) === 1).length
+      : 0
+    return { projectId: project.id, name: project.name, clipCount }
+  })
 }
 
 /**
