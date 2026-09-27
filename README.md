@@ -27,10 +27,9 @@ A rundown is one of two Kinds. A **Camera Rundown** holds Shots and switches OBS
 - **Phone monitor** — embedded Express + Socket.io server pushes state to LAN browsers in real time; a Voice-over Rundown shows unfiltered, named by its parts
 - **Cue Tray** — small companion app for the video switching computer that plays the countdown and beep over the LAN
 - **OSC server** — accept `/obsque/next` and `/obsque/skip` commands from external controllers
-- **Intercom output** — plays a copy of every cue and announcement into a loopback device, so Mumble (or any voice client) can carry the show to an intercom
+- **Two configurable outputs** — each picks a device, what it carries (announcements, cues or both) and how early to play it, so the operator's speakers and a loopback device feeding Mumble are both just outputs
 - **DaVinci Resolve import** — import shot list from Resolve CSV marker export
 - **Export / Import** — rundown, project, or full database in JSON, carrying kinds, parts, calls and lyrics
-- **Separate audio routes** — operator cues and announcements each play on their own output device, so announcements can feed a virtual cable into Mumble
 
 ## Tech stack
 
@@ -103,8 +102,8 @@ All settings are stored in SQLite and configured from the app UI.
 | OBS WebSocket url/password, scene mappings | Header → **Connections** → OBS |
 | OSC server port | Header → **Connections** → OSC |
 | Mute countdown, mute beep, cue volume | Header → speaker icon |
-| Voice, connector, countdown numbers, phrase placement, auto rendering, output devices, announcement delay | Header → speaker icon → **Voice & audio settings…** |
-| Intercom output (device, on/off) | Header → speaker icon → **Voice & audio settings…** |
+| Voice, connector, countdown numbers, phrase placement, auto rendering | Header → speaker icon → **Voice & audio settings…** |
+| Output 1 and Output 2 — device, delay, what each carries | Header → speaker icon → **Voice & audio settings…** → Outputs |
 | Camera names, colors, OBS scene mappings | Header → **⚙ Project** → Cameras… |
 | Parts (voice-over) | Header → **⚙ Project** → Parts… |
 | Rename / delete project | Header → **⚙ Project** |
@@ -239,18 +238,28 @@ closing it quits, so the program can never become something you can neither see 
 See `tray/README.md` for building it and for how the cue timing is kept identical to the
 operator window.
 
-## Intercom output
+## Outputs
 
-Everything the show produces — countdown cues, beeps, spoken announcements — can be played a
-second time into a loopback device, so a voice client on the same machine picks it up as a
-microphone and carries it to the intercom.
+The app plays into two outputs, and each one says three things: which **device** it reaches, how
+long that route takes to get there (its **delay**), and what it **carries** — announcements,
+countdown and beeps, or both.
 
-It **duplicates**: the operator keeps hearing everything on their own devices. Reference media is
-never routed, so scrubbing a rehearsal video does not reach the band. Muting the countdown or the beep
-silences the operator's own copy only — the intercom keeps its feed, exactly as the Cue Tray does.
+**Output 1** is your own. It is always on, it is the copy the mute buttons silence, and it is the
+only one that falls back to the system default when its device disappears. **Output 2** has a
+switch and is a second listener — typically a loopback device a voice client picks up as a
+microphone and carries to the band.
 
-**Enable:** Header → speaker icon → **Voice & audio settings…** → Intercom output → toggle on,
-pick the device, press **Test**.
+They **duplicate**, never divide: nothing is taken away from your own speakers. Reference media is
+never routed, so scrubbing a rehearsal video does not reach the band. Muting the countdown or the
+beep silences your own copy only — output 2 keeps its feed, exactly as the Cue Tray does.
+
+A **delay plays a sound earlier**, not later. Mumble buffers, so a clip is heard well after it is
+played: set output 2's delay to what its route costs and everything that output carries — the
+spoken part name and the countdown beep alike — is played that much ahead, and lands on the beat.
+Your own speakers need no delay.
+
+**Set up:** Header → speaker icon → **Voice & audio settings…** → Outputs → switch output 2 on,
+pick the device, type its delay, choose what it carries, press **Test**.
 
 ### Where the device comes from
 
@@ -265,7 +274,7 @@ plug-in and Windows a driver, so there the app detects a known device, marks it 
 picker, and tells you what to install when there is none. It never runs an installer. See
 `docs/adr/0008-the-virtual-output-is-created-only-where-the-os-allows-it.md`.
 
-On Linux the sink is created at start (when the setting is on) and removed at quit:
+On Linux the sink is created at start and removed at quit:
 
 ```bash
 pactl load-module module-null-sink \
@@ -276,8 +285,9 @@ pactl load-module module-null-sink \
 An existing `shotlister_out` is reused rather than duplicated, and only a sink this app loaded is
 unloaded again — one you set up by hand outlives the app.
 
-A device that disappears mid-show costs the intercom its copy and nothing else: the operator's own
-cues and announcements keep playing. Full behaviour in `specs/intercom-output.md`.
+A device that disappears mid-show costs output 2 its copy and nothing else: output 1 keeps playing,
+and output 1 is the only one that falls back to the system default. Full behaviour in
+`specs/outputs.md`.
 
 ## OSC server
 

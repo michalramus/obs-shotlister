@@ -78,13 +78,15 @@ Hidden and Skipped Calls extend the countdown exactly as they do for the Cue Tra
 - Collisions: an Announcement starting while another is in flight cuts the old one off.
   Never queued.
 - Skip stops any in-flight Announcement immediately.
-- **Path delay**: Mumble buffers, so the band hears a clip well after it plays. A global
-  delay setting shifts the whole utterance that much earlier, so what the band *hears*
-  lands where it was scheduled. Global rather than per-Project, like the output device it
-  compensates for: it describes the machine's route to the band, not the show. Numbers the
-  shift pushes before the previous Call are dropped, exactly as a short Call already drops
-  them. Under *immediate* placement nothing can play before now, so the delay eats into the
-  time the band has to hear the name instead.
+- **Output delay**: Mumble buffers, so the band hears a clip well after it plays. Each Output
+  carries its own delay, which shifts the whole utterance that much earlier so what its
+  listener *hears* lands where it was scheduled. A property of that route and never of the
+  show. The Announcement is planned once **per distinct delay** among the Outputs that carry
+  Announcements — one route each (ADR 0010) — so a nearer listener keeps a number a slower
+  route has no room for. Numbers the shift pushes before the previous Call are dropped on that
+  route, exactly as a short Call already drops them. Under *immediate* placement nothing can
+  play before now, so the delay eats into the time the listener has to hear the name instead.
+  Edit mode badges against the **worst** delay of the enabled voice-carrying Outputs.
 
 ## Rendering
 
@@ -119,9 +121,10 @@ platform; Voice is a global setting with a Project override.
 ## Playback
 
 Playback is in the renderer via `HTMLAudioElement.setSinkId`, matching where the existing
-countdown Cues already play. Two independent output device selectors: one for the existing
-Cues, one for Announcements, so Announcements can be piped to a virtual cable feeding
-Mumble while the operator keeps Cues on their own speakers.
+countdown Cues already play. Where a clip goes is the two Outputs' answer, not this feature's:
+an Announcement plays on every enabled Output that carries Announcements, which is how it can
+feed a virtual cable into Mumble while the operator keeps their Cues on their own speakers.
+See `specs/outputs.md`.
 
 ## Authoring
 

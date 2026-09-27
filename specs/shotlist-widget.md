@@ -33,10 +33,12 @@ Types imported from `src/shared/types.ts`.
 
 The widget decides *which* Cue fires and *when* — the countdown, the beep, the
 filtered-Camera beep, and the silence a Voice-over Rundown keeps because it speaks
-its own countdown. It decides nothing about *how* a Cue reaches a device: the Cue
-player owns the elements, the output devices and the Intercom output copy
-(`src/shared/audio/cue-player.ts`). The operator window passes a player that can
-name an Intercom output; the Phone view passes one that cannot.
+its own countdown — and, because each Output has its own delay, *for which delay*:
+one Cue crosses one moment per delay (`src/shared/audio/cue-schedule.ts`). It
+decides nothing about *how* a Cue reaches a device: the Cue player owns the
+elements and the Outputs (`src/shared/audio/cue-player.ts`). The operator window
+passes a player that can be pointed at the Outputs; the Phone view passes one that
+cannot — a handset has one output and no business naming another.
 
 ## Layout
 

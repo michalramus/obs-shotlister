@@ -81,22 +81,37 @@ the countdown numbers, played from clips rendered ahead of the show. Never a Cue
 a fixed sound the Cue Tray plays.
 _Avoid_: cue, prompt, callout, TTS
 
-**Path delay**:
-How long the Announcement output route takes to reach the band — Mumble buffers, so a clip
-is heard well after it is played. Announcements are scheduled this much earlier so the band
-hears them on the beat. A property of the machine's audio route, not of the show.
-_Avoid_: latency, lag, offset, lead
+**Announcement route**:
+One Output Delay's worth of an Announcement: the clips to play and the moments to play them,
+built for that Delay alone. An Announcement is planned once per distinct Delay among the
+Outputs that Carry it, so a nearer listener keeps a countdown number a slower route has no
+room for.
+_Avoid_: plan, copy, channel, track
 
-**Intercom output**:
-A second output device that receives everything the show produces — every Cue and every
-Announcement — alongside the operator's own devices, so a voice-chat client on this machine
-can carry it to the intercom. Duplicates; it never moves sound away from the operator.
-_Avoid_: bus, mix, send, feed
+**Output**:
+One of the two places the app's sound goes: a device, a Delay, and what it Carries. Output 1
+is the operator's own — the copy their mute button silences, always enabled — and Output 2 is
+a second listener, typically a Virtual output a voice-chat client sends on to the band. The
+two duplicate; an Output never takes sound away from another.
+_Avoid_: sink, destination, bus, channel, send, intercom output
+
+**Carries**:
+Which kinds of sound one Output plays: Announcements, Cues, or both. A sound no Output
+Carries is never heard, which is an operator choosing silence and not a fault.
+_Avoid_: routes, sends, includes, filter
+
+**Delay**:
+How long one Output's route takes to reach its listener — Mumble buffers, so a clip is heard
+well after it is played. Everything that Output Carries is played this much *earlier* to
+compensate, Cues as much as Announcements, so the listener hears it on the beat. A property
+of that route, never of the show, and each Output has its own.
+_Avoid_: latency, lag, offset, lead, path delay
 
 **Virtual output**:
-The loopback device the Intercom output plays into, named *Shotlister Out*: audio written to
-it comes back as a recordable input the intercom client can select. Created by the app where
-the OS allows it, and otherwise a third-party device the app only finds.
+A loopback device an Output can be pointed at — the app's own is named *Shotlister Out*:
+audio written to it comes back as a recordable input a voice-chat client can select. Created
+by the app where the OS allows it, and otherwise a third-party device the app only finds. It
+is a device an Output names, never an Output of its own.
 _Avoid_: cable, sink, virtual mic, device
 
 **Voice**:
