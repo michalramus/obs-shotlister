@@ -448,6 +448,47 @@ describe('the playhead loop, edit mode', () => {
     }
   })
 
+  it('runs on the wall clock while the media reports no position', () => {
+    // Reference media whose file has been moved or deleted: the host still has an
+    // element and still knows the offset, but the element will never report a
+    // position. The port says so by reporting a null clock, and the Playhead has
+    // to keep moving — the operator sees a dead transport otherwise.
+    const h = harness()
+    h.media.offsetMs = 5000
+    h.media.currentTimeSec = null
+    h.playhead.playEdit()
+
+    const positions: number[] = []
+    for (let i = 0; i < 10; i++) {
+      h.step(1)
+      positions.push(h.playhead.positionMs())
+    }
+
+    // Not pinned to the offset, and advancing one frame at a time.
+    expect(positions[0]).toBeCloseTo(FRAME_MS, 6)
+    for (let i = 1; i < positions.length; i++) {
+      expect(positions[i]).toBeGreaterThan(positions[i - 1])
+    }
+  })
+
+  it('picks the media clock up as soon as it starts reporting', () => {
+    // The same null clock, for the ordinary reason: the element has been told to
+    // play and its first frame has not arrived. The wall clock covers the gap and
+    // hands over without the loop restarting.
+    const h = harness()
+    h.media.offsetMs = 0
+    h.media.currentTimeSec = null
+    h.playhead.playEdit()
+    h.step(5)
+    const scheduledBefore = h.scheduled()
+
+    h.media.currentTimeSec = 30
+    h.step(1)
+
+    expect(h.playhead.positionMs()).toBe(30_000)
+    expect(h.scheduled()).toBe(scheduledBefore + 1)
+  })
+
   it('leaves the origin alone when media is attached mid-playback', () => {
     const h = harness()
     h.playhead.playEdit()

@@ -140,6 +140,21 @@ function renderTimeline(
   return { rerender: (next) => result.rerender(tree(next)) }
 }
 
+/**
+ * The transport's position readout, `m:ss.t`.
+ *
+ * Read from the DOM rather than from committed state on purpose: it is painted
+ * every frame and committed rarely, so it is the closest thing a test has to what
+ * the operator is looking at.
+ */
+function readout(): string {
+  const span = [...document.querySelectorAll('span')].find((el) =>
+    /^\d+:\d\d\.\d$/.test(el.textContent ?? ''),
+  )
+  if (!span) throw new Error('no playhead readout on screen')
+  return span.textContent ?? ''
+}
+
 describe('edit-mode playback frame budget', () => {
   beforeEach(() => {
     window.localStorage.clear()
@@ -227,6 +242,43 @@ describe('edit-mode playback frame budget', () => {
     })
 
     expect(play).toHaveBeenCalled()
+  })
+
+  it('keeps the playhead moving when the Reference media file is missing', () => {
+    // `App` mounts a <video> for any video-extension path without checking the
+    // file is there, so a Rundown whose Reference media has been moved or deleted
+    // still hands the timeline an element. That element reports `currentTime` 0
+    // for good, and `editPlayheadMs` treats any media clock as authoritative: the
+    // Playhead used to snap to the media offset on the first frame and sit there
+    // for the rest of playback, with the transport showing as playing. Reference
+    // media with a bare audio path never did this, because its `Audio` element is
+    // only built after `mediaFileExists` — which is what made the freeze look
+    // intermittent.
+    const clock = installFrameClock(() => document.querySelector('.timeline-scroll'))
+    // jsdom loads nothing, so a fresh element is exactly a media element whose
+    // file has not arrived: readyState HAVE_NOTHING and no time of its own.
+    const video = document.createElement('video')
+    expect(video.readyState).toBe(HTMLMediaElement.HAVE_NOTHING)
+
+    renderTimeline(() => {}, {
+      mediaVideoRef: { current: video },
+      rundownMedia: { filePath: '/gone/reference.mp4', offsetMs: 8000 },
+    })
+
+    act(() => {
+      screen.getByTitle('Play/Pause (Space)').click()
+    })
+
+    const positions: string[] = []
+    for (let i = 0; i < 4; i++) {
+      clock.step(10)
+      positions.push(readout())
+    }
+
+    // Never parked on the media offset, and further along on every sample.
+    expect(positions).not.toContain('0:08.0')
+    expect(new Set(positions).size).toBe(positions.length)
+    expect(positions.at(-1)).not.toBe('0:00.0')
   })
 
   it('never reads layout from the per-frame paint path', () => {
