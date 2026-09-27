@@ -774,3 +774,101 @@ describe('the timeline is read-only in Live mode', () => {
     })
   })
 })
+
+/**
+ * The assignment strip's thickness — the operator's complaint that a two-line
+ * strip of Part buttons was "too thick".
+ *
+ * The strip was a hard 48px and that same 48 was summed into the timeline's total
+ * height, so a wrapped second line had nowhere to go. The height is derived from a
+ * measurement now (`timeline/assignment-strip.ts`), which is only worth anything
+ * if the component measures the box that actually wraps and the total reads the
+ * same value the strip does. Neither can be asserted without mounting: jsdom has
+ * no layout, so the measurement is stubbed and the observer driven by hand.
+ */
+describe('the assignment strip grows from one line to two', () => {
+  let offsetHeight: PropertyDescriptor | undefined
+
+  afterEach(() => {
+    cleanup()
+    if (offsetHeight) Object.defineProperty(HTMLElement.prototype, 'offsetHeight', offsetHeight)
+    offsetHeight = undefined
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  /**
+   * Reports the heights a browser would lay out: `contentPx` for the strip's
+   * content box, `buttonPx` for each button in it.
+   */
+  function stubLayout(contentPx: number, buttonPx: number): void {
+    offsetHeight ??= Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetHeight')
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get(this: HTMLElement): number {
+        return this.tagName === 'BUTTON' ? buttonPx : contentPx
+      },
+    })
+  }
+
+  /** The measured content box: the Camera buttons' immediate parent. */
+  function content(): HTMLElement {
+    const button = screen.getByTitle('Split at playhead and assign CAM1 Wide')
+    const el = button.parentElement
+    if (!(el instanceof HTMLElement)) throw new Error('no assignment content box')
+    return el
+  }
+
+  function strip(): HTMLElement {
+    const el = content().parentElement
+    if (!(el instanceof HTMLElement)) throw new Error('no assignment strip')
+    return el
+  }
+
+  /** The timeline's fixed total height, which the strip is one term of. */
+  function timelineHeight(): string {
+    const el = strip().parentElement
+    if (!(el instanceof HTMLElement)) throw new Error('no timeline root')
+    return el.style.height
+  }
+
+  it('leaves one line at the height it always had', () => {
+    stubLayout(29, 29)
+    renderTimeline(() => {})
+
+    expect(strip().style.height).toBe('48px')
+    // 36 + 20 + 50 + 34 + 30 + 60 + 48 + 24: the sum before any of this.
+    expect(timelineHeight()).toBe('302px')
+    expect(strip().style.overflowY).toBe('hidden')
+  })
+
+  it('grows to fit a second line, and the timeline with it', () => {
+    stubLayout(29 * 2 + 6, 29)
+    renderTimeline(() => {})
+
+    // Two 29px lines, a 6px gap between them, 6px padding either side, 1px border.
+    expect(strip().style.height).toBe('77px')
+    expect(timelineHeight()).toBe(`${302 - 48 + 77}px`)
+    // Both lines fit, so there is nothing to scroll to.
+    expect(strip().style.overflowY).toBe('hidden')
+  })
+
+  it('stops at two lines and scrolls the rest', () => {
+    stubLayout(29 * 4 + 18, 29)
+    renderTimeline(() => {})
+
+    expect(strip().style.height).toBe('77px')
+    expect(timelineHeight()).toBe(`${302 - 48 + 77}px`)
+    expect(strip().style.overflowY).toBe('auto')
+    // A centred overflow puts its first line above the scrollport, out of reach.
+    expect(strip().style.alignItems).toBe('flex-start')
+  })
+
+  it('keeps the Camera buttons on one line, scrolling sideways', () => {
+    stubLayout(29, 29)
+    renderTimeline(() => {})
+
+    expect(content().style.flexWrap).toBe('nowrap')
+    expect(strip().style.overflowX).toBe('auto')
+  })
+})
