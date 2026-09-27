@@ -3,17 +3,20 @@
  *
  * Both players in the app — the Cue player and the Announcement player — face the
  * same three facts about Chromium's output routing, and each used to solve them
- * its own way, which is why the Intercom output had to be built twice and why two
- * later fixes only landed on one side:
+ * its own way, which is why a second destination had to be built twice and why
+ * two later fixes only landed on one side:
  *
  * - `setSinkId` is async, so a device is opened *ahead* of the sound, never at it;
- * - the Intercom output duplicates rather than moves, so one sound is as many
- *   elements as it has destinations;
- * - a duplicate that misses its device must go silent rather than fall back onto
- *   the operator's own speakers, where it would be heard twice.
+ * - an Output duplicates rather than moves, so one sound is as many elements as
+ *   it has destinations;
+ * - a copy that misses its device must go silent rather than fall back onto the
+ *   operator's own speakers, where it would be heard twice.
  *
  * This module owns all three. Which sound plays at which moment is the callers'
- * business and stays with them.
+ * business and stays with them, and *which* Outputs carry a sound is
+ * ./outputs.ts — re-exported below, so a player has one import for routing while
+ * the main process can still ask the same question without meeting an audio
+ * element.
  */
 
 /** `setSinkId` is not in the DOM lib but is what Chromium exposes. */
@@ -34,37 +37,15 @@ export function createAudioElement(url: string): RoutableAudio {
   return audio
 }
 
-/**
- * The devices one sound is heard on. `null` is the system default.
- *
- * @param primary The device this sound's own setting names.
- * @param intercom The Intercom output, or `null` when it is off or unchosen.
- */
-export interface SoundSinks {
-  primary: string | null
-  intercom: string | null
-}
+import type { SoundDestination } from './outputs'
 
-/**
- * The devices to play a sound on, primary first.
- *
- * The Intercom output duplicates rather than moves: a Cue or an Announcement is
- * played again on the loopback device an intercom client records, while the
- * operator keeps hearing it on their own. That makes "the device for this sound"
- * a list everywhere audio is played, and this is the one place that decides what
- * is in it.
- */
-export function outputTargets(
-  primary: string | null,
-  intercom: string | null,
-): readonly (string | null)[] {
-  // The same device twice is two elements playing the same clip into one output:
-  // audibly a stutter, not a duplicate. It happens the moment somebody points
-  // the Announcement selector at the Virtual output and then switches the
-  // Intercom output on as well, which is a reasonable thing to try.
-  if (intercom === null || intercom === primary) return [primary]
-  return [primary, intercom]
-}
+export {
+  soundDestinations,
+  soundDelaysMs,
+  worstCaseDelayMs,
+  type SoundDestination,
+  type SoundKind,
+} from './outputs'
 
 /** One sound on its way to one device. */
 export interface RoutedClip {
@@ -85,8 +66,11 @@ export interface RoutedClip {
 }
 
 /**
- * @param duplicate True for the Intercom output's copy, which is held to a
- *   stricter rule than the operator's own: it is heard on its device or nowhere.
+ * @param duplicate True for the copy of an Output that is not Output 1. It is
+ *   held to a stricter rule than the operator's own: it is heard on its device or
+ *   nowhere. Output 1 is the operator's own device, so it is the one copy that
+ *   may fall back — a copy meant for the band leaking into the operator's ears
+ *   is every sound twice in the ear that has to hear the countdown.
  */
 export function createRoutedClip(
   url: string,
@@ -113,12 +97,12 @@ export function createRoutedClip(
       },
       (err: unknown) => {
         if (duplicate) {
-          // The Intercom output's copy is a copy. Played on the operator's own
-          // device by mistake it is every sound heard twice in their ear, so it
-          // is muted instead: the element stays pooled and starts sounding again
-          // the moment the device comes back.
+          // Output 2's copy is a copy. Played on the operator's own device by
+          // mistake it is every sound heard twice in their ear, so it is muted
+          // instead: the element stays pooled and starts sounding again the
+          // moment the device comes back.
           audio.muted = true
-          console.error('[audio] intercom output unavailable, muting its copy:', err)
+          console.error('[audio] output unavailable, muting its copy:', err)
           return
         }
         // A device unplugged since it was chosen must not silence the operator —
@@ -154,77 +138,105 @@ export function createRoutedClip(
 }
 
 /**
- * One sound and every device it is heard on: the operator's own, plus the
- * Intercom output's copy.
+ * One sound and every destination it is heard on: Output 1's copy, and Output 2's.
  *
- * Separate elements per device rather than one element retargeted per sound:
+ * Separate elements per destination rather than one element retargeted per sound:
  * `setSinkId` is async and a beep is 200ms, so a retargeted element would still
  * be opening the device when the sound was due.
  */
 export interface RoutedSound {
   /**
-   * The clips, primary first. Exposed for a caller that has to gate each copy
-   * separately; playing all of them is what {@link RoutedSound.play} is for.
+   * The clips, Output 1's first. Exposed for a caller that has to gate each copy
+   * separately; playing them is what {@link RoutedSound.play} is for.
    */
   readonly clips: readonly RoutedClip[]
-  /**
-   * Plays on every device.
-   *
-   * @param silentToOperator Silences the operator's own copy only. Their mute
-   *   button is about their ears: the Cue Tray is not silenced by it either, and
-   *   the intercom is another listener, not a speaker on this desk. Muting the
-   *   beep to concentrate must not take the band's countdown away.
-   */
-  play: (silentToOperator?: boolean) => void
-  /** Re-points the existing elements, adding or dropping the intercom copy. */
-  setSinks: (sinks: SoundSinks) => void
+  /** What each clip is for, in the same order. */
+  readonly destinations: readonly SoundDestination[]
+  /** Plays on the destinations {@link PlayOptions} names. */
+  play: (options?: PlayOptions) => void
+  /** Re-points the existing elements, adding or dropping a copy. */
+  setDestinations: (destinations: readonly SoundDestination[]) => void
   setVolume: (volume: number) => void
   /** Releases every element. */
   release: () => void
 }
 
+export interface PlayOptions {
+  /**
+   * Silences Output 1's copy only, never the other. The operator's mute button is
+   * about their ears: the Cue Tray is not silenced by it either, and the band is
+   * another listener rather than a speaker on this desk. Muting the beep to
+   * concentrate must not take the band's countdown away.
+   */
+  silentToOperator?: boolean
+  /**
+   * Play only the copies of the Outputs with this delay — one moment's worth of
+   * the sound. Omitted plays every destination, which is what a sound nobody can
+   * schedule ahead (a Cue reacting to a Next just pressed) has to do.
+   */
+  delayMs?: number
+}
+
 export function createRoutedSound(
   url: string,
-  sinks: SoundSinks,
+  destinations: readonly SoundDestination[],
   createElement: AudioElementFactory,
   volume = 1,
 ): RoutedSound {
   let clips: RoutedClip[] = []
+  let current: SoundDestination[] = []
   let currentVolume = volume
 
-  function sync(next: SoundSinks): void {
-    const targets = outputTargets(next.primary, next.intercom)
-    // The Intercom output's copy exists only while there is an intercom to feed:
-    // another preloaded element per Cue is not free, and a phone never has one.
-    while (clips.length > targets.length) clips.pop()?.release()
-    targets.forEach((target, index) => {
+  function sync(next: readonly SoundDestination[]): void {
+    // A copy exists only while an Output wants it: another preloaded element per
+    // Cue is not free, and a phone only ever has one.
+    while (clips.length > next.length) {
+      clips.pop()?.release()
+      current.pop()
+    }
+    next.forEach((destination, index) => {
       const clip = clips[index]
-      if (clip) {
-        clip.route(target)
+      // Whether a copy may fall back to the default device is decided when its
+      // element is made, so a destination that changes from Output 1's to another
+      // Output's is rebuilt rather than re-pointed. It happens when Output 1 stops
+      // carrying the sound, and re-pointing would leave the band's copy able to
+      // land in the operator's ear.
+      if (clip && current[index]?.primary === destination.primary) {
+        clip.route(destination.sinkId)
+        current[index] = destination
         return
       }
-      const fresh = createRoutedClip(url, target, createElement, index > 0)
+      clip?.release()
+      const fresh = createRoutedClip(url, destination.sinkId, createElement, !destination.primary)
       fresh.setVolume(currentVolume)
-      clips.push(fresh)
+      clips[index] = fresh
+      current[index] = destination
     })
   }
 
-  sync(sinks)
+  sync(destinations)
 
   return {
     get clips() {
       return clips
     },
-    play(silentToOperator = false) {
-      // In order, so the operator's own copy — index 0, the one that must not be
-      // dropped — starts first. The copies after it are never awaited: the
-      // intercom must not be able to delay or fail the sound they listen for.
+    get destinations() {
+      return current
+    },
+    play(options = {}) {
+      const { silentToOperator = false, delayMs } = options
+      // In order, so Output 1's copy — the one that must not be dropped — starts
+      // first. The copies after it are never awaited: another listener must not be
+      // able to delay or fail the sound the operator is listening for.
       clips.forEach((clip, index) => {
-        if (index === 0 && silentToOperator) return
+        const destination = current[index]
+        if (!destination) return
+        if (delayMs !== undefined && destination.delayMs !== delayMs) return
+        if (destination.primary && silentToOperator) return
         clip.play()
       })
     },
-    setSinks: sync,
+    setDestinations: sync,
     setVolume(next) {
       currentVolume = next
       for (const clip of clips) clip.setVolume(next)
@@ -232,6 +244,7 @@ export function createRoutedSound(
     release() {
       for (const clip of clips) clip.release()
       clips = []
+      current = []
     },
   }
 }

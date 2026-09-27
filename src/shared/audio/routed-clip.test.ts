@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { outputTargets, createRoutedClip, createRoutedSound } from './routed-clip'
+import { createRoutedClip, createRoutedSound, type SoundDestination } from './routed-clip'
 import { fakeAudioWorld } from './fake-audio.fixture'
 
 afterEach(() => {
@@ -11,26 +11,15 @@ function silenceErrors(): void {
   vi.spyOn(console, 'error').mockImplementation(() => {})
 }
 
-describe('outputTargets', () => {
-  it('plays on one device when the intercom is off', () => {
-    expect(outputTargets('speakers', null)).toEqual(['speakers'])
-    expect(outputTargets(null, null)).toEqual([null])
-  })
+/** Output 1's copy: the operator's own, and the only one that may fall back. */
+function own(sinkId: string | null, delayMs = 0): SoundDestination {
+  return { sinkId, delayMs, primary: true }
+}
 
-  it('adds the intercom as a second destination, primary first', () => {
-    // Primary first matters: it is the copy that must not be dropped, and the
-    // players treat every copy after the first as expendable.
-    expect(outputTargets('speakers', 'shotlister-out')).toEqual(['speakers', 'shotlister-out'])
-    expect(outputTargets(null, 'shotlister-out')).toEqual([null, 'shotlister-out'])
-  })
-
-  it('does not play the same device twice', () => {
-    // Pointing the sound's own selector at the Virtual output and then switching
-    // the intercom on as well is a reasonable thing to try, and two elements into
-    // one device is a stutter rather than a duplicate.
-    expect(outputTargets('shotlister-out', 'shotlister-out')).toEqual(['shotlister-out'])
-  })
-})
+/** Output 2's copy: heard on its device or nowhere. */
+function copyTo(sinkId: string | null, delayMs = 0): SoundDestination {
+  return { sinkId, delayMs, primary: false }
+}
 
 describe('createRoutedClip', () => {
   it('opens the device when the clip is made, not when it is played', () => {
@@ -51,7 +40,7 @@ describe('createRoutedClip', () => {
     expect(world.elements[0].routes).toEqual(['', 'speakers', ''])
   })
 
-  it('keeps a duplicate muted until its routing lands', async () => {
+  it("keeps another Output's copy muted until its routing lands", async () => {
     const world = fakeAudioWorld()
     createRoutedClip('beep.opus', 'shotlister-out', world.create, true)
     const copy = world.elements[0]
@@ -63,7 +52,7 @@ describe('createRoutedClip', () => {
     expect(copy.muted).toBe(false)
   })
 
-  it('leaves a duplicate muted when its device never opens', async () => {
+  it("leaves another Output's copy muted when its device never opens", async () => {
     silenceErrors()
     const world = fakeAudioWorld()
     createRoutedClip('beep.opus', 'shotlister-out', world.create, true)
@@ -106,65 +95,59 @@ describe('createRoutedClip', () => {
 describe('createRoutedSound', () => {
   const url = 'beep.opus'
 
-  it("plays on the operator's own device and on the Intercom output", async () => {
+  it("plays on the operator's own device and on the second Output", async () => {
     const world = fakeAudioWorld()
-    const sound = createRoutedSound(
-      url,
-      { primary: 'speakers', intercom: 'shotlister-out' },
-      world.create,
-    )
+    const sound = createRoutedSound(url, [own('speakers'), copyTo('shotlister-out')], world.create)
     await world.landRoutes()
 
     sound.play()
 
-    const [own, copy] = world.for(url)
-    expect(own.routes).toEqual(['speakers'])
+    const [operator, copy] = world.for(url)
+    expect(operator.routes).toEqual(['speakers'])
     expect(copy.routes).toEqual(['shotlister-out'])
-    expect([own.plays, copy.plays]).toEqual([1, 1])
-    expect([own.audible, copy.audible]).toEqual([true, true])
+    expect([operator.plays, copy.plays]).toEqual([1, 1])
+    expect([operator.audible, copy.audible]).toEqual([true, true])
   })
 
-  it('plays once when both destinations name the same device', () => {
+  it("silences Output 1's copy only, never the other", async () => {
     const world = fakeAudioWorld()
-    const sound = createRoutedSound(
-      url,
-      { primary: 'shotlister-out', intercom: 'shotlister-out' },
-      world.create,
-    )
-
-    sound.play()
-
-    // One element, played once: two into one device is a stutter, not a duplicate.
-    expect(world.for(url)).toHaveLength(1)
-    expect(world.for(url)[0].plays).toBe(1)
-  })
-
-  it("silences the operator's copy only, never the intercom's", async () => {
-    const world = fakeAudioWorld()
-    const sound = createRoutedSound(
-      url,
-      { primary: 'speakers', intercom: 'shotlister-out' },
-      world.create,
-    )
+    const sound = createRoutedSound(url, [own('speakers'), copyTo('shotlister-out')], world.create)
     await world.landRoutes()
 
-    sound.play(true)
+    sound.play({ silentToOperator: true })
 
-    const [own, copy] = world.for(url)
-    expect(own.plays).toBe(0)
+    const [operator, copy] = world.for(url)
+    expect(operator.plays).toBe(0)
     expect(copy.plays).toBe(1)
     expect(copy.audible).toBe(true)
   })
 
-  it('re-routes the same elements when the devices change', () => {
+  it('plays one moment at a time when the Outputs have different delays', async () => {
     const world = fakeAudioWorld()
     const sound = createRoutedSound(
       url,
-      { primary: 'speakers', intercom: 'shotlister-out' },
+      [own('speakers', 0), copyTo('shotlister-out', 400)],
       world.create,
     )
+    await world.landRoutes()
 
-    sound.setSinks({ primary: 'headphones', intercom: 'shotlister-out' })
+    sound.play({ delayMs: 400 })
+
+    // The early copy plays 400ms before the one the operator hears: the trigger
+    // fires twice, and each play names the moment it is for.
+    const [operator, copy] = world.for(url)
+    expect([operator.plays, copy.plays]).toEqual([0, 1])
+
+    sound.play({ delayMs: 0 })
+
+    expect([operator.plays, copy.plays]).toEqual([1, 1])
+  })
+
+  it('re-routes the same elements when the devices change', () => {
+    const world = fakeAudioWorld()
+    const sound = createRoutedSound(url, [own('speakers'), copyTo('shotlister-out')], world.create)
+
+    sound.setDestinations([own('headphones'), copyTo('shotlister-out')])
 
     // The elements are pooled: a new one would have to fetch and decode before it
     // could sound, and the next beep may be 200ms away.
@@ -173,17 +156,13 @@ describe('createRoutedSound', () => {
     expect(world.elements[1].routes).toEqual(['shotlister-out', 'shotlister-out'])
   })
 
-  it('drops the intercom copy when the Intercom output is switched off', async () => {
+  it('drops the second copy when its Output stops carrying the sound', async () => {
     const world = fakeAudioWorld()
-    const sound = createRoutedSound(
-      url,
-      { primary: 'speakers', intercom: 'shotlister-out' },
-      world.create,
-    )
+    const sound = createRoutedSound(url, [own('speakers'), copyTo('shotlister-out')], world.create)
     await world.landRoutes()
     const copy = world.elements[1]
 
-    sound.setSinks({ primary: 'speakers', intercom: null })
+    sound.setDestinations([own('speakers')])
     sound.play()
 
     expect(copy.pauses).toBe(1)
@@ -191,13 +170,39 @@ describe('createRoutedSound', () => {
     expect(world.elements[0].plays).toBe(1)
   })
 
+  it("rebuilds a copy that becomes the operator's own, rather than re-pointing it", async () => {
+    silenceErrors()
+    const world = fakeAudioWorld()
+    // Output 1 stopped carrying the sound, so the only copy left is the band's.
+    const sound = createRoutedSound(url, [copyTo('shotlister-out')], world.create)
+
+    sound.setDestinations([own('shotlister-out')])
+    await world.landRoutes()
+
+    // Whether a copy may fall back to the default device is settled when its
+    // element is made, so re-pointing would leave the operator's own copy muted
+    // the moment its device went away.
+    expect(world.elements).toHaveLength(2)
+    expect(world.elements[1].muted).toBe(false)
+  })
+
   it('sets the volume on every device, including a copy added later', () => {
     const world = fakeAudioWorld()
-    const sound = createRoutedSound(url, { primary: 'speakers', intercom: null }, world.create)
+    const sound = createRoutedSound(url, [own('speakers')], world.create)
 
     sound.setVolume(0.5)
-    sound.setSinks({ primary: 'speakers', intercom: 'shotlister-out' })
+    sound.setDestinations([own('speakers'), copyTo('shotlister-out')])
 
     expect(world.elements.map((audio) => audio.volume)).toEqual([0.5, 0.5])
+  })
+
+  it('plays nothing at all when no Output carries the sound', () => {
+    const world = fakeAudioWorld()
+    const sound = createRoutedSound(url, [], world.create)
+
+    sound.play()
+
+    // An operator choosing silence, not a fault.
+    expect(world.elements).toHaveLength(0)
   })
 })

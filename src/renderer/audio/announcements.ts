@@ -10,8 +10,8 @@
  *
  * Nothing is ever synthesised here: every clip already exists on disk (ADR
  * 0005) and this only schedules and plays. How a clip reaches a device — and how
- * the Intercom output gets its copy — is src/shared/audio/routed-clip.ts, shared
- * with the Cue player.
+ * each Output gets its copy — is src/shared/audio/routed-clip.ts, shared with the
+ * Cue player.
  *
  * Deliberately untested, per the issue's testing decisions: what is left here is
  * timers, and everything worth asserting on was decided upstream in the pure
@@ -23,7 +23,7 @@ import {
   createAudioElement,
   createRoutedSound,
   type RoutedClip,
-  type SoundSinks,
+  type SoundDestination,
 } from '../../shared/audio/routed-clip'
 
 export interface AnnouncementPlayer {
@@ -62,14 +62,14 @@ interface PreparedClip {
 }
 
 /**
- * Every copy of one scheduled clip: the operator's, and the Intercom output's.
+ * Every copy of one scheduled clip: one per Output that carries Announcements.
  *
- * The routed clip decides how many there are and which device each opens; the
- * waiting-to-be-loaded part is this module's, because only an Announcement is
- * played once, cold, at an exact moment.
+ * The routed clip decides which device each opens; the waiting-to-be-loaded part
+ * is this module's, because only an Announcement is played once, cold, at an
+ * exact moment.
  */
-function prepare(url: string, sinks: SoundSinks): PreparedClip[] {
-  const sound = createRoutedSound(url, sinks, createAudioElement)
+function prepare(url: string, destinations: readonly SoundDestination[]): PreparedClip[] {
+  const sound = createRoutedSound(url, destinations, createAudioElement)
   return sound.clips.map((clip) => {
     const buffered = new Promise<void>((resolve) => {
       // `canplaythrough` rather than `canplay`: these clips are under a second,
@@ -91,11 +91,14 @@ function prepare(url: string, sinks: SoundSinks): PreparedClip[] {
 }
 
 /**
- * @param getSinks The devices this Announcement is to be heard on: the one the
- *   Announcement setting names, plus the Intercom output when it is on, so the
- *   band hears the Announcement without it being taken away from the operator.
+ * @param getDestinations The destinations this Announcement is to be heard on —
+ *   every enabled Output carrying Announcements — read at the moment a plan
+ *   arrives rather than held, so a device changed between shows takes effect
+ *   without rebuilding the player.
  */
-export function createAnnouncementPlayer(getSinks: () => SoundSinks): AnnouncementPlayer {
+export function createAnnouncementPlayer(
+  getDestinations: () => readonly SoundDestination[],
+): AnnouncementPlayer {
   let timers: ReturnType<typeof setTimeout>[] = []
   let prepared: PreparedClip[] = []
 
@@ -128,9 +131,9 @@ export function createAnnouncementPlayer(getSinks: () => SoundSinks): Announceme
       cancel()
       if (!plan) return
 
-      const sinks = getSinks()
+      const destinations = getDestinations()
       for (const scheduled of plan.clips) {
-        const copies = prepare(scheduled.url, sinks)
+        const copies = prepare(scheduled.url, destinations)
         prepared.push(...copies)
 
         // A clip due now is played now rather than through a zero timer, so the
