@@ -255,3 +255,110 @@ describe('exporting and importing the whole database', () => {
     expect(db.prepare('SELECT * FROM lyrics ORDER BY id').all()).toEqual(before.lyrics)
   })
 })
+
+/**
+ * The file picker filters on *.json, so the wrong pick is an ordinary mistake
+ * rather than an exotic one. Every one of these used to empty the database:
+ * importDatabase deleted seven tables before it read the payload.
+ */
+describe('import refuses anything that is not one of our exports', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openMemoryDb()
+    seed(db)
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  function rowCounts(): Record<string, number> {
+    const counts: Record<string, number> = {}
+    for (const table of ['projects', 'cameras', 'rundowns', 'shots', 'parts', 'lyrics']) {
+      counts[table] = (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n
+    }
+    return counts
+  }
+
+  const notOurs: ReadonlyArray<readonly [string, unknown]> = [
+    ['a package.json', { name: 'obs-queuer', version: '0.1.2', scripts: {} }],
+    ['an OBS scene collection', { name: 'Untitled', scenes: [], sources: [] }],
+    ['a rundown export', { version: 1, rundown: { id: 'r' }, shots: [] }],
+    ['a newer format version', { version: 2, projects: [], cameras: [], rundowns: [], shots: [] }],
+    ['a bare array', []],
+    ['null', null],
+  ]
+
+  for (const [what, payload] of notOurs) {
+    it(`leaves every row in place when handed ${what}`, () => {
+      const before = rowCounts()
+      expect(() => importDatabase(db, payload)).toThrow()
+      expect(rowCounts()).toEqual(before)
+    })
+  }
+
+  it('refuses a database export whose sections are not lists', () => {
+    const before = rowCounts()
+    expect(() =>
+      importDatabase(db, {
+        version: 1,
+        projects: [],
+        cameras: [],
+        rundowns: [],
+        shots: 'nope',
+      }),
+    ).toThrow(/not a list/)
+    expect(rowCounts()).toEqual(before)
+  })
+
+  it('still accepts a genuine export', () => {
+    const before = rowCounts()
+    importDatabase(db, exportDatabase(db))
+    expect(rowCounts()).toEqual(before)
+  })
+
+  it('refuses a project import that is not a project export', () => {
+    const projectsBefore = rowCounts()['projects']
+    expect(() => importProject(db, { version: 1, rundown: {} })).toThrow()
+    expect(rowCounts()['projects']).toBe(projectsBefore)
+  })
+
+  it('refuses a rundown import that is not a rundown export', () => {
+    const rundownsBefore = rowCounts()['rundowns']
+    expect(() => importRundown(db, 'p1', { hello: 'world' })).toThrow()
+    expect(rowCounts()['rundowns']).toBe(rundownsBefore)
+  })
+})
+
+/**
+ * A partial import used to commit everything written before the throw, leaving
+ * a half-imported Project for the operator to find and delete by hand.
+ */
+describe('a failed import leaves nothing behind', () => {
+  let db: Database.Database
+
+  beforeEach(() => {
+    db = openMemoryDb()
+    seed(db)
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('rolls back a project whose lyric is missing its text', () => {
+    const payload = exportProject(db, 'p1') as {
+      project: unknown
+      rundowns: Array<{ lyrics: Array<{ text: string | null }> }>
+    }
+    // NOT NULL on lyrics.text — this throws after the project, its cameras,
+    // its rundowns and its shots have all been written.
+    const withBadLyric = structuredClone(payload)
+    withBadLyric.rundowns[0]!.lyrics = [{ text: null } as unknown as { text: string | null }]
+
+    const projectsBefore = db.prepare('SELECT COUNT(*) AS n FROM projects').get() as { n: number }
+    expect(() => importProject(db, withBadLyric)).toThrow()
+    expect(db.prepare('SELECT COUNT(*) AS n FROM projects').get()).toEqual(projectsBefore)
+  })
+})

@@ -53,7 +53,18 @@ export function exportRundown(db: Database.Database, rundownId: string): object 
         ORDER BY p.number ASC`,
     )
     .all(rundownId)
-  return { version: 1, rundown, shots, markers, lyrics, parts }
+  // Without these the importer has nothing to match on and binds every Shot to
+  // the source database's camera ids — which name another Project's Cameras on
+  // the same machine, and nothing at all on a different one.
+  const cameras = db
+    .prepare(
+      `SELECT DISTINCT c.* FROM cameras c
+         JOIN shots s ON s.camera_id = c.id
+        WHERE s.rundown_id = ?
+        ORDER BY c.number ASC`,
+    )
+    .all(rundownId)
+  return { version: 1, rundown, cameras, shots, markers, lyrics, parts }
 }
 
 export function exportDatabase(db: Database.Database): object {
@@ -71,8 +82,40 @@ export function exportDatabase(db: Database.Database): object {
 
 // --- Import ---
 
+// The file picker filters on *.json, which is a far wider net than "a file this
+// app wrote": an OBS scene collection, a package.json and a rundown export all
+// pass it. Every import therefore proves the payload is ours before touching a
+// row — importDatabase in particular used to delete seven tables first and read
+// the payload afterwards, so the wrong pick emptied the database outright.
+function assertImportShape(data: unknown, required: readonly string[], what: string): void {
+  if (typeof data !== 'object' || data === null) {
+    throw new Error(`This file is not a Shotlister ${what} export.`)
+  }
+  const obj = data as Record<string, unknown>
+  if (obj['version'] !== 1) {
+    const found = obj['version'] === undefined ? 'none' : String(obj['version'])
+    throw new Error(
+      `This file is not a Shotlister ${what} export (export format version: ${found}).`,
+    )
+  }
+  for (const key of required) {
+    if (!(key in obj) || obj[key] === null || obj[key] === undefined) {
+      throw new Error(`This ${what} export is missing its "${key}" section and cannot be imported.`)
+    }
+  }
+}
+
 // Camera collision: match by number within project, reuse existing ID
 export function importProject(db: Database.Database, data: any): string {
+  assertImportShape(data, ['project'], 'project')
+  // One transaction, as importDatabase already had: a lyric missing its text
+  // used to throw only after the project, its cameras, its rundowns and its
+  // shots were committed, leaving a half-imported project to be found and
+  // deleted by hand.
+  return db.transaction(() => importProjectRows(db, data))()
+}
+
+function importProjectRows(db: Database.Database, data: any): string {
   const projectId = randomUUID()
   const now = Date.now()
   db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(
@@ -213,12 +256,18 @@ function insertPart(db: Database.Database, id: string, projectId: string, part: 
 }
 
 export function importRundown(db: Database.Database, projectId: string, data: any): string {
+  assertImportShape(data, ['rundown'], 'rundown')
+  return db.transaction(() => importRundownRows(db, projectId, data))()
+}
+
+function importRundownRows(db: Database.Database, projectId: string, data: any): string {
   const rundownId = randomUUID()
   const now = Date.now()
   const existingCameras: any[] = db
     .prepare('SELECT * FROM cameras WHERE project_id = ?')
     .all(projectId) as any[]
   const camByNumber = new Map<number, string>(existingCameras.map((c: any) => [c.number, c.id]))
+  const camIdsHere = new Set<string>(existingCameras.map((c: any) => String(c.id)))
 
   db.prepare(
     'INSERT INTO rundowns (id, project_id, name, created_at, order_index, folder, kind) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -260,9 +309,18 @@ export function importRundown(db: Database.Database, projectId: string, data: an
   for (const shot of data.shots ?? []) {
     const importedCams: any[] = data.cameras ?? []
     const importedCam = importedCams.find((c: any) => c.id === shot.camera_id)
+    // Camera number is the portable identity; the id is not. An unmatched
+    // Camera leaves the Shot unassigned rather than pointing at a row in
+    // another Project — a Shot the operator can see and fix beats a Shot whose
+    // Camera silently resolves to nothing in the shotlist, the phone view and
+    // the OBS switcher.
     const targetCameraId = importedCam
-      ? (camByNumber.get(importedCam.number) ?? shot.camera_id)
-      : shot.camera_id
+      ? (camByNumber.get(importedCam.number) ?? null)
+      : // Exports written before Rundown export carried `cameras` have no
+        // number to match on; keep the id only if it names a Camera here.
+        camIdsHere.has(String(shot.camera_id))
+        ? shot.camera_id
+        : null
     insertItem(db, {
       ...itemFieldsFrom(shot),
       rundownId,
@@ -287,6 +345,15 @@ export function importRundown(db: Database.Database, projectId: string, data: an
 }
 
 export function importDatabase(db: Database.Database, data: any): void {
+  // Before the transaction, not inside it: the check exists so a wrong pick is
+  // refused outright, and refusing is clearer than rolling back.
+  assertImportShape(data, ['projects', 'cameras', 'rundowns', 'shots'], 'database')
+  for (const key of ['projects', 'cameras', 'rundowns', 'shots', 'markers', 'parts', 'lyrics']) {
+    const value = data[key]
+    if (value !== undefined && !Array.isArray(value)) {
+      throw new Error(`This database export is malformed: "${key}" is not a list.`)
+    }
+  }
   db.transaction(() => {
     db.exec('DELETE FROM lyrics')
     db.exec('DELETE FROM markers')

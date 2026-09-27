@@ -191,15 +191,15 @@ const writers: WriterCase[] = [
       seed(db, 'p2', 'rd2')
       const rundownId = importRundown(db, 'p2', payload)
       const [imported] = listItems(db, rundownId)
-      // A Part matches the receiving Project's own by name. A Rundown is
-      // exported without Cameras, so there is nothing to match a Camera on and
-      // its id passes through as it stood.
+      // A Part matches the receiving Project's own by name, and a Camera
+      // matches on number — the portable identity. Both resolve to p2's own
+      // rows, never to the exporting Project's.
       return {
         actual: rawRow(db, imported.id),
         expected: {
           id: imported.id,
           rundown_id: rundownId,
-          camera_id: 'cam-p1',
+          camera_id: 'cam-p2',
           part_id: 'pt-p2',
           order_index: 0,
           ...FULL_ITEM,
