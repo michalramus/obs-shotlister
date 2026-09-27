@@ -13,6 +13,25 @@ In a Voice-over Rundown, Next's side effect is a spoken Announcement instead of 
 switch, and starting is refused while any item is unassigned. See
 `specs/voice-over-rundowns.md`.
 
+## The timeline is read-only while a Live session runs
+
+"Editing is forbidden" covers the pointer as well as the keyboard. Every Grab goes through one
+adapter in `TimelineEditor`, which refuses to start while `running === true` unless the Grab's own
+spec declares itself view-only — so a Grab added later is refused by default rather than by
+somebody remembering. Refused: the Shot boundary resize, the extend-last-item drag, the Marker
+move, the Reference media offset, the Lyric edge drag, adding a Marker by double-click, a Marker's
+label edit and delete, a Lyric's re-word and delete, importing or clearing Reference media, the
+context menu, and the Camera and Part buttons that split at the Playhead.
+
+Still allowed, because none of it writes anything: scrubbing the Playhead, the operator's own
+scroll (an overrunning Shot freezes the Playhead, so real scrolling still happens while running),
+zoom, stepping the Playhead, selecting a Shot or a Lyric, and clicking a Track to place the
+Playhead.
+
+An affordance that cannot be used is not offered: the buttons are disabled and dimmed, the hover
+handles and hints are gone, and a Marker label left mid-edit when the show starts is abandoned
+rather than silently dropped on save.
+
 ## UI layout
 
 Controls rendered in the renderer, above the shotlist.
@@ -133,7 +152,7 @@ interface LiveState {
 
 ## Acceptance criteria
 
-- Start locks rundown editing and sets liveIndex to 0
+- Start locks rundown editing — keyboard, buttons and every pointer Grab — and sets liveIndex to 0
 - Next advances liveIndex with new startedAt
 - Skip marks next shot struck-through; does not advance
 - Stop returns to idle; editing unlocked; skips preserved
