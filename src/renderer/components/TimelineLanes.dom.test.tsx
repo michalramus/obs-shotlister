@@ -116,6 +116,7 @@ describe('lane memoisation during playback', () => {
         cameras={cameras}
         liveIndex={null}
         running={false}
+        readOnly={false}
         startedAt={null}
         markers={[]}
         onShotClick={noop}

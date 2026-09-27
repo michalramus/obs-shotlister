@@ -375,6 +375,11 @@ export default function App(): React.JSX.Element {
     cameras,
     liveIndex,
     running,
+    // Editing belongs to Edit mode. `running` only says a Live session is on air,
+    // which is not until Start, so a rule keyed on it left the whole of Live mode
+    // editable before the show began. It is still folded in, so flipping back to
+    // the Edit layout mid-show does not unlock the timeline.
+    readOnly: uiMode === 'live' || running,
     startedAt,
     markers,
     selectedShotId,

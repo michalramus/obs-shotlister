@@ -50,10 +50,11 @@ interface LyricsLaneProps {
   width: number
   height: number
   /**
-   * Edge handles and the delete button are hidden during a Live session: nothing
-   * here is editable. Re-wording is refused by the caller for the same reason.
+   * Whether the timeline is a read-out — Live mode, on air or not. Edge handles
+   * and the delete button are hidden then: nothing here is editable. Re-wording
+   * is refused by the caller for the same reason.
    */
-  running: boolean
+  readOnly: boolean
   handlers: LyricsLaneHandlers
 }
 
@@ -101,7 +102,7 @@ function LyricsLaneImpl({
   pendingInLeftPx,
   width,
   height,
-  running,
+  readOnly,
   handlers,
 }: LyricsLaneProps): React.JSX.Element {
   const [hoveredId, setHoveredId] = useState<string | null>(null)
@@ -168,7 +169,7 @@ function LyricsLaneImpl({
             }}
           >
             {block.text}
-            {(isHovered || isSelected) && !running && (
+            {(isHovered || isSelected) && !readOnly && (
               <>
                 <LyricEdgeHandle
                   side="start"
@@ -180,7 +181,7 @@ function LyricsLaneImpl({
                 />
               </>
             )}
-            {isHovered && !running && (
+            {isHovered && !readOnly && (
               <button
                 style={{
                   position: 'absolute',

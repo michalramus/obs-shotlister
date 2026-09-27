@@ -88,6 +88,20 @@ interface TimelineEditorProps {
   cameras: Camera[]
   liveIndex: number | null
   running: boolean
+  /**
+   * Whether the timeline is a read-out: no Grab, no key and no button may change
+   * the Rundown.
+   *
+   * This is the view, not the show. Live mode is where a Live session is run, and
+   * a Rundown is not edited there whether or not one is on air yet — `running`
+   * only becomes true at Start, and every guard keyed on it was inert for the
+   * whole of Live mode before that. Editing is Edit mode's job.
+   *
+   * `running` stays what it is: who owns the Playhead, and what the timeline
+   * shows. The caller folds it in, so a session on air locks the timeline even if
+   * the operator flips back to the Edit layout mid-show.
+   */
+  readOnly: boolean
   startedAt: number | null
   markers: Marker[]
   onShotClick: (shotId: string) => void
@@ -212,6 +226,7 @@ export function TimelineEditor({
   cameras,
   liveIndex,
   running,
+  readOnly,
   startedAt,
   markers,
   onShotClick,
@@ -399,13 +414,17 @@ export function TimelineEditor({
     }
   }, [shots])
 
+  // Preview playback is an Edit-mode transport, and its only controls — Space and
+  // the Play button — are gone in Live mode. Leaving it running there would move
+  // the Playhead with nothing to stop it, so entering the read-only view pauses
+  // it, exactly as going on air already did.
   useEffect(() => {
-    if (running) {
+    if (readOnly) {
       setIsPlaying(false)
       if (mediaVideoRef.current) mediaVideoRef.current.pause()
       if (audioPlayRef.current) audioPlayRef.current.pause()
     }
-  }, [running]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [readOnly]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Inject scrollbar-hide CSS
   useEffect(() => {
@@ -667,8 +686,8 @@ export function TimelineEditor({
   // because re-running this effect would cancel the loop and reset its origin on
   // every zoom step and every Shot edit.
   //
-  // Pausing on stop is `stopEdit`'s job through the media port; the `running`
-  // effect pauses on going live.
+  // Pausing on stop is `stopEdit`'s job through the media port; the `readOnly`
+  // effect pauses on entering Live mode.
   useEffect(() => {
     if (!isPlaying || running) return
     playhead.playEdit()
@@ -814,7 +833,10 @@ export function TimelineEditor({
       const tag = (document.activeElement as HTMLElement)?.tagName
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return
 
-      if (e.code === 'Space' && !running) {
+      // Edit mode's preview transport only. In Live mode `App` owns Space — it
+      // starts the session, then advances Next — and both used to happen at once:
+      // one press started the show and set the timeline playing behind it.
+      if (e.code === 'Space' && !readOnly) {
         e.preventDefault()
         setIsPlaying((prev) => {
           // Only stopping is handled here. Starting is the transport effect's
@@ -835,7 +857,7 @@ export function TimelineEditor({
         e.preventDefault()
         movePlayhead(e.shiftKey ? 10000 : 1000)
       }
-      if (e.code === 'KeyM' && !running) {
+      if (e.code === 'KeyM' && !readOnly) {
         onAddMarkerRef.current?.(playhead.positionMs())
       }
       if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
@@ -848,11 +870,11 @@ export function TimelineEditor({
       }
       // Lyrics are authored in both Kinds, so In and Out cannot use I and O:
       // those two letters are Part assignment keys in a Voice-over Rundown.
-      if (e.key === '[' && !running) {
+      if (e.key === '[' && !readOnly) {
         e.preventDefault()
         keyActionsRef.current.setLyricIn()
       }
-      if (e.key === ']' && !running) {
+      if (e.key === ']' && !readOnly) {
         e.preventDefault()
         keyActionsRef.current.setLyricOut()
       }
@@ -865,12 +887,12 @@ export function TimelineEditor({
       // closing, reloading or printing.
       const plainKey = !e.ctrlKey && !e.metaKey && !e.altKey
 
-      if (plainKey && e.key.toLowerCase() === ADD_PART_KEY && !running && isVoiceRef.current) {
+      if (plainKey && e.key.toLowerCase() === ADD_PART_KEY && !readOnly && isVoiceRef.current) {
         e.preventDefault()
         keyActionsRef.current.openAddPart()
       }
 
-      if (plainKey && !running) {
+      if (plainKey && !readOnly) {
         if (isVoiceRef.current) {
           // A Voice-over Rundown has no Cameras to fall back to. An unmapped
           // key — 5 with three Parts in scope, or anything at all right after a
@@ -884,7 +906,7 @@ export function TimelineEditor({
           }
         }
       }
-      if ((e.key === 'l' || e.key === 'L') && !running) {
+      if ((e.key === 'l' || e.key === 'L') && !readOnly) {
         e.preventDefault()
         // Use selected shot, or fall back to shot under playhead
         const shotId =
@@ -902,7 +924,7 @@ export function TimelineEditor({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [running]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [readOnly]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleTrackClick(e: React.MouseEvent<HTMLDivElement>): void {
     const rect = e.currentTarget.getBoundingClientRect()
@@ -915,9 +937,9 @@ export function TimelineEditor({
   }
 
   function handleCamButtonClick(camera: Camera): void {
-    // Splitting is an edit. The buttons are disabled during a Live session and the
-    // number keys already checked; this covers both callers at once.
-    if (running) return
+    // Splitting is an edit. The buttons are disabled in Live mode and the number
+    // keys already checked; this covers both callers at once.
+    if (readOnly) return
     const positionMs = playhead.positionMs()
     let accumulated = 0
     for (const shot of shotsRef.current) {
@@ -943,7 +965,7 @@ export function TimelineEditor({
   function assignPartAtPlayhead(part: Part): void {
     // Reached from the Part buttons, the Part picker, the add-Part dialog and a
     // key press. All four write, so the refusal lives here rather than four times.
-    if (running) return
+    if (readOnly) return
     const positionMs = playhead.positionMs()
     let accumulated = 0
     for (const shot of shotsRef.current) {
@@ -1053,10 +1075,10 @@ export function TimelineEditor({
   itemLaneCallbacksRef.current = {
     onTrackClick: (e) => handleTrackClick(e as React.MouseEvent<HTMLDivElement>),
     onBlockClick: (e, shotId) => handleBlockClick(e, shotId),
-    // Every item on the menu deletes or retargets a Shot, so during a Live
-    // session it does not open at all — an empty menu would only invite a click.
+    // Every item on the menu deletes or retargets a Shot, so in Live mode it does
+    // not open at all — an empty menu would only invite a click.
     onOpenContextMenu: (x, y, shotId) => {
-      if (running) return
+      if (readOnly) return
       setContextMenu({ x, y, shotId })
     },
     onBoundaryMouseDown: (e, shot, nextShot) => handleBoundaryMouseDown(e, shot, nextShot),
@@ -1084,13 +1106,13 @@ export function TimelineEditor({
   mediaLaneCallbacksRef.current = {
     onTrackMouseDown: (e) => handleMediaTrackMouseDown(e as React.MouseEvent<HTMLDivElement>),
     // Attaching and clearing Reference media both change the Rundown, so both are
-    // refused during a Live session as well as hidden by the lane.
+    // refused in Live mode as well as hidden by the lane.
     onImportMedia: () => {
-      if (running) return
+      if (readOnly) return
       onImportMedia()
     },
     onClearMedia: () => {
-      if (running) return
+      if (readOnly) return
       onClearMedia()
     },
   }
@@ -1125,11 +1147,11 @@ export function TimelineEditor({
     // writes, so they go the way of the edge handles the lane already hides.
     onSelect: (id) => dispatchLyric({ type: 'select', id }),
     onReword: (id) => {
-      if (running) return
+      if (readOnly) return
       dispatchLyric({ type: 'reword', id })
     },
     onDelete: (id) => {
-      if (running) return
+      if (readOnly) return
       deleteLyric(id)
     },
     onEdgeMouseDown: (e, id, edge) => beginLyricResize(e, id, edge),
@@ -1160,15 +1182,15 @@ export function TimelineEditor({
   markerLaneCallbacksRef.current = {
     onMarkerMouseDown: (e, marker) => handleMarkerMouseDown(e, marker),
     onTrackDoubleClick: (e) => handleMarkerTrackDblClick(e),
-    // Refused here as well as hidden in the lane. The `running` prop is what the
-    // operator sees; these two are what makes the rule true, so a future caller
-    // that forgets the prop still cannot write a Marker during a Live session.
+    // Refused here as well as hidden in the lane. The lane's `readOnly` prop is
+    // what the operator sees; these two are what makes the rule true, so a future
+    // caller that forgets the prop still cannot write a Marker in Live mode.
     onUpdateMarker: (id: string, positionMs: number, label?: string | null) => {
-      if (running) return
+      if (readOnly) return
       onUpdateMarker(id, positionMs, label)
     },
     onDeleteMarker: (id: string) => {
-      if (running) return
+      if (readOnly) return
       onDeleteMarker(id)
     },
   }
@@ -1214,14 +1236,14 @@ export function TimelineEditor({
    * preview is the same call that produces the committed value. That is the point:
    * the boundary drag used to clamp twice, in two spellings, and they disagreed.
    *
-   * It is also where a Live session's edit lock is enforced, for the same reason:
-   * every grab passes through here, so one refusal covers all of them and a grab
-   * added later cannot slip past by forgetting to ask. The refusal is fail-safe —
-   * a grab runs during a Live session only if it declares itself `viewOnly`,
-   * which only the Playhead scrub does.
+   * It is also where the edit lock is enforced, for the same reason: every grab
+   * passes through here, so one refusal covers all of them and a grab added later
+   * cannot slip past by forgetting to ask. The refusal is fail-safe — a grab runs
+   * in the read-only view only if it declares itself `viewOnly`, which only the
+   * Playhead scrub does.
    */
   function beginGrab<P>(e: React.MouseEvent, spec: GrabSpec<P>): void {
-    if (running && spec.viewOnly !== true) return
+    if (readOnly && spec.viewOnly !== true) return
     e.preventDefault()
     e.stopPropagation()
     const startX = e.clientX
@@ -1290,9 +1312,9 @@ export function TimelineEditor({
   }
 
   function handleMarkerTrackDblClick(e: React.MouseEvent<HTMLDivElement>): void {
-    // Adding a Marker is an edit. The lane also stops offering it while a Live
-    // session runs; this is the half that holds whatever the lane was told.
-    if (running) return
+    // Adding a Marker is an edit. The lane also stops offering it in Live mode;
+    // this is the half that holds whatever the lane was told.
+    if (readOnly) return
     const rect = e.currentTarget.getBoundingClientRect()
     // Markers may sit past the last shot, so they are not clamped to totalMs.
     const posMs = Math.round(
@@ -1335,8 +1357,8 @@ export function TimelineEditor({
       // where, and the Playhead module is what gets told, so it can seek the
       // Reference media and pull the view along as it does for every other jump.
       preview: ({ positionMs }) => placePlayhead(positionMs),
-      // Nothing to store is also why this is the one grab allowed during a Live
-      // session: an operator looking ahead mid-show changes no Rundown.
+      // Nothing to store is also why this is the one grab allowed in Live mode:
+      // an operator looking ahead mid-show changes no Rundown.
       viewOnly: true,
     })
   }
@@ -1507,8 +1529,8 @@ export function TimelineEditor({
       >
         {/* Play/Pause */}
         <button
-          style={{ ...btnStyle, width: '28px', opacity: running ? 0.4 : 1 }}
-          disabled={running}
+          style={{ ...btnStyle, width: '28px', opacity: readOnly ? 0.4 : 1 }}
+          disabled={readOnly}
           onClick={() => {
             if (isPlaying) {
               setIsPlaying(false)
@@ -1563,18 +1585,18 @@ export function TimelineEditor({
             ...btnStyle,
             width: 'auto',
             padding: '0 6px',
-            opacity: running ? 0.4 : 1,
+            opacity: readOnly ? 0.4 : 1,
             color: authoring.pendingInMs !== null ? '#5dade2' : '#ccc',
           }}
-          disabled={running}
+          disabled={readOnly}
           onClick={setLyricIn}
           title="Lyric In point at the playhead ([)"
         >
           In [
         </button>
         <button
-          style={{ ...btnStyle, width: 'auto', padding: '0 6px', opacity: running ? 0.4 : 1 }}
-          disabled={running}
+          style={{ ...btnStyle, width: 'auto', padding: '0 6px', opacity: readOnly ? 0.4 : 1 }}
+          disabled={readOnly}
           onClick={setLyricOut}
           title="Lyric Out point at the playhead (])"
         >
@@ -1728,7 +1750,7 @@ export function TimelineEditor({
             pendingInLeftPx={pendingLyricInPx}
             width={totalPx}
             height={LYRICS_ROW_HEIGHT}
-            running={running}
+            readOnly={readOnly}
             handlers={lyricsLaneHandlers}
           />
 
@@ -1739,7 +1761,7 @@ export function TimelineEditor({
             zoomPxPerSec={zoomPxPerSec}
             width={totalPx}
             height={MARKER_ROW_HEIGHT}
-            running={running}
+            readOnly={readOnly}
             onMarkerMouseDown={markerLaneHandlers.onMarkerMouseDown}
             onUpdateMarker={markerLaneHandlers.onUpdateMarker}
             onDeleteMarker={markerLaneHandlers.onDeleteMarker}
@@ -1758,7 +1780,7 @@ export function TimelineEditor({
             waveformData={waveformData}
             waveformError={waveformError}
             mediaFileNotFound={mediaFileNotFound}
-            running={running}
+            readOnly={readOnly}
             onTrackMouseDown={mediaLaneHandlers.onTrackMouseDown}
             onImportMedia={mediaLaneHandlers.onImportMedia}
             onClearMedia={mediaLaneHandlers.onClearMedia}
@@ -1810,7 +1832,7 @@ export function TimelineEditor({
               parts={partsInScope}
               onAssign={assignPartAtPlayhead}
               activePartId={shots.find((s) => s.id === selectedShotId)?.partId ?? null}
-              disabled={running}
+              disabled={readOnly}
               onAddNew={() => setAddPartOpen(true)}
             />
             <button
@@ -1821,11 +1843,11 @@ export function TimelineEditor({
                 color: '#ccc',
                 fontSize: '13px',
                 padding: '6px 14px',
-                cursor: running ? 'default' : 'pointer',
-                opacity: running ? 0.4 : 1,
+                cursor: readOnly ? 'default' : 'pointer',
+                opacity: readOnly ? 0.4 : 1,
                 whiteSpace: 'nowrap',
               }}
-              disabled={running}
+              disabled={readOnly}
               title="Find a part by name"
               onClick={() => setPartPickerOpen(true)}
             >
@@ -1845,15 +1867,15 @@ export function TimelineEditor({
                 fontSize: '13px',
                 padding: '6px 14px',
                 // Splitting is an edit, so these go the way of the toolbar's
-                // buttons during a Live session rather than silently doing nothing.
-                cursor: running ? 'default' : 'pointer',
-                opacity: running ? 0.4 : 1,
+                // buttons in Live mode rather than silently doing nothing.
+                cursor: readOnly ? 'default' : 'pointer',
+                opacity: readOnly ? 0.4 : 1,
                 display: 'flex',
                 alignItems: 'center',
                 gap: '5px',
                 whiteSpace: 'nowrap',
               }}
-              disabled={running}
+              disabled={readOnly}
               title={`Split at playhead and assign CAM${cam.number} ${cam.name}`}
               onClick={() => handleCamButtonClick(cam)}
             >

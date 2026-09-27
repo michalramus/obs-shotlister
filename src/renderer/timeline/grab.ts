@@ -274,14 +274,14 @@ export interface GrabSpec<P> {
    */
   ownsPlayhead?: boolean
   /**
-   * Whether this grab changes nothing about the Rundown, and so may run during a
-   * Live session.
+   * Whether this grab changes nothing about the Rundown, and so may run while the
+   * timeline is read-only.
    *
-   * Editing a live Rundown is forbidden, and the adapter refuses every grab while
-   * one is running unless the spec says here that there is nothing to refuse. The
-   * default — absent — is the safe one on purpose: a grab added later is blocked
-   * because it did not claim to be view-only, not because someone remembered to
-   * guard its `mousedown`.
+   * A Rundown is not edited in Live mode — on air or not — and the adapter refuses
+   * every grab there unless the spec says here that there is nothing to refuse.
+   * The default — absent — is the safe one on purpose: a grab added later is
+   * blocked because it did not claim to be view-only, not because someone
+   * remembered to guard its `mousedown`.
    *
    * Only the Playhead scrub sets it. The Playhead is not stored, and looking
    * ahead during a show is exactly what an operator needs.

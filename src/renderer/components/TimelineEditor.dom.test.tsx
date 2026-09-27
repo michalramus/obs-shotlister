@@ -17,7 +17,8 @@ import React, { Profiler } from 'react'
 import { render, screen, act, cleanup, fireEvent } from '@testing-library/react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { TimelineEditor } from './TimelineEditor'
-import type { Shot, Camera } from '../../shared/types'
+import { useAppStore } from '../store'
+import type { Shot, Camera, Lyric, Marker, Part, Rundown } from '../../shared/types'
 
 const FRAME_MS = 1000 / 60
 /** Must match PLAYHEAD_COMMIT_INTERVAL_MS in TimelineEditor.tsx. */
@@ -112,6 +113,7 @@ function renderTimeline(
         cameras={cameras}
         liveIndex={null}
         running={false}
+        readOnly={false}
         startedAt={null}
         markers={[]}
         onShotClick={noop}
@@ -258,16 +260,47 @@ describe('edit-mode playback frame budget', () => {
 })
 
 /**
- * Editing a live Rundown is forbidden — `specs/live-controls.md` — and for most of
- * this component's life only the keyboard said so. Every mouse path was open: the
- * boundary drag, the Marker Track's double-click, the delete menu. The refusal now
- * lives at the seams every one of them passes through, and this is where that is
- * pinned, together with the two things that must survive it: the Playhead scrub,
- * which stores nothing, and the operator's own scroll.
+ * A Rundown is edited in Edit mode, so the timeline is a read-out in Live mode —
+ * `specs/live-controls.md`.
+ *
+ * Every guard here keyed on `running` once, which is what made it worthless: a
+ * Live session is only on air after Start, so for the whole of Live mode before it
+ * `running` was false and the entire timeline was editable. The operator could
+ * still drag a Shot's edge and press the Camera buttons with the show queued up.
+ * The lock is the view now, which is why each refusal below is asserted twice —
+ * before Start and on air — and always paired with the same gesture landing in
+ * Edit mode, so a selector that stops matching fails instead of passing on an
+ * element it never found.
  */
-describe('the timeline is read-only during a Live session', () => {
-  /** The props of a Rundown mid-show. */
-  const live: Overrides = { running: true, liveIndex: 0, startedAt: 1_000 }
+describe('the timeline is read-only in Live mode', () => {
+  /** Live mode before Start: the view is locked, and nothing is on air. */
+  const preStart: Overrides = { readOnly: true }
+  /** Live mode with a Live session on air. */
+  const onAir: Overrides = { readOnly: true, running: true, liveIndex: 0, startedAt: 1_000 }
+
+  const marker: Marker = { id: 'm1', rundownId: 'r1', positionMs: 4_000, label: 'Refren' }
+  const lyric: Lyric = { id: 'ly1', rundownId: 'r1', startMs: 0, endMs: 5_000, text: 'first line' }
+  const part: Part = {
+    id: 'pt1',
+    projectId: 'p1',
+    number: 1,
+    name: 'Refren',
+    color: '#e74c3c',
+    folder: null,
+    rundownId: null,
+  }
+  const voiceRundown: Rundown = {
+    id: 'r1',
+    projectId: 'p1',
+    name: 'Calls',
+    createdAt: 0,
+    orderIndex: 0,
+    folder: null,
+    kind: 'voice',
+  }
+
+  /** Lyrics, Parts and the Rundown's Kind reach the timeline through the store. */
+  const storeSnapshot = useAppStore.getState()
 
   beforeEach(() => {
     window.localStorage.clear()
@@ -279,6 +312,7 @@ describe('the timeline is read-only during a Live session', () => {
 
   afterEach(() => {
     cleanup()
+    useAppStore.setState(storeSnapshot, true)
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
@@ -287,6 +321,14 @@ describe('the timeline is read-only during a Live session', () => {
   function itemLane(): HTMLElement {
     const lane = document.querySelector('div[style*="rgb(13, 13, 13)"]')
     if (!(lane instanceof HTMLElement)) throw new Error('no item lane')
+    return lane
+  }
+
+  /** The Reference media Track: the other `#0d0d0d` lane, below the item one. */
+  function mediaLane(): HTMLElement {
+    const lanes = document.querySelectorAll('div[style*="rgb(13, 13, 13)"]')
+    const lane = lanes[lanes.length - 1]
+    if (!(lane instanceof HTMLElement) || lanes.length < 2) throw new Error('no media lane')
     return lane
   }
 
@@ -308,6 +350,21 @@ describe('the timeline is read-only during a Live session', () => {
     const lane = document.querySelector('div[style*="rgb(30, 30, 30)"]')
     if (!(lane instanceof HTMLElement)) throw new Error('no marker lane')
     return lane
+  }
+
+  /** A Marker's label, which is also the handle its inline edit opens from. */
+  function markerLabel(): HTMLElement {
+    const span = markerLane().querySelector('span')
+    if (!(span instanceof HTMLElement)) throw new Error('no marker label')
+    return span
+  }
+
+  /** The Lyrics Track's `#141414` lane. */
+  function lyricBlock(): HTMLElement {
+    const lane = document.querySelector('div[style*="rgb(20, 20, 20)"]')
+    const block = lane?.querySelector('div[title*="click to select"]')
+    if (!(block instanceof HTMLElement)) throw new Error('no lyric block')
+    return block
   }
 
   /** The Playhead's drag triangle, the only grabbable <svg> on the timeline. */
@@ -332,6 +389,10 @@ describe('the timeline is read-only during a Live session', () => {
     return rect
   }
 
+  function playButton(): HTMLButtonElement {
+    return screen.getByTitle<HTMLButtonElement>('Play/Pause (Space)')
+  }
+
   /** Press, move, release — the whole of a Grab, through the window listeners. */
   function drag(target: Element, fromX: number, toX: number): void {
     act(() => {
@@ -341,109 +402,323 @@ describe('the timeline is read-only during a Live session', () => {
     })
   }
 
-  it('refuses a Shot boundary drag while a Live session is running', () => {
-    const onResizeShots = vi.fn()
-    const { rerender } = renderTimeline(() => {}, { ...live, onResizeShots })
-
-    drag(boundaryHandle(), 100, 140)
-    expect(onResizeShots).not.toHaveBeenCalled()
-
-    // The same drag in Edit mode, so a refusal is what is being asserted rather
-    // than a handle this test cannot find: 40px at 80px/s is 500ms of Shot.
-    act(() => rerender({ onResizeShots }))
-    drag(boundaryHandle(), 100, 140)
-    expect(onResizeShots).toHaveBeenCalledWith('s1', 30_500, 's2', 29_500)
-  })
-
-  it('refuses the extend drag on the last Shot while a Live session is running', () => {
-    const onExtendLastShot = vi.fn()
-    const { rerender } = renderTimeline(() => {}, { ...live, onExtendLastShot })
-
-    // The trailing handle is the last `ew-resize` strip on the item Track.
-    const handles = itemLane().querySelectorAll('div[style*="ew-resize"]')
-    const trailing = handles[handles.length - 1]
-    drag(trailing, 100, 200)
-    expect(onExtendLastShot).not.toHaveBeenCalled()
-
-    act(() => rerender({ onExtendLastShot }))
-    drag(trailing, 100, 200)
-    expect(onExtendLastShot).toHaveBeenCalled()
-  })
-
-  it('adds no Marker when the Marker Track is double-clicked during a Live session', () => {
-    const onAddMarker = vi.fn()
-    const { rerender } = renderTimeline(() => {}, { ...live, onAddMarker })
-
+  function press(init: KeyboardEventInit): void {
     act(() => {
-      fireEvent.dblClick(markerLane())
+      fireEvent.keyDown(window, init)
     })
-    expect(onAddMarker).not.toHaveBeenCalled()
+  }
 
-    act(() => rerender({ onAddMarker }))
-    act(() => {
-      fireEvent.dblClick(markerLane())
-    })
-    expect(onAddMarker).toHaveBeenCalledTimes(1)
-  })
+  /**
+   * Both locked states, because the one that was missing is the one that was
+   * broken: Live mode with the show not yet started.
+   */
+  const lockedViews = [
+    { name: 'in Live mode before Start', view: preStart },
+    { name: 'with a Live session on air', view: onAir },
+  ]
 
-  it('opens no context menu on a Shot during a Live session', () => {
-    const onDeleteShot = vi.fn()
-    const { rerender } = renderTimeline(() => {}, { ...live, onDeleteShot })
+  describe.each(lockedViews)('$name', ({ view }) => {
+    it('refuses a Shot boundary drag', () => {
+      const onResizeShots = vi.fn()
+      const { rerender } = renderTimeline(() => {}, { ...view, onResizeShots })
 
-    act(() => {
-      fireEvent.contextMenu(shotBlock())
-    })
-    // No menu means no way to reach either delete.
-    expect(screen.queryByText('Delete shot')).toBeNull()
-    expect(screen.queryByText('Delete and close gap')).toBeNull()
+      drag(boundaryHandle(), 100, 140)
+      expect(onResizeShots).not.toHaveBeenCalled()
 
-    act(() => rerender({ onDeleteShot }))
-    act(() => {
-      fireEvent.contextMenu(shotBlock())
-    })
-    expect(screen.queryByText('Delete shot')).not.toBeNull()
-  })
-
-  it('disables the Camera buttons during a Live session', () => {
-    const onSplitShot = vi.fn()
-    renderTimeline(() => {}, { ...live, onSplitShot })
-
-    const button = screen.getByTitle<HTMLButtonElement>('Split at playhead and assign CAM1 Wide')
-    expect(button.disabled).toBe(true)
-
-    // Disabled or not, the handler refuses: the number keys reach the same one.
-    act(() => {
-      button.click()
-    })
-    expect(onSplitShot).not.toHaveBeenCalled()
-  })
-
-  it('still scrubs the Playhead during a Live session', () => {
-    renderTimeline(() => {}, live)
-
-    const before = overviewPlayhead().style.left
-
-    // 400px at 80px/s: five seconds along, and nothing stored by either of them.
-    drag(playheadGrip(), 0, 400)
-
-    expect(overviewPlayhead().style.left).not.toBe(before)
-  })
-
-  it("still honours the operator's own scroll during a Live session", () => {
-    // An overrunning Live Shot freezes the Playhead and stops the auto-scroll, so
-    // a scroll then is the operator's and must move the view. It used to be
-    // dropped, which left the overview's viewport rect stuck.
-    renderTimeline(() => {}, live)
-
-    const before = viewportRect().style.left
-    const scroller = document.querySelector('.timeline-scroll')
-    if (!(scroller instanceof HTMLElement)) throw new Error('no scroller')
-
-    act(() => {
-      scroller.scrollLeft = 1200
-      scroller.dispatchEvent(new Event('scroll'))
+      // The same drag in Edit mode, so a refusal is what is being asserted rather
+      // than a handle this test cannot find: 40px at 80px/s is 500ms of Shot.
+      act(() => rerender({ onResizeShots }))
+      drag(boundaryHandle(), 100, 140)
+      expect(onResizeShots).toHaveBeenCalledWith('s1', 30_500, 's2', 29_500)
     })
 
-    expect(viewportRect().style.left).not.toBe(before)
+    it('refuses the extend drag on the last Shot', () => {
+      const onExtendLastShot = vi.fn()
+      const { rerender } = renderTimeline(() => {}, { ...view, onExtendLastShot })
+
+      // The trailing handle is the last `ew-resize` strip on the item Track.
+      const trailing = (): Element => {
+        const handles = itemLane().querySelectorAll('div[style*="ew-resize"]')
+        return handles[handles.length - 1]
+      }
+      drag(trailing(), 100, 200)
+      expect(onExtendLastShot).not.toHaveBeenCalled()
+
+      act(() => rerender({ onExtendLastShot }))
+      drag(trailing(), 100, 200)
+      expect(onExtendLastShot).toHaveBeenCalled()
+    })
+
+    it('adds no Marker when the Marker Track is double-clicked', () => {
+      const onAddMarker = vi.fn()
+      const { rerender } = renderTimeline(() => {}, { ...view, onAddMarker })
+
+      act(() => {
+        fireEvent.dblClick(markerLane())
+      })
+      expect(onAddMarker).not.toHaveBeenCalled()
+
+      act(() => rerender({ onAddMarker }))
+      act(() => {
+        fireEvent.dblClick(markerLane())
+      })
+      expect(onAddMarker).toHaveBeenCalledTimes(1)
+    })
+
+    it("offers no edit of a Marker's label", () => {
+      const onUpdateMarker = vi.fn()
+      const { rerender } = renderTimeline(() => {}, { ...view, markers: [marker], onUpdateMarker })
+
+      act(() => {
+        fireEvent.click(markerLabel())
+      })
+      expect(screen.queryByRole('textbox')).toBeNull()
+
+      act(() => rerender({ markers: [marker], onUpdateMarker }))
+      act(() => {
+        fireEvent.click(markerLabel())
+      })
+      const input = screen.getByRole('textbox')
+      act(() => {
+        fireEvent.change(input, { target: { value: 'Verse' } })
+        fireEvent.keyDown(input, { key: 'Enter' })
+      })
+      expect(onUpdateMarker).toHaveBeenCalledWith('m1', 4_000, 'Verse')
+    })
+
+    it('offers no Marker delete', () => {
+      const onDeleteMarker = vi.fn()
+      const { rerender } = renderTimeline(() => {}, { ...view, markers: [marker], onDeleteMarker })
+
+      // The delete button only exists while the Marker is hovered.
+      const hoverMarker = (): void => {
+        const line = markerLabel().parentElement
+        if (line === null) throw new Error('no marker to hover')
+        act(() => {
+          fireEvent.mouseEnter(line)
+        })
+      }
+      hoverMarker()
+      expect(screen.queryByTitle('Delete marker')).toBeNull()
+
+      act(() => rerender({ markers: [marker], onDeleteMarker }))
+      hoverMarker()
+      act(() => {
+        screen.getByTitle('Delete marker').click()
+      })
+      expect(onDeleteMarker).toHaveBeenCalledWith('m1')
+    })
+
+    it('refuses to re-word a Lyric', () => {
+      useAppStore.setState({ lyrics: [lyric], activeRundownId: 'r1' })
+      const { rerender } = renderTimeline(() => {}, view)
+
+      act(() => {
+        fireEvent.doubleClick(lyricBlock())
+      })
+      expect(screen.queryByPlaceholderText('line of lyrics')).toBeNull()
+
+      act(() => rerender({}))
+      act(() => {
+        fireEvent.doubleClick(lyricBlock())
+      })
+      expect(screen.getByPlaceholderText('line of lyrics')).toHaveProperty('value', 'first line')
+    })
+
+    it('offers no Lyric delete', () => {
+      const removeLyric = vi.fn(async () => {})
+      useAppStore.setState({ lyrics: [lyric], activeRundownId: 'r1', removeLyric })
+      const { rerender } = renderTimeline(() => {}, view)
+
+      const hoverLyric = (): void => {
+        act(() => {
+          fireEvent.mouseEnter(lyricBlock())
+        })
+      }
+      hoverLyric()
+      expect(screen.queryByTitle('Delete line')).toBeNull()
+
+      act(() => rerender({}))
+      hoverLyric()
+      act(() => {
+        screen.getByTitle('Delete line').click()
+      })
+      expect(removeLyric).toHaveBeenCalledWith('ly1')
+    })
+
+    it('imports no Reference media on a double-click of the empty lane', () => {
+      const onImportMedia = vi.fn()
+      const { rerender } = renderTimeline(() => {}, { ...view, onImportMedia })
+
+      act(() => {
+        fireEvent.doubleClick(mediaLane())
+      })
+      expect(onImportMedia).not.toHaveBeenCalled()
+
+      act(() => rerender({ onImportMedia }))
+      act(() => {
+        fireEvent.doubleClick(mediaLane())
+      })
+      expect(onImportMedia).toHaveBeenCalledTimes(1)
+    })
+
+    it('offers no way to clear Reference media', () => {
+      const onClearMedia = vi.fn()
+      const media = { filePath: '/tmp/reference.mp3', offsetMs: 0 }
+      const { rerender } = renderTimeline(() => {}, {
+        ...view,
+        rundownMedia: media,
+        onClearMedia,
+      })
+
+      // The filename overlay and its Clear button only appear on hover.
+      const hoverMedia = (): void => {
+        act(() => {
+          fireEvent.mouseEnter(mediaLane())
+        })
+      }
+      hoverMedia()
+      expect(screen.queryByTitle('Remove media track')).toBeNull()
+
+      act(() => rerender({ rundownMedia: media, onClearMedia }))
+      hoverMedia()
+      act(() => {
+        screen.getByTitle('Remove media track').click()
+      })
+      expect(onClearMedia).toHaveBeenCalledTimes(1)
+    })
+
+    it('opens no context menu on a Shot', () => {
+      const onDeleteShot = vi.fn()
+      const { rerender } = renderTimeline(() => {}, { ...view, onDeleteShot })
+
+      act(() => {
+        fireEvent.contextMenu(shotBlock())
+      })
+      // No menu means no way to reach either delete.
+      expect(screen.queryByText('Delete shot')).toBeNull()
+      expect(screen.queryByText('Delete and close gap')).toBeNull()
+
+      act(() => rerender({ onDeleteShot }))
+      act(() => {
+        fireEvent.contextMenu(shotBlock())
+      })
+      expect(screen.queryByText('Delete shot')).not.toBeNull()
+    })
+
+    it('disables the Camera buttons, and refuses the split behind them', () => {
+      const onSplitShot = vi.fn()
+      const { rerender } = renderTimeline(() => {}, { ...view, onSplitShot })
+
+      const camButton = (): HTMLButtonElement =>
+        screen.getByTitle<HTMLButtonElement>('Split at playhead and assign CAM1 Wide')
+      expect(camButton().disabled).toBe(true)
+
+      // Disabled or not, the handler refuses: the number keys reach the same one.
+      act(() => {
+        camButton().click()
+      })
+      press({ key: '1' })
+      expect(onSplitShot).not.toHaveBeenCalled()
+
+      act(() => rerender({ onSplitShot }))
+      expect(camButton().disabled).toBe(false)
+      act(() => {
+        camButton().click()
+      })
+      expect(onSplitShot).toHaveBeenCalledTimes(1)
+    })
+
+    it('disables the Part buttons of a Voice-over Rundown', () => {
+      const editShot = vi.fn(async () => {})
+      useAppStore.setState({
+        rundowns: [voiceRundown],
+        activeRundownId: 'r1',
+        partsInScope: [part],
+        editShot,
+      })
+      const { rerender } = renderTimeline(() => {}, view)
+
+      const partButton = (): HTMLButtonElement => screen.getByTitle<HTMLButtonElement>(/^Assign /)
+      expect(partButton().disabled).toBe(true)
+      expect(screen.getByTitle<HTMLButtonElement>('Find a part by name').disabled).toBe(true)
+      act(() => {
+        partButton().click()
+      })
+      expect(editShot).not.toHaveBeenCalled()
+
+      act(() => rerender({}))
+      expect(partButton().disabled).toBe(false)
+      act(() => {
+        partButton().click()
+      })
+      expect(editShot).toHaveBeenCalledWith({ id: 's1', partId: 'pt1' })
+    })
+
+    it('adds no Marker on M, and offers no Lyric In or Out', () => {
+      const onAddMarker = vi.fn()
+      const { rerender } = renderTimeline(() => {}, { ...view, onAddMarker })
+
+      press({ code: 'KeyM' })
+      expect(onAddMarker).not.toHaveBeenCalled()
+      expect(
+        screen.getByTitle<HTMLButtonElement>('Lyric In point at the playhead ([)').disabled,
+      ).toBe(true)
+      expect(
+        screen.getByTitle<HTMLButtonElement>('Lyric Out point at the playhead (])').disabled,
+      ).toBe(true)
+
+      act(() => rerender({ onAddMarker }))
+      press({ code: 'KeyM' })
+      expect(onAddMarker).toHaveBeenCalledTimes(1)
+    })
+
+    /**
+     * Space is claimed twice: `App` starts the Live session with it, the timeline
+     * toggles Edit-mode preview playback with it. Gated on `running`, one press in
+     * Live mode did both — started the show and set the timeline playing behind
+     * it. In the read-only view the timeline does not answer Space at all.
+     */
+    it('does not toggle preview playback on Space', () => {
+      const { rerender } = renderTimeline(() => {}, view)
+
+      expect(playButton().disabled).toBe(true)
+      press({ code: 'Space' })
+      expect(playButton().textContent).toBe('▶')
+
+      act(() => rerender({}))
+      expect(playButton().disabled).toBe(false)
+      press({ code: 'Space' })
+      expect(playButton().textContent).toBe('⏸')
+    })
+
+    it('still scrubs the Playhead', () => {
+      renderTimeline(() => {}, view)
+
+      const before = overviewPlayhead().style.left
+
+      // 400px at 80px/s: five seconds along, and nothing stored by either of them.
+      drag(playheadGrip(), 0, 400)
+
+      expect(overviewPlayhead().style.left).not.toBe(before)
+    })
+
+    it("still honours the operator's own scroll", () => {
+      // An overrunning Live Shot freezes the Playhead and stops the auto-scroll, so
+      // a scroll then is the operator's and must move the view. It used to be
+      // dropped, which left the overview's viewport rect stuck.
+      renderTimeline(() => {}, view)
+
+      const before = viewportRect().style.left
+      const scroller = document.querySelector('.timeline-scroll')
+      if (!(scroller instanceof HTMLElement)) throw new Error('no scroller')
+
+      act(() => {
+        scroller.scrollLeft = 1200
+        scroller.dispatchEvent(new Event('scroll'))
+      })
+
+      expect(viewportRect().style.left).not.toBe(before)
+    })
   })
 })

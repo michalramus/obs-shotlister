@@ -21,27 +21,27 @@ interface LaneOptions {
   onUpdateMarker?: (id: string, positionMs: number, label?: string | null) => void
   onDeleteMarker?: (id: string) => void
   dragOverride?: Record<string, number>
-  running?: boolean
+  readOnly?: boolean
 }
 
 /** Renders the lane, and can re-render it with one option changed. */
-function renderLane(options: LaneOptions = {}): { setRunning: (running: boolean) => void } {
-  const tree = (running: boolean): React.JSX.Element => (
+function renderLane(options: LaneOptions = {}): { setReadOnly: (readOnly: boolean) => void } {
+  const tree = (readOnly: boolean): React.JSX.Element => (
     <MarkerLane
       markers={[marker]}
       dragOverride={options.dragOverride ?? {}}
       zoomPxPerSec={80}
       width={800}
       height={30}
-      running={running}
+      readOnly={readOnly}
       onMarkerMouseDown={() => {}}
       onUpdateMarker={options.onUpdateMarker ?? ((): void => {})}
       onDeleteMarker={options.onDeleteMarker ?? ((): void => {})}
       onTrackDoubleClick={() => {}}
     />
   )
-  const result = render(tree(options.running ?? false))
-  return { setRunning: (running) => result.rerender(tree(running)) }
+  const result = render(tree(options.readOnly ?? false))
+  return { setReadOnly: (readOnly) => result.rerender(tree(readOnly)) }
 }
 
 /** The label, which is the lane's only span until a Marker is being edited. */
@@ -106,15 +106,18 @@ describe('labelling a Marker', () => {
 })
 
 /**
- * A Marker is a Rundown's, not a Live session's, so during a show the Marker
- * Track is a read-out and nothing else. Both halves are asserted: the affordance
- * is gone, and the write refuses anyway — an operator mid-edit when the show
- * starts must not have their keystroke land in the database.
+ * A Marker is a Rundown's, not a Live session's, so in Live mode the Marker Track
+ * is a read-out and nothing else — before Start as much as on air, which is the
+ * defect this lane was fixed for twice: the first fix keyed on `running`, and
+ * `running` is false for the whole of Live mode until the operator presses Start.
+ * Both halves are asserted: the affordance is gone, and the write refuses anyway —
+ * an operator mid-edit when the view locks must not have their keystroke land in
+ * the database.
  */
-describe('the Marker Track during a Live session', () => {
-  it('offers no label edit while a Live session is running', () => {
+describe('the Marker Track in Live mode', () => {
+  it('offers no label edit while the timeline is read-only', () => {
     const onUpdateMarker = vi.fn()
-    renderLane({ onUpdateMarker, running: true })
+    renderLane({ onUpdateMarker, readOnly: true })
 
     fireEvent.click(labelSpan())
 
@@ -122,24 +125,24 @@ describe('the Marker Track during a Live session', () => {
     expect(onUpdateMarker).not.toHaveBeenCalled()
   })
 
-  it('offers no delete while a Live session is running', () => {
+  it('offers no delete while the timeline is read-only', () => {
     const onDeleteMarker = vi.fn()
     const lane = renderLane({ onDeleteMarker })
 
     // The delete button only exists while the Marker is hovered, so hover first
-    // and check it is there: otherwise this asserts nothing about `running`.
+    // and check it is there: otherwise this asserts nothing about `readOnly`.
     const line = labelSpan().parentElement
     if (line === null) throw new Error('no marker to hover')
     fireEvent.mouseEnter(line)
     expect(screen.queryByTitle('Delete marker')).not.toBeNull()
 
-    lane.setRunning(true)
+    lane.setReadOnly(true)
 
     expect(screen.queryByTitle('Delete marker')).toBeNull()
     expect(onDeleteMarker).not.toHaveBeenCalled()
   })
 
-  it('refuses a label already being edited when the Live session starts', () => {
+  it('refuses a label already being edited when the view goes read-only', () => {
     const onUpdateMarker = vi.fn()
     const lane = renderLane({ onUpdateMarker })
 
@@ -147,8 +150,8 @@ describe('the Marker Track during a Live session', () => {
     const input = screen.getByRole('textbox')
     fireEvent.change(input, { target: { value: 'Refren' } })
 
-    // The operator presses Start with the input still open.
-    lane.setRunning(true)
+    // The operator switches to Live mode with the input still open.
+    lane.setReadOnly(true)
     fireEvent.keyDown(input, { key: 'Enter' })
 
     expect(onUpdateMarker).not.toHaveBeenCalled()

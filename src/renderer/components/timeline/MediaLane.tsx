@@ -33,11 +33,12 @@ interface MediaLaneProps {
   onImportMedia: () => void
   onClearMedia: () => void
   /**
-   * Whether a Live session is running. Attaching or clearing Reference media
-   * changes the Rundown, so neither is offered during one — same contract as the
-   * Lyrics and Marker Tracks. Dragging the offset is refused by the grab adapter.
+   * Whether the timeline is a read-out — Live mode, on air or not. Attaching or
+   * clearing Reference media changes the Rundown, so neither is offered then —
+   * same contract as the Lyrics and Marker Tracks. Dragging the offset is refused
+   * by the grab adapter.
    */
-  running: boolean
+  readOnly: boolean
 }
 
 const overlayText: React.CSSProperties = {
@@ -64,7 +65,7 @@ function MediaLaneImpl({
   onTrackMouseDown,
   onImportMedia,
   onClearMedia,
-  running,
+  readOnly,
 }: MediaLaneProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false)
   const offsetPx = pxAtMs(offsetOverrideMs ?? media?.offsetMs ?? 0, zoomPxPerSec)
@@ -84,9 +85,9 @@ function MediaLaneImpl({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onMouseDown={media ? onTrackMouseDown : undefined}
-      onDoubleClick={!media && !running ? onImportMedia : undefined}
+      onDoubleClick={!media && !readOnly ? onImportMedia : undefined}
     >
-      {!media && !running && (
+      {!media && !readOnly && (
         <span style={{ ...overlayText, color: '#333' }}>
           Double-click or use &apos;Import media&apos; to add a reference track
         </span>
@@ -145,7 +146,7 @@ function MediaLaneImpl({
               >
                 {media.filePath.split('/').pop() ?? media.filePath}
               </span>
-              {!running && (
+              {!readOnly && (
                 <button
                   style={{
                     background: 'none',
