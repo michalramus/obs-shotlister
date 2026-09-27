@@ -10,6 +10,7 @@ import type {
   RundownKind,
 } from '../shared/types'
 import { applyLivePosition } from '../shared/live-view'
+import { defaultAudioOutputs } from '../shared/audio/outputs'
 import type {
   LiveState,
   CreateShotInput,
@@ -191,12 +192,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   lyrics: [],
   renderSummary: null,
   phraseDurations: {},
-  audioDevices: {
-    cueSinkId: null,
-    announcementSinkId: null,
-    intercomEnabled: false,
-    intercomSinkId: null,
-  },
+  // Replaced by the stored Outputs on load; the same defaults the settings layer
+  // would hand back, so the two never disagree while that load is in flight.
+  audioDevices: { outputs: defaultAudioOutputs() },
   voiceSettings: null,
   projectVoiceSettings: null,
   effectiveVoiceSettings: null,

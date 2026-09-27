@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
 import { applyMigrations } from '../db/index'
+import { defaultAudioOutputs } from '../../shared/audio/outputs'
 import {
   getGlobalVoiceSettings,
   saveGlobalVoiceSettings,
@@ -9,11 +10,19 @@ import {
   getEffectiveVoiceSettings,
   getAudioDevices,
   saveAudioDevices,
+  migrateAudioDevices,
   DEFAULT_VOICE,
   DEFAULT_CONNECTOR,
-  MAX_TRANSMISSION_DELAY_MS,
-  MIN_TRANSMISSION_DELAY_MS,
+  MAX_OUTPUT_DELAY_MS,
+  MIN_OUTPUT_DELAY_MS,
 } from './settings'
+
+function readKey(db: Database.Database, key: string): string | undefined {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined
+  return row?.value
+}
 
 function openMemoryDb(): Database.Database {
   const db = new Database(':memory:')
@@ -39,7 +48,6 @@ describe('voice settings', () => {
       countdown: [10, 5, 3, 2, 1],
       placement: 'flush',
       autoRender: false,
-      transmissionDelayMs: 0,
     })
   })
 
@@ -49,14 +57,12 @@ describe('voice settings', () => {
       countdown: [8, 4, 1],
       placement: 'immediate',
       autoRender: true,
-      transmissionDelayMs: 0,
     })
     expect(getGlobalVoiceSettings(db)).toEqual({
       voice: 'en_US-amy-medium',
       countdown: [8, 4, 1],
       placement: 'immediate',
       autoRender: true,
-      transmissionDelayMs: 0,
     })
   })
 
@@ -91,7 +97,6 @@ describe('voice settings', () => {
       countdown: [10, 5, 1],
       placement: 'flush',
       autoRender: false,
-      transmissionDelayMs: 0,
     })
     saveProjectVoiceSettings(db, 'p1', {
       voice: null,
@@ -104,7 +109,6 @@ describe('voice settings', () => {
       countdown: [10, 5, 1],
       placement: 'flush',
       connector: 'za',
-      transmissionDelayMs: 0,
     })
   })
 
@@ -114,7 +118,6 @@ describe('voice settings', () => {
       countdown: [10, 5, 1],
       placement: 'flush',
       autoRender: false,
-      transmissionDelayMs: 0,
     })
     saveProjectVoiceSettings(db, 'p1', {
       voice: 'en_US-amy-medium',
@@ -127,7 +130,6 @@ describe('voice settings', () => {
       countdown: [20, 10],
       placement: 'immediate',
       connector: 'in',
-      transmissionDelayMs: 0,
     })
   })
 
@@ -164,7 +166,7 @@ describe('voice settings', () => {
   })
 })
 
-describe('announcement transmission delay', () => {
+describe('output delays', () => {
   let db: Database.Database
 
   beforeEach(() => {
@@ -176,72 +178,47 @@ describe('announcement transmission delay', () => {
   })
 
   it('defaults to no delay, which is what a local speaker has', () => {
-    expect(getGlobalVoiceSettings(db).transmissionDelayMs).toBe(0)
+    expect(getAudioDevices(db).outputs.map((o) => o.delayMs)).toEqual([0, 0])
   })
 
-  it('round-trips a positive delay', () => {
-    saveGlobalVoiceSettings(db, {
-      voice: DEFAULT_VOICE,
-      countdown: [10, 5, 1],
-      placement: 'flush',
-      autoRender: false,
-      transmissionDelayMs: 350,
+  it('round-trips a delay per Output, positive and negative', () => {
+    saveAudioDevices(db, {
+      outputs: [
+        { enabled: true, sinkId: 'speakers', delayMs: -120, carries: 'cues' },
+        { enabled: true, sinkId: 'cable', delayMs: 350, carries: 'voice' },
+      ],
     })
-    expect(getGlobalVoiceSettings(db).transmissionDelayMs).toBe(350)
-  })
-
-  it('reaches the scheduler through the effective settings', () => {
-    saveGlobalVoiceSettings(db, {
-      voice: DEFAULT_VOICE,
-      countdown: [10],
-      placement: 'flush',
-      autoRender: false,
-      transmissionDelayMs: 350,
-    })
-    expect(getEffectiveVoiceSettings(db, 'p1').transmissionDelayMs).toBe(350)
-  })
-
-  it('is not overridable per Project: it describes the machine, not the show', () => {
-    saveGlobalVoiceSettings(db, {
-      voice: DEFAULT_VOICE,
-      countdown: [10],
-      placement: 'flush',
-      autoRender: false,
-      transmissionDelayMs: 350,
-    })
-    saveProjectVoiceSettings(db, 'p1', {
-      voice: 'en_US-amy-medium',
-      countdown: null,
-      placement: null,
-      connector: 'in',
-    })
-    expect(getEffectiveVoiceSettings(db, 'p1').transmissionDelayMs).toBe(350)
+    expect(getAudioDevices(db).outputs.map((o) => o.delayMs)).toEqual([-120, 350])
   })
 
   it('reads a corrupt delay as none rather than throwing', () => {
+    // A bad setting must not be able to stop a show from starting.
+    saveAudioDevices(db, { outputs: defaultAudioOutputs() })
     db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
-      'voice_transmission_delay',
+      'audio_output1_delay',
       'soon',
     )
-    expect(getGlobalVoiceSettings(db).transmissionDelayMs).toBe(0)
+    expect(getAudioDevices(db).outputs[0].delayMs).toBe(0)
   })
 
-  it('clamps a delay that would mute every Announcement', () => {
-    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
-      'voice_transmission_delay',
-      '999999',
-    )
-    expect(getGlobalVoiceSettings(db).transmissionDelayMs).toBe(MAX_TRANSMISSION_DELAY_MS)
+  it('clamps a delay that would mute everything it moved', () => {
+    saveAudioDevices(db, { outputs: defaultAudioOutputs() })
+    const write = (value: string): void => {
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+        'audio_output2_delay',
+        value,
+      )
+    }
 
-    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
-      'voice_transmission_delay',
-      '-999999',
-    )
-    expect(getGlobalVoiceSettings(db).transmissionDelayMs).toBe(MIN_TRANSMISSION_DELAY_MS)
+    write('999999')
+    expect(getAudioDevices(db).outputs[1].delayMs).toBe(MAX_OUTPUT_DELAY_MS)
+
+    write('-999999')
+    expect(getAudioDevices(db).outputs[1].delayMs).toBe(MIN_OUTPUT_DELAY_MS)
   })
 })
 
-describe('audio devices', () => {
+describe('outputs', () => {
   let db: Database.Database
 
   beforeEach(() => {
@@ -252,61 +229,179 @@ describe('audio devices', () => {
     db.close()
   })
 
-  it('defaults both outputs to the system default, with no intercom', () => {
+  it('starts audible: one output carrying everything on the system default', () => {
     expect(getAudioDevices(db)).toEqual({
-      cueSinkId: null,
-      announcementSinkId: null,
-      intercomEnabled: false,
-      intercomSinkId: null,
+      outputs: [
+        { enabled: true, sinkId: null, delayMs: 0, carries: 'both' },
+        { enabled: false, sinkId: null, delayMs: 0, carries: 'voice' },
+      ],
     })
   })
 
-  it('keeps the two outputs independent', () => {
-    saveAudioDevices(db, {
-      cueSinkId: 'speakers',
-      announcementSinkId: 'virtual-cable',
-      intercomEnabled: false,
-      intercomSinkId: null,
-    })
-    expect(getAudioDevices(db)).toMatchObject({
-      cueSinkId: 'speakers',
-      announcementSinkId: 'virtual-cable',
-    })
-
-    saveAudioDevices(db, {
-      cueSinkId: 'speakers',
-      announcementSinkId: null,
-      intercomEnabled: false,
-      intercomSinkId: null,
-    })
-    expect(getAudioDevices(db)).toMatchObject({ cueSinkId: 'speakers', announcementSinkId: null })
+  it('round-trips both outputs', () => {
+    const outputs = [
+      { enabled: true, sinkId: 'speakers', delayMs: 0, carries: 'cues' },
+      { enabled: true, sinkId: 'shotlister-out', delayMs: 400, carries: 'both' },
+    ] as const
+    saveAudioDevices(db, { outputs: [...outputs] })
+    expect(getAudioDevices(db).outputs).toEqual([...outputs])
   })
 
-  it('remembers the intercom output, and that it was switched off again', () => {
+  it('remembers that output 2 was switched off again', () => {
     // Off must survive a restart as deliberately as on does: a Cue arriving on
     // the band's intercom because a stored 'true' outlived the operator turning
     // it off is the one failure this setting cannot have.
     saveAudioDevices(db, {
-      cueSinkId: null,
-      announcementSinkId: null,
-      intercomEnabled: true,
-      intercomSinkId: 'shotlister-out',
+      outputs: [
+        { enabled: true, sinkId: null, delayMs: 0, carries: 'cues' },
+        { enabled: false, sinkId: 'shotlister-out', delayMs: 400, carries: 'voice' },
+      ],
     })
-    expect(getAudioDevices(db)).toMatchObject({
-      intercomEnabled: true,
-      intercomSinkId: 'shotlister-out',
+    expect(getAudioDevices(db).outputs[1]).toEqual({
+      enabled: false,
+      // Kept, so switching it back on does not ask which device again.
+      sinkId: 'shotlister-out',
+      delayMs: 400,
+      carries: 'voice',
+    })
+  })
+
+  it('keeps output 1 enabled whatever is stored', () => {
+    saveAudioDevices(db, { outputs: defaultAudioOutputs() })
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+      'audio_output1_enabled',
+      'false',
+    )
+    expect(getAudioDevices(db).outputs[0].enabled).toBe(true)
+  })
+
+  it('reads a corrupt carries value as never stored, so the defaults stand', () => {
+    saveAudioDevices(db, {
+      outputs: [
+        { enabled: true, sinkId: 'speakers', delayMs: 0, carries: 'cues' },
+        { enabled: false, sinkId: null, delayMs: 0, carries: 'voice' },
+      ],
+    })
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(
+      'audio_output1_carries',
+      'everything',
+    )
+    expect(getAudioDevices(db).outputs[0].carries).toBe('both')
+  })
+})
+
+describe('migrating the fixed destinations to two Outputs', () => {
+  let db: Database.Database
+
+  function writeLegacy(entries: Record<string, string>): void {
+    for (const [key, value] of Object.entries(entries)) {
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value)
+    }
+  }
+
+  beforeEach(() => {
+    db = openMemoryDb()
+  })
+
+  afterEach(() => {
+    db.close()
+  })
+
+  it('reads an un-migrated install the way the migration will write it', () => {
+    // The reader falls back rather than writing, so settings can be read during a
+    // Live session without touching the database.
+    writeLegacy({ audio_cue_sink: 'speakers', audio_announcement_sink: 'cable' })
+    const before = getAudioDevices(db)
+
+    migrateAudioDevices(db)
+
+    expect(getAudioDevices(db)).toEqual(before)
+  })
+
+  it('gives output 1 the cue device and output 2 the announcement device and delay', () => {
+    writeLegacy({
+      audio_cue_sink: 'speakers',
+      audio_announcement_sink: 'cable',
+      voice_transmission_delay: '400',
     })
 
+    migrateAudioDevices(db)
+
+    expect(getAudioDevices(db).outputs).toEqual([
+      { enabled: true, sinkId: 'speakers', delayMs: 0, carries: 'cues' },
+      { enabled: true, sinkId: 'cable', delayMs: 400, carries: 'voice' },
+    ])
+  })
+
+  it('carries both on one output when the old settings named one destination', () => {
+    // Cues and Announcements on the same device with no delay is one Output's
+    // worth of intent; splitting it would leave Announcements carried by nothing.
+    writeLegacy({ audio_cue_sink: 'speakers', audio_announcement_sink: 'speakers' })
+
+    migrateAudioDevices(db)
+
+    expect(getAudioDevices(db).outputs).toEqual([
+      { enabled: true, sinkId: 'speakers', delayMs: 0, carries: 'both' },
+      { enabled: false, sinkId: 'speakers', delayMs: 0, carries: 'voice' },
+    ])
+  })
+
+  it('keeps a delay alive even when both devices were the system default', () => {
+    writeLegacy({ voice_transmission_delay: '250' })
+
+    migrateAudioDevices(db)
+
+    expect(getAudioDevices(db).outputs).toEqual([
+      { enabled: true, sinkId: null, delayMs: 0, carries: 'cues' },
+      { enabled: true, sinkId: null, delayMs: 250, carries: 'voice' },
+    ])
+  })
+
+  it('drops the old keys, so they are never reinterpreted', () => {
+    writeLegacy({
+      audio_cue_sink: 'speakers',
+      audio_announcement_sink: 'cable',
+      audio_intercom_enabled: 'true',
+      audio_intercom_sink: 'shotlister-out',
+      voice_transmission_delay: '400',
+    })
+
+    migrateAudioDevices(db)
+
+    const rows = db
+      .prepare("SELECT key FROM settings WHERE key LIKE 'audio_%' OR key = 'voice_transmission_delay'")
+      .all() as { key: string }[]
+    expect(rows.map((r) => r.key).sort()).toEqual([
+      'audio_output1_carries',
+      'audio_output1_delay',
+      'audio_output1_sink',
+      'audio_output2_carries',
+      'audio_output2_delay',
+      'audio_output2_enabled',
+      'audio_output2_sink',
+    ])
+  })
+
+  it('leaves a fresh install alone rather than writing defaults over it', () => {
+    migrateAudioDevices(db)
+
+    expect(readKey(db, 'audio_output1_carries')).toBeUndefined()
+    expect(getAudioDevices(db)).toEqual({ outputs: defaultAudioOutputs() })
+  })
+
+  it('never runs twice over settings the operator has since changed', () => {
+    writeLegacy({ audio_cue_sink: 'speakers' })
+    migrateAudioDevices(db)
     saveAudioDevices(db, {
-      cueSinkId: null,
-      announcementSinkId: null,
-      intercomEnabled: false,
-      intercomSinkId: 'shotlister-out',
+      outputs: [
+        { enabled: true, sinkId: 'headphones', delayMs: 0, carries: 'both' },
+        { enabled: false, sinkId: null, delayMs: 0, carries: 'voice' },
+      ],
     })
-    expect(getAudioDevices(db)).toMatchObject({
-      intercomEnabled: false,
-      // Kept, so switching it back on does not ask which device again.
-      intercomSinkId: 'shotlister-out',
-    })
+    writeLegacy({ audio_cue_sink: 'speakers' })
+
+    migrateAudioDevices(db)
+
+    expect(getAudioDevices(db).outputs[0].sinkId).toBe('headphones')
   })
 })

@@ -1,14 +1,17 @@
 import Database from 'better-sqlite3'
+import { DEFAULT_COUNTDOWN } from '../../shared/announcement'
 import {
-  DEFAULT_COUNTDOWN,
-  TRANSMISSION_DELAY_MAX_MS,
-  TRANSMISSION_DELAY_MIN_MS,
-} from '../../shared/announcement'
+  OUTPUT_DELAY_MAX_MS,
+  OUTPUT_DELAY_MIN_MS,
+  defaultAudioOutputs,
+} from '../../shared/audio/outputs'
 import { NUMBER_CLIP_MAX, NUMBER_CLIP_MIN } from '../../shared/number-text'
 import type {
   AudioDeviceSettings,
+  AudioOutput,
   EffectiveVoiceSettings,
   GlobalVoiceSettings,
+  OutputCarries,
   PhrasePlacement,
   ProjectVoiceSettings,
 } from '../../shared/ipc-contract'
@@ -103,12 +106,12 @@ export function savePreviewFirst(db: Database.Database, value: boolean): void {
 export const DEFAULT_VOICE = 'pl_PL-mc_speech-medium'
 export const DEFAULT_CONNECTOR = 'za'
 
-// Re-exported so the settings tests read one name, but owned by the scheduler
-// that actually honours them.
+// Re-exported so the settings tests read one name, but owned by the Output whose
+// delay they bound.
 export {
-  TRANSMISSION_DELAY_MIN_MS as MIN_TRANSMISSION_DELAY_MS,
-  TRANSMISSION_DELAY_MAX_MS as MAX_TRANSMISSION_DELAY_MS,
-} from '../../shared/announcement'
+  OUTPUT_DELAY_MIN_MS as MIN_OUTPUT_DELAY_MS,
+  OUTPUT_DELAY_MAX_MS as MAX_OUTPUT_DELAY_MS,
+} from '../../shared/audio/outputs'
 
 function readSetting(db: Database.Database, key: string): string | undefined {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as
@@ -139,7 +142,7 @@ function parseCountdown(raw: string | undefined): number[] | null {
 }
 
 /**
- * A stored path delay, or zero. Like the countdown, a corrupt value reads as
+ * A stored Output delay, or zero. Like the countdown, a corrupt value reads as
  * unset rather than throwing: a bad setting must not stop a show from starting.
  * Bounded because a delay longer than a Call would simply mute every
  * Announcement, which is never what the operator meant to type.
@@ -147,7 +150,7 @@ function parseCountdown(raw: string | undefined): number[] | null {
 function parseDelay(raw: string | undefined): number {
   const ms = Number(raw)
   if (!Number.isFinite(ms)) return 0
-  return Math.min(Math.max(Math.round(ms), TRANSMISSION_DELAY_MIN_MS), TRANSMISSION_DELAY_MAX_MS)
+  return Math.min(Math.max(Math.round(ms), OUTPUT_DELAY_MIN_MS), OUTPUT_DELAY_MAX_MS)
 }
 
 function parsePlacement(raw: string | undefined): PhrasePlacement | null {
@@ -164,7 +167,6 @@ export function getGlobalVoiceSettings(db: Database.Database): GlobalVoiceSettin
     // Manual by default: a slow machine must not start synthesising while the
     // operator is still editing.
     autoRender: readSetting(db, 'voice_auto_render') === 'true',
-    transmissionDelayMs: parseDelay(readSetting(db, 'voice_transmission_delay')),
   }
 }
 
@@ -173,7 +175,6 @@ export function saveGlobalVoiceSettings(db: Database.Database, value: GlobalVoic
   writeSetting(db, 'voice_countdown', value.countdown.join(','))
   writeSetting(db, 'voice_placement', value.placement)
   writeSetting(db, 'voice_auto_render', value.autoRender ? 'true' : 'false')
-  writeSetting(db, 'voice_transmission_delay', String(Math.round(value.transmissionDelayMs)))
 }
 
 export function getProjectVoiceSettings(
@@ -225,37 +226,148 @@ export function getEffectiveVoiceSettings(
     countdown: project.countdown ?? global.countdown,
     placement: project.placement ?? global.placement,
     connector: project.connector,
-    // Not overridable: it is a property of this machine's audio path.
-    transmissionDelayMs: global.transmissionDelayMs,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Outputs
+//
+// Two Outputs, each with a device, a delay and what it carries (ADR 0010).
+// Stored one key per field rather than as JSON, like every other setting here, so
+// a corrupt value costs one field instead of both Outputs.
+// ---------------------------------------------------------------------------
+
+const OUTPUT_KEY_PREFIXES = ['audio_output1', 'audio_output2'] as const
+
+function parseCarries(raw: string | undefined): OutputCarries | null {
+  return raw === 'voice' || raw === 'cues' || raw === 'both' ? raw : null
 }
 
 /**
- * Which output device each sound plays on.
+ * What the two Outputs are, for a machine that has never been configured or one
+ * whose settings predate them.
  *
- * Two independent selectors, because Announcements are piped into a virtual
- * cable feeding Mumble while the operator keeps their own countdown Cues on
- * their own speakers. `null` means the system default.
- *
- * The Intercom output is a third destination rather than a third selector: it
- * takes a copy of both sounds, so an intercom client on this machine carries the
- * show without anything being taken away from the operator.
+ * Read-only: the fallback to the old keys happens here rather than by writing,
+ * so reading the settings during a Live session cannot touch the database
+ * (CLAUDE.md). {@link migrateAudioDevices} is what makes the new keys real, and
+ * this returns the same answer whether it has run or not.
  */
 export function getAudioDevices(db: Database.Database): AudioDeviceSettings {
-  return {
-    cueSinkId: readSetting(db, 'audio_cue_sink') ?? null,
-    announcementSinkId: readSetting(db, 'audio_announcement_sink') ?? null,
-    intercomEnabled: readSetting(db, 'audio_intercom_enabled') === 'true',
-    intercomSinkId: readSetting(db, 'audio_intercom_sink') ?? null,
+  const stored = OUTPUT_KEY_PREFIXES.map((prefix, index) => {
+    const carries = parseCarries(readSetting(db, `${prefix}_carries`))
+    // The carries key is written on every save, so its absence is what says this
+    // Output has never been stored — a sink id cannot say it, because `null` is a
+    // device the operator can deliberately choose.
+    if (carries === null) return null
+    return {
+      // Output 1 is always on; only Output 2 stores a switch.
+      enabled: index === 0 || readSetting(db, `${prefix}_enabled`) === 'true',
+      sinkId: readSetting(db, `${prefix}_sink`) ?? null,
+      delayMs: parseDelay(readSetting(db, `${prefix}_delay`)),
+      carries,
+    } satisfies AudioOutput
+  })
+
+  if (stored[0] !== null && stored[1] !== null) {
+    return { outputs: [stored[0], stored[1]] }
   }
+
+  return { outputs: migratedAudioOutputs(db) ?? defaultAudioOutputs() }
 }
 
 export function saveAudioDevices(db: Database.Database, value: AudioDeviceSettings): void {
-  const set = (key: string, v: string | null): void =>
-    v === null ? clearSetting(db, key) : writeSetting(db, key, v)
+  OUTPUT_KEY_PREFIXES.forEach((prefix, index) => {
+    const output = value.outputs[index]
+    if (output.sinkId === null) clearSetting(db, `${prefix}_sink`)
+    else writeSetting(db, `${prefix}_sink`, output.sinkId)
+    writeSetting(db, `${prefix}_delay`, String(Math.round(output.delayMs)))
+    writeSetting(db, `${prefix}_carries`, output.carries)
+    // Off has to survive a restart as deliberately as on does, so it is written
+    // rather than left absent. Output 1 is always on and stores nothing.
+    if (index > 0) writeSetting(db, `${prefix}_enabled`, output.enabled ? 'true' : 'false')
+  })
+}
 
-  set('audio_cue_sink', value.cueSinkId)
-  set('audio_announcement_sink', value.announcementSinkId)
-  set('audio_intercom_sink', value.intercomSinkId)
-  writeSetting(db, 'audio_intercom_enabled', value.intercomEnabled ? 'true' : 'false')
+/** The keys the fixed cue/announcement/intercom destinations were stored under. */
+const LEGACY_AUDIO_KEYS = [
+  'audio_cue_sink',
+  'audio_announcement_sink',
+  'audio_intercom_enabled',
+  'audio_intercom_sink',
+  'voice_transmission_delay',
+] as const
+
+/**
+ * The two Outputs an older install's settings mean, or `null` when it has none.
+ *
+ * The old model had three destinations — a Cue device, an Announcement device and
+ * an Intercom output taking a copy of both — plus one global path delay, and
+ * three destinations do not fit two Outputs. So this migrates by *intent* rather
+ * than by count:
+ *
+ * - Output 1 keeps the Cue device, at no delay: it was always the operator's own.
+ * - Output 2 takes the Announcement device and the old path delay, which is the
+ *   pair that existed to reach the band.
+ * - The Intercom output does not survive as its own concept. A loopback device is
+ *   now simply what an Output points at, so an operator who used one re-points an
+ *   Output at it — and the migration log says so, because nothing else would.
+ *
+ * Output 2 is switched on only when the old settings actually asked for a second
+ * destination: a delay to compensate, or an Announcement device that was not
+ * already the Cue device. When they did not, one Output carrying both is exactly
+ * what the old settings did, and leaving Output 1 on `cues` there would have
+ * silenced every Announcement.
+ */
+function migratedAudioOutputs(db: Database.Database): [AudioOutput, AudioOutput] | null {
+  const present = LEGACY_AUDIO_KEYS.some((key) => readSetting(db, key) !== undefined)
+  if (!present) return null
+
+  const cueSinkId = readSetting(db, 'audio_cue_sink') ?? null
+  const announcementSinkId = readSetting(db, 'audio_announcement_sink') ?? null
+  const delayMs = parseDelay(readSetting(db, 'voice_transmission_delay'))
+  const wantsSecond = delayMs !== 0 || announcementSinkId !== cueSinkId
+
+  return [
+    {
+      enabled: true,
+      sinkId: cueSinkId,
+      delayMs: 0,
+      carries: wantsSecond ? 'cues' : 'both',
+    },
+    {
+      enabled: wantsSecond,
+      sinkId: announcementSinkId,
+      delayMs,
+      carries: 'voice',
+    },
+  ]
+}
+
+/**
+ * Writes the two Outputs an older install's settings meant, once.
+ *
+ * Called at app start, before any Live session can exist: the read path above
+ * answers the same way without it, so this only stops the old keys being
+ * reinterpreted forever and gives the operator one line in the log saying what
+ * became of their Intercom output.
+ */
+export function migrateAudioDevices(db: Database.Database): void {
+  if (readSetting(db, 'audio_output1_carries') !== undefined) return
+  const outputs = migratedAudioOutputs(db)
+  if (outputs === null) return
+
+  const hadIntercom = readSetting(db, 'audio_intercom_enabled') === 'true'
+  saveAudioDevices(db, { outputs })
+  for (const key of LEGACY_AUDIO_KEYS) clearSetting(db, key)
+
+  console.log(
+    '[settings] migrated audio settings to two outputs:',
+    `output 1 ${outputs[0].carries} on ${outputs[0].sinkId ?? 'the system default'},`,
+    outputs[1].enabled
+      ? `output 2 ${outputs[1].carries} on ${outputs[1].sinkId ?? 'the system default'} at ${outputs[1].delayMs}ms`
+      : 'output 2 off',
+    hadIntercom
+      ? '- the intercom output is gone; point an output at the loopback device to feed it again'
+      : '',
+  )
 }

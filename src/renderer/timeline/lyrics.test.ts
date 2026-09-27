@@ -140,7 +140,7 @@ describe('announcementProblemsByCallId', () => {
   const settings = {
     countdown: [10, 5, 3, 2, 1],
     placement: 'flush' as const,
-    transmissionDelayMs: 0,
+    outputDelayMs: 0,
   }
 
   it('badges as dropped the Call whose phrase does not fit the Call before it', () => {
@@ -193,7 +193,7 @@ describe('announcementProblemsByCallId', () => {
 
   it('accounts for the path delay eating the lead', () => {
     const items = [item('a', 15000, { partId: 'short' }), item('b', 5000, { partId: 'short' })]
-    const withDelay = { ...settings, transmissionDelayMs: 400 }
+    const withDelay = { ...settings, outputDelayMs: 400 }
     // Still plenty of room at 15s; the delay only shifts things.
     expect(announcementProblemsByCallId(items, phrase, withDelay).size).toBe(0)
   })

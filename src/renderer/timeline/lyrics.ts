@@ -113,7 +113,7 @@ export type AnnouncementProblem = Exclude<AnnouncementShape, 'full'>
 export interface AnnouncementSettings {
   countdown: number[]
   placement: PhrasePlacement
-  transmissionDelayMs: number
+  outputDelayMs: number
 }
 
 /**
@@ -157,7 +157,7 @@ export function announcementProblemsByCallId(
           phraseDurationMs: phrase,
           countdown: settings.countdown,
           placement: settings.placement,
-          transmissionDelayMs: settings.transmissionDelayMs,
+          outputDelayMs: settings.outputDelayMs,
         })
         if (shape !== 'full') problems.set(item.id, shape)
       }

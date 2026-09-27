@@ -303,7 +303,7 @@ describe('scheduleAnnouncement — transmission delay', () => {
   it('plays everything earlier so the band hears it on the beat', () => {
     // 300ms of Mumble buffering: every clip fires 300ms sooner, so what the
     // band hears is identical to the zero-delay schedule.
-    const plan = scheduleAnnouncement(makeInput({ leadMs: 15000, transmissionDelayMs: 300 }))
+    const plan = scheduleAnnouncement(makeInput({ leadMs: 15000, outputDelayMs: 300 }))
 
     expect(plan!.clips).toEqual([
       { url: 'phrase.opus', atMs: 3600 }, // 4700 - 800 - 300
@@ -316,19 +316,19 @@ describe('scheduleAnnouncement — transmission delay', () => {
   })
 
   it('leaves the schedule alone when the path adds nothing', () => {
-    const withZero = scheduleAnnouncement(makeInput({ leadMs: 15000, transmissionDelayMs: 0 }))
+    const withZero = scheduleAnnouncement(makeInput({ leadMs: 15000, outputDelayMs: 0 }))
     const withNone = scheduleAnnouncement(makeInput({ leadMs: 15000 }))
     expect(withZero).toEqual(withNone)
   })
 
   it('accepts a negative delay, for a path that runs ahead', () => {
-    const plan = scheduleAnnouncement(makeInput({ leadMs: 15000, transmissionDelayMs: -200 }))
+    const plan = scheduleAnnouncement(makeInput({ leadMs: 15000, outputDelayMs: -200 }))
     expect(plan!.clips).toContainEqual({ url: '10.opus', atMs: 5200 })
   })
 
   it('drops a number the delay pushes before the previous Call', () => {
     // 10 would play at 11000 - 10000 - 1500 = -500, so the countdown starts at 5.
-    const plan = scheduleAnnouncement(makeInput({ leadMs: 11000, transmissionDelayMs: 1500 }))
+    const plan = scheduleAnnouncement(makeInput({ leadMs: 11000, outputDelayMs: 1500 }))
 
     const urls = plan!.clips.map((c) => c.url)
     expect(urls).not.toContain('10.opus')
@@ -338,7 +338,7 @@ describe('scheduleAnnouncement — transmission delay', () => {
 
   it('drops the Announcement when the delay leaves no room for the phrase', () => {
     // A 1s lead with 800ms of path delay leaves 200ms for an 800ms phrase.
-    expect(scheduleAnnouncement(makeInput({ leadMs: 1000, transmissionDelayMs: 800 }))).toBeNull()
+    expect(scheduleAnnouncement(makeInput({ leadMs: 1000, outputDelayMs: 800 }))).toBeNull()
   })
 
   it('counts the delay against the phrase under immediate placement', () => {
@@ -346,12 +346,12 @@ describe('scheduleAnnouncement — transmission delay', () => {
     // the time the band has to hear the name. 800ms phrase + 400ms path needs
     // 1200ms of lead.
     const tooTight = scheduleAnnouncement(
-      makeInput({ leadMs: 1100, transmissionDelayMs: 400, placement: 'immediate' }),
+      makeInput({ leadMs: 1100, outputDelayMs: 400, placement: 'immediate' }),
     )
     expect(tooTight).toBeNull()
 
     const fits = scheduleAnnouncement(
-      makeInput({ leadMs: 1200, transmissionDelayMs: 400, placement: 'immediate' }),
+      makeInput({ leadMs: 1200, outputDelayMs: 400, placement: 'immediate' }),
     )
     expect(fits!.clips).toContainEqual({ url: 'phrase.opus', atMs: 0 })
   })
@@ -359,8 +359,8 @@ describe('scheduleAnnouncement — transmission delay', () => {
   it('keeps the phrase the same breath ahead of the first number it is heard before', () => {
     // The gap between phrase end and first number must stay exactly one breath
     // whatever the delay: both shift together, which is the whole point of flush.
-    for (const transmissionDelayMs of [0, 250, 900]) {
-      const clips = scheduleAnnouncement(makeInput({ leadMs: 15000, transmissionDelayMs }))!.clips
+    for (const outputDelayMs of [0, 250, 900]) {
+      const clips = scheduleAnnouncement(makeInput({ leadMs: 15000, outputDelayMs }))!.clips
       const phrase = clips.find((c) => c.url === 'phrase.opus')!
       const first = clips.find((c) => c.url === '10.opus')!
       expect(phrase.atMs + 800 + PHRASE_GAP_MS).toBe(first.atMs)
@@ -405,7 +405,7 @@ describe('announcementShape', () => {
   })
 
   it('accounts for the path delay', () => {
-    expect(announcementShape({ ...base, leadMs: 1000, transmissionDelayMs: 800 })).toBe('dropped')
+    expect(announcementShape({ ...base, leadMs: 1000, outputDelayMs: 800 })).toBe('dropped')
   })
 
   it('is phrase-only when the countdown is empty, however long the Call', () => {
@@ -416,9 +416,9 @@ describe('announcementShape', () => {
     // The two must never disagree: badging is only useful if it describes what
     // the show will actually do.
     for (const placement of ['flush', 'immediate'] as const) {
-      for (const transmissionDelayMs of [0, 400]) {
+      for (const outputDelayMs of [0, 400]) {
         for (let leadMs = 0; leadMs <= 16000; leadMs += 50) {
-          const plan = scheduleAnnouncement(makeInput({ leadMs, placement, transmissionDelayMs }))
+          const plan = scheduleAnnouncement(makeInput({ leadMs, placement, outputDelayMs }))
           const expected =
             plan === null
               ? 'dropped'
@@ -429,9 +429,9 @@ describe('announcementShape', () => {
           expect({
             leadMs,
             placement,
-            transmissionDelayMs,
-            shape: announcementShape({ ...base, leadMs, placement, transmissionDelayMs }),
-          }).toEqual({ leadMs, placement, transmissionDelayMs, shape: expected })
+            outputDelayMs,
+            shape: announcementShape({ ...base, leadMs, placement, outputDelayMs }),
+          }).toEqual({ leadMs, placement, outputDelayMs, shape: expected })
         }
       }
     }

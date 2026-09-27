@@ -23,19 +23,6 @@ import type { ScheduledClip, AnnouncementPlan, PhrasePlacement } from './ipc-con
 export const DEFAULT_COUNTDOWN: number[] = [10, 5, 3, 2, 1]
 
 /**
- * Bounds on the Announcement path delay.
- *
- * Five seconds is far beyond any Mumble buffer and already longer than the gap
- * between most countdown numbers, so anything larger would only mute the
- * Announcement it was meant to fix. Negative covers a path that runs ahead.
- *
- * Defined here, where the delay is applied, so the settings layer and the field
- * that validates operator input cannot drift from what the scheduler honours.
- */
-export const TRANSMISSION_DELAY_MIN_MS = -5000
-export const TRANSMISSION_DELAY_MAX_MS = 5000
-
-/**
  * The breath between the name and the first number, in milliseconds.
  *
  * Flush placement used to mean *exactly* flush: the phrase was scheduled to end
@@ -81,7 +68,7 @@ export interface ScheduleInput {
    *
    * Defaults to 0, which is the behaviour of a local speaker.
    */
-  transmissionDelayMs?: number
+  outputDelayMs?: number
   /**
    * Silence between the end of the phrase and the first number, under `flush`
    * placement. Defaults to {@link PHRASE_GAP_MS}.
@@ -106,7 +93,7 @@ export interface AnnouncementShapeInput {
   phraseDurationMs: number
   countdown: number[]
   placement: PhrasePlacement
-  transmissionDelayMs?: number
+  outputDelayMs?: number
   phraseGapMs?: number
 }
 
@@ -121,7 +108,7 @@ export interface AnnouncementShapeInput {
  */
 export function announcementShape(input: AnnouncementShapeInput): AnnouncementShape {
   const { leadMs, phraseDurationMs, countdown, placement } = input
-  const delayMs = input.transmissionDelayMs ?? 0
+  const delayMs = input.outputDelayMs ?? 0
   const gapMs = input.phraseGapMs ?? PHRASE_GAP_MS
 
   // A number lands where the scheduler puts it, and only counts if that is
@@ -157,7 +144,7 @@ export function announcementShape(input: AnnouncementShapeInput): AnnouncementSh
  */
 export function scheduleAnnouncement(input: ScheduleInput): AnnouncementPlan | null {
   const { callId, leadMs, phrase, numbers, countdown, placement } = input
-  const delayMs = input.transmissionDelayMs ?? 0
+  const delayMs = input.outputDelayMs ?? 0
   const gapMs = input.phraseGapMs ?? PHRASE_GAP_MS
 
   // Number n lands n seconds before the Call starts: the musician hears the word

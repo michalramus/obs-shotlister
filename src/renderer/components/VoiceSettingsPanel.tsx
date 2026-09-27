@@ -12,7 +12,7 @@ import type {
 } from '../../shared/ipc-contract'
 import { toMediaUrl } from '../../shared/media-url'
 import { NUMBER_CLIP_MAX, NUMBER_CLIP_MIN } from '../../shared/number-text'
-import { TRANSMISSION_DELAY_MAX_MS, TRANSMISSION_DELAY_MIN_MS } from '../../shared/announcement'
+import { OUTPUT_DELAY_MAX_MS, OUTPUT_DELAY_MIN_MS } from '../../shared/audio/outputs'
 
 // ---------------------------------------------------------------------------
 // Countdown parsing
@@ -55,10 +55,10 @@ export function parseDelayInput(raw: string): DelayParse {
   if (!Number.isFinite(ms)) {
     return { ok: false, error: `"${trimmed}" is not a number of milliseconds.` }
   }
-  if (ms < TRANSMISSION_DELAY_MIN_MS || ms > TRANSMISSION_DELAY_MAX_MS) {
+  if (ms < OUTPUT_DELAY_MIN_MS || ms > OUTPUT_DELAY_MAX_MS) {
     return {
       ok: false,
-      error: `Keep it between ${TRANSMISSION_DELAY_MIN_MS} and ${TRANSMISSION_DELAY_MAX_MS} ms.`,
+      error: `Keep it between ${OUTPUT_DELAY_MIN_MS} and ${OUTPUT_DELAY_MAX_MS} ms.`,
     }
   }
   return { ok: true, delayMs: Math.round(ms) }
@@ -647,7 +647,7 @@ function TransmissionDelayField({
   const voiceSettings = useAppStore((st) => st.voiceSettings)
   const saveVoiceSettings = useAppStore((st) => st.saveVoiceSettings)
 
-  const stored = voiceSettings?.transmissionDelayMs ?? 0
+  const stored = voiceSettings?.outputDelayMs ?? 0
   const [draft, setDraft] = useState(String(stored))
   const [problem, setProblem] = useState<string | null>(null)
 
@@ -666,7 +666,7 @@ function TransmissionDelayField({
     setProblem(null)
     onError(null)
     if (voiceSettings === null || parsed.delayMs === stored) return
-    saveVoiceSettings({ ...voiceSettings, transmissionDelayMs: parsed.delayMs }).catch(
+    saveVoiceSettings({ ...voiceSettings, outputDelayMs: parsed.delayMs }).catch(
       (err: unknown) => onError(err instanceof Error ? err.message : 'Could not save the delay.'),
     )
   }

@@ -22,7 +22,7 @@ import {
   describeClipDeletion,
   CONFIRM_NAMED_PROJECTS,
 } from './VoiceSettingsPanel'
-import { TRANSMISSION_DELAY_MAX_MS, TRANSMISSION_DELAY_MIN_MS } from '../../shared/announcement'
+import { OUTPUT_DELAY_MAX_MS, OUTPUT_DELAY_MIN_MS } from '../../shared/audio/outputs'
 import type { PartRenderState, ProjectClipStats, RenderState } from '../../shared/ipc-contract'
 
 function part(name: string, state: RenderState): PartRenderState {
@@ -224,13 +224,13 @@ describe('parseDelayInput', () => {
   })
 
   it('rejects a delay long enough to mute every Announcement', () => {
-    expect(parseDelayInput(String(TRANSMISSION_DELAY_MAX_MS + 1)).ok).toBe(false)
-    expect(parseDelayInput(String(TRANSMISSION_DELAY_MIN_MS - 1)).ok).toBe(false)
+    expect(parseDelayInput(String(OUTPUT_DELAY_MAX_MS + 1)).ok).toBe(false)
+    expect(parseDelayInput(String(OUTPUT_DELAY_MIN_MS - 1)).ok).toBe(false)
   })
 
   it('accepts the bounds themselves', () => {
-    expect(parseDelayInput(String(TRANSMISSION_DELAY_MAX_MS)).ok).toBe(true)
-    expect(parseDelayInput(String(TRANSMISSION_DELAY_MIN_MS)).ok).toBe(true)
+    expect(parseDelayInput(String(OUTPUT_DELAY_MAX_MS)).ok).toBe(true)
+    expect(parseDelayInput(String(OUTPUT_DELAY_MIN_MS)).ok).toBe(true)
   })
 })
 

@@ -84,6 +84,7 @@ import {
   saveProjectVoiceSettings,
   getEffectiveVoiceSettings,
   getAudioDevices,
+  migrateAudioDevices,
   saveAudioDevices,
 } from './ipc/settings'
 import { clipsDir } from './speech/cache'
@@ -394,19 +395,12 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler('audio:devices:get', () => getAudioDevices(db))
 
-  registerIpcHandler('audio:devices:save', async (payload: AudioDeviceSettings) => {
+  registerIpcHandler('audio:devices:save', (payload: AudioDeviceSettings) => {
     saveAudioDevices(db, payload)
-    // Switching the Intercom output on is the operator asking for the device, so
-    // it is made here rather than at the next start. Awaited, so the panel's
-    // status line reads the sink that now exists rather than racing it — but a
-    // sink that will not load must not fail the save: the reason reaches the
-    // operator through that same status line, and every other output keeps
-    // working meanwhile.
-    if (payload.intercomEnabled) {
-      await virtualSink.ensure().catch((err: unknown) => {
-        console.error('[audio] could not create the virtual output:', err)
-      })
-    }
+    // Nothing is created here any more. An Output names a device; it cannot say
+    // that the device is a loopback one, so there is no longer a setting whose
+    // switching on means "make me a Virtual output". It is made at start where
+    // the platform allows it, and on demand from the panel's own button.
   })
 
   registerIpcHandler('audio:virtual:state', () => virtualSink.state())
@@ -913,6 +907,11 @@ app.whenReady().then(() => {
   })
 
   _db = getDatabase()
+  // Before anything reads the audio settings, and long before a Live session can
+  // exist: the reader falls back to the old keys anyway, so this is only here to
+  // make the two Outputs real and to log once what became of an older install's
+  // fixed destinations.
+  migrateAudioDevices(_db)
   live = createLiveSession(_db, {
     // Speech plays in the renderer, which is the only side with an
     // output-device API — and the only side the operator can route to a
@@ -989,15 +988,15 @@ app.whenReady().then(() => {
     startOscServer(oscSettings.port, { next: handleOscNext, skip: handleOscSkip })
   }
 
-  // The Intercom output is a device, and a device has to exist before the
-  // operator can pick it in Mumble. Made at start so it is there while they set
-  // the show up, not first asked for when a Cue is already due. Not awaited: on
-  // Linux it is one pactl call, and on every other platform it is a no-op.
-  if (getAudioDevices(_db).intercomEnabled) {
-    virtualSink.ensure().catch((err: unknown) => {
-      console.error('[audio] could not create the virtual output on start:', err)
-    })
-  }
+  // The Virtual output is a device, and a device has to exist before an Output
+  // can be pointed at it. Made at start so it is there while the operator sets
+  // the show up, not first asked for when a Cue is already due. Unconditional
+  // now that no setting says "I want an intercom": creation is idempotent, it is
+  // a no-op off Linux, and the sink this process loaded is unloaded at quit
+  // (ADR 0008). Not awaited — nothing downstream waits on it.
+  virtualSink.ensure().catch((err: unknown) => {
+    console.error('[audio] could not create the virtual output on start:', err)
+  })
 
   // Subscribe to OBS WebSocket events for auto-validation
   const validationEvents = [

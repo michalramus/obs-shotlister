@@ -120,7 +120,6 @@ describe('missingClips', () => {
       countdown: [3, 1],
       placement: 'flush',
       autoRender: false,
-      transmissionDelayMs: 0,
     })
     const hashes = missingClips(db, 'p1', []).map((item) => item.hash)
     expect(new Set(hashes)).toEqual(new Set(numberHashes(VOICE)))

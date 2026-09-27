@@ -119,15 +119,6 @@ export interface GlobalVoiceSettings {
   placement: PhrasePlacement
   /** Re-render on change (debounced) rather than only when asked. */
   autoRender: boolean
-  /**
-   * How long the Announcement output path takes to reach the band, in
-   * milliseconds — Mumble buffers, so the band hears a clip well after it
-   * plays. The whole utterance is scheduled this much earlier to compensate.
-   *
-   * Global rather than per-Project, like the output device it compensates for:
-   * it describes this machine's audio path, not the show being run on it.
-   */
-  transmissionDelayMs: number
 }
 
 export interface ProjectVoiceSettings {
@@ -142,31 +133,55 @@ export interface EffectiveVoiceSettings {
   countdown: number[]
   placement: PhrasePlacement
   connector: string
-  transmissionDelayMs: number
+}
+
+// ---------------------------------------------------------------------------
+// Outputs
+//
+// The app plays into two Outputs, and each one says three things: which device
+// it reaches, how long it takes to get there, and what it carries. That covers
+// both real routes at once — the operator's own speakers, and the loopback
+// device a voice-chat client sends on to the band — without either being a
+// fixed destination in the code (ADR 0010).
+// ---------------------------------------------------------------------------
+
+/** What an Output carries: Announcements, Cues, or both. */
+export type OutputCarries = 'voice' | 'cues' | 'both'
+
+/** One of the app's two Outputs. */
+export interface AudioOutput {
+  /** Output 1 is always enabled; only Output 2 can be switched off. */
+  enabled: boolean
+  /** The device it plays on. `null` is the system default. */
+  sinkId: string | null
+  /**
+   * How long this route takes to reach its listener, in milliseconds.
+   *
+   * Sounds on this Output play this much *earlier* to compensate — Mumble
+   * buffers, so the band hears a clip well after it is played. It applies to
+   * everything the Output carries, Cues as much as Announcements: the band's
+   * countdown beep has to land on the beat too. Negative plays later, for a
+   * route that somehow runs ahead.
+   */
+  delayMs: number
+  carries: OutputCarries
 }
 
 /**
- * Output device per sound, so Announcements can be piped to a virtual cable
- * feeding Mumble while the operator keeps the countdown Cues on their own
- * speakers. `null` means the system default.
+ * Where the app's sound goes.
+ *
+ * Exactly two, positionally: Output 1 first. Output 1 is the operator's own — it
+ * is the copy their mute button silences and the only one that falls back to the
+ * default device when its own is gone — so which one is which is part of the
+ * shape rather than a flag inside it.
  */
 export interface AudioDeviceSettings {
-  cueSinkId: string | null
-  announcementSinkId: string | null
-  /**
-   * Send every Cue and Announcement to {@link AudioDeviceSettings.intercomSinkId}
-   * as well as to the device its own setting names, so an intercom client on this
-   * machine can carry the show. Duplicates; never moves sound off the operator's
-   * own speakers.
-   */
-  intercomEnabled: boolean
-  /** The Virtual output to duplicate into. `null` means nothing is chosen yet. */
-  intercomSinkId: string | null
+  outputs: [AudioOutput, AudioOutput]
 }
 
 /**
- * Where the Virtual output — the loopback device the Intercom output plays into —
- * stands on this machine.
+ * Where the Virtual output — the loopback device an Output plays into so a
+ * voice-chat client can carry the show — stands on this machine.
  *
  * The app creates one on Linux and only finds one on macOS and Windows (ADR
  * 0008), so this reports both what is true now and what the operator has to do

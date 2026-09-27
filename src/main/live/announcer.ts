@@ -23,7 +23,8 @@ import { ENGINE_ID, clipHash, partClipHash } from '../../shared/render-plan'
 import { numberTexts } from '../../shared/number-text'
 import { targetIdOf } from '../../shared/rundown-item'
 import { toMediaUrl } from '../../shared/media-url'
-import { getEffectiveVoiceSettings } from '../ipc/settings'
+import { worstCaseDelayMs } from '../../shared/audio/outputs'
+import { getAudioDevices, getEffectiveVoiceSettings } from '../ipc/settings'
 import { getPart } from '../ipc/parts'
 
 import { CLIP_EXTENSION } from '../speech/cache'
@@ -103,7 +104,10 @@ export function createAnnouncementBuilder(
           numbers,
           countdown: settings.countdown,
           placement: settings.placement,
-          transmissionDelayMs: settings.transmissionDelayMs,
+          // The delay belongs to the Output, not to the Project: this plan is
+          // scheduled for the Output that needs the most warning, so nothing the
+          // band hears arrives late.
+          outputDelayMs: worstCaseDelayMs(getAudioDevices(db).outputs, 'voice'),
         })
       } catch (err) {
         // A show keeps running even when speech does not: a broken lookup must
