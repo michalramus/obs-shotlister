@@ -27,7 +27,17 @@ export function createOBSClient(): OBSClient {
 
   function setStatus(s: OBSConnectionStatus): void {
     status = s
-    listeners.forEach((cb) => cb(s))
+    // Isolated: this runs inside obs-websocket-js's own emitter, so a listener
+    // that throws would abort the rest of the fan-out — including the
+    // reconnect scheduling — and surface as an uncaughtException from inside
+    // the library.
+    listeners.forEach((cb) => {
+      try {
+        cb(s)
+      } catch (err) {
+        console.error('[obs] status listener threw:', err)
+      }
+    })
   }
 
   obs.on('ConnectionClosed', () => setStatus('disconnected'))
@@ -48,8 +58,9 @@ export function createOBSClient(): OBSClient {
       }
     },
     disconnect(): void {
-      obs.disconnect()
-      // ConnectionClosed event will fire setStatus('disconnected')
+      // Fire-and-forget by design: ConnectionClosed drives setStatus, and
+      // callers do not wait for the socket to finish closing.
+      obs.disconnect().catch((err: unknown) => console.error('[obs] disconnect error:', err))
     },
     async setCurrentProgramScene(sceneName: string): Promise<void> {
       await obs.call('SetCurrentProgramScene', { sceneName })

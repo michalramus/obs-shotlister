@@ -3,8 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // Module-level mock listeners store
 const _mockListeners: Record<string, Array<() => void>> = {}
 const mockConnect = vi.fn().mockResolvedValue(undefined)
+// Returns a promise, as obs-websocket-js's own disconnect() does — the fake
+// used to return undefined, which hid the fact that the caller was floating it.
 const mockDisconnect = vi.fn().mockImplementation(() => {
   _mockListeners['ConnectionClosed']?.forEach((cb) => cb())
+  return Promise.resolve()
 })
 const mockCall = vi.fn()
 
@@ -28,6 +31,7 @@ describe('OBSClient', () => {
     mockConnect.mockResolvedValue(undefined)
     mockDisconnect.mockImplementation(() => {
       _mockListeners['ConnectionClosed']?.forEach((cb) => cb())
+      return Promise.resolve()
     })
     mockCall.mockReset()
   })

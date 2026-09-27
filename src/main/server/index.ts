@@ -8,7 +8,19 @@ import type { Server as SocketServer } from 'socket.io'
 import type { Database } from 'better-sqlite3'
 import type { LiveSession } from '../live/session'
 
-const PORT = process.env['PORT'] ? parseInt(process.env['PORT'], 10) : 3000
+// A bad PORT used to reach listen() as NaN, which throws synchronously and
+// took the whole startup sequence down with it.
+function resolvePort(raw: string | undefined): number {
+  if (!raw) return 3000
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+    console.error(`[server] ignoring invalid PORT ${JSON.stringify(raw)} — using 3000`)
+    return 3000
+  }
+  return parsed
+}
+
+const PORT = resolvePort(process.env['PORT'])
 
 export function startServer(
   db?: Database,

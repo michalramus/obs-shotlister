@@ -21,7 +21,10 @@ export function startOscServer(port: number, on: { next: () => void; skip: () =>
 export function stopOscServer(): void {
   if (oscServer) {
     try {
-      oscServer.close()
+      const closed: unknown = oscServer.close()
+      if (closed instanceof Promise) {
+        closed.catch((err: unknown) => console.error('[osc] close error:', err))
+      }
     } catch (err) {
       console.error('[osc] close error:', err)
     }

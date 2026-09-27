@@ -520,10 +520,16 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
   }, [obsStatus])
 
   async function handleToggle(enabled: boolean): Promise<void> {
-    setObsEnabled(enabled)
     setError(null)
     setValidationResult(null)
-    await window.api.obs.setEnabled(enabled)
+    try {
+      // Written before the toggle moves: showing "on" for a setting that was
+      // never persisted sends the operator into a show believing OBS is live.
+      await window.api.obs.setEnabled(enabled)
+      setObsEnabled(enabled)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not change the OBS setting.')
+    }
   }
 
   async function handleSaveSettings(): Promise<void> {
@@ -537,7 +543,9 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
 
   async function handleConnect(): Promise<void> {
     if (obsStatus === 'connecting') {
-      window.api.obs.disconnect()
+      window.api.obs.disconnect().catch((err: unknown) => {
+        console.error('[obs] disconnect before reconnect failed:', err)
+      })
       setObsStatus('disconnected')
     }
     setLoading(true)
@@ -560,7 +568,9 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
   }
 
   function handleDisconnect(): void {
-    window.api.obs.disconnect()
+    window.api.obs.disconnect().catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : 'Disconnect failed.')
+    })
     setObsStatus('disconnected')
     setValidationResult(null)
   }

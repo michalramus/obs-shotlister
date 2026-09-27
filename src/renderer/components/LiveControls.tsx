@@ -252,7 +252,9 @@ export function LiveControls(): React.JSX.Element {
       </button>
       <button
         style={s.btn('danger')}
-        onClick={() => liveStop().catch((err) => handleError('stop', err))}
+        onClick={() => {
+          liveStop().catch((err) => handleError('stop', err))
+        }}
         aria-label="Stop rundown"
       >
         ■ Stop
@@ -262,7 +264,9 @@ export function LiveControls(): React.JSX.Element {
 
       <button
         style={s.btn('secondary')}
-        onClick={() => liveRestart().catch((err) => handleError('restart', err))}
+        onClick={() => {
+          liveRestart().catch((err) => handleError('restart', err))
+        }}
         aria-label="Restart rundown"
       >
         ↺ Restart
@@ -271,7 +275,9 @@ export function LiveControls(): React.JSX.Element {
       <button
         style={s.btn('secondary')}
         disabled={!canSkipNext() || inTransition}
-        onClick={() => liveSkipNext().catch((err) => handleError('skip-next', err))}
+        onClick={() => {
+          liveSkipNext().catch((err) => handleError('skip-next', err))
+        }}
         aria-label="Skip next shot"
       >
         ⏭ Skip next
@@ -280,7 +286,9 @@ export function LiveControls(): React.JSX.Element {
       <button
         style={s.btn('primary')}
         disabled={inTransition}
-        onClick={() => liveNext().catch((err) => handleError('next', err))}
+        onClick={() => {
+          liveNext().catch((err) => handleError('next', err))
+        }}
         aria-label="Next shot"
       >
         → Next

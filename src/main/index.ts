@@ -222,11 +222,18 @@ function createWindow(): void {
     },
   })
 
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    win.loadURL(process.env['ELECTRON_RENDERER_URL'])
-  } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'))
-  }
+  // A load failure leaves an empty frame on screen. Silence there reads as a
+  // hung app, so it is reported rather than logged and forgotten.
+  const loaded = process.env['ELECTRON_RENDERER_URL']
+    ? win.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    : win.loadFile(join(__dirname, '../renderer/index.html'))
+  loaded.catch((err: unknown) => {
+    console.error('[window] failed to load the operator UI:', err)
+    dialog.showErrorBox(
+      'Shotlister could not start',
+      `The operator interface failed to load.\n\n${err instanceof Error ? err.message : String(err)}`,
+    )
+  })
 }
 
 // --- IPC handlers ------------------------------------------------------------
@@ -843,208 +850,227 @@ export function setSocketServer(io: SocketServer): void {
   _io = io
 }
 
-app.whenReady().then(() => {
-  // Serve local media files via media:// protocol (avoids cross-origin issues in dev mode)
-  protocol.handle('media', async (request) => {
-    const filePath = fromMediaUrl(request.url)
-    let stat: Awaited<ReturnType<typeof fsPromises.stat>>
-    try {
-      stat = await fsPromises.stat(filePath)
-    } catch {
-      return new Response('Not found', { status: 404 })
-    }
-    const fileSize = stat.size
-    const ext = extname(filePath).toLowerCase().slice(1)
-    const mimeTypes: Record<string, string> = {
-      mp4: 'video/mp4',
-      mov: 'video/quicktime',
-      webm: 'video/webm',
-      mkv: 'video/x-matroska',
-      avi: 'video/x-msvideo',
-      mp3: 'audio/mpeg',
-      wav: 'audio/wav',
-      aac: 'audio/aac',
-      ogg: 'audio/ogg',
-      opus: 'audio/ogg; codecs=opus',
-      flac: 'audio/flac',
-      m4a: 'audio/mp4',
-    }
-    const contentType = mimeTypes[ext] ?? 'application/octet-stream'
-    const rangeHeader = request.headers.get('range')
+app
+  .whenReady()
+  .then(() => {
+    // Serve local media files via media:// protocol (avoids cross-origin issues in dev mode)
+    protocol.handle('media', async (request) => {
+      const filePath = fromMediaUrl(request.url)
+      let stat: Awaited<ReturnType<typeof fsPromises.stat>>
+      try {
+        stat = await fsPromises.stat(filePath)
+      } catch {
+        return new Response('Not found', { status: 404 })
+      }
+      const fileSize = stat.size
+      const ext = extname(filePath).toLowerCase().slice(1)
+      const mimeTypes: Record<string, string> = {
+        mp4: 'video/mp4',
+        mov: 'video/quicktime',
+        webm: 'video/webm',
+        mkv: 'video/x-matroska',
+        avi: 'video/x-msvideo',
+        mp3: 'audio/mpeg',
+        wav: 'audio/wav',
+        aac: 'audio/aac',
+        ogg: 'audio/ogg',
+        opus: 'audio/ogg; codecs=opus',
+        flac: 'audio/flac',
+        m4a: 'audio/mp4',
+      }
+      const contentType = mimeTypes[ext] ?? 'application/octet-stream'
+      const rangeHeader = request.headers.get('range')
 
-    if (!rangeHeader) {
+      if (!rangeHeader) {
+        return new Response(
+          toWebStream(createReadStream(filePath, { highWaterMark: MEDIA_CHUNK_BYTES })),
+          {
+            headers: {
+              'Content-Length': fileSize.toString(),
+              'Content-Type': contentType,
+              'Accept-Ranges': 'bytes',
+            },
+          },
+        )
+      }
+
+      const match = rangeHeader.match(/bytes=(\d+)-(\d*)/)
+      if (!match) return new Response('Bad Range', { status: 400 })
+
+      const start = parseInt(match[1], 10)
+      const end = match[2] ? parseInt(match[2], 10) : fileSize - 1
+      const chunkSize = end - start + 1
+
       return new Response(
-        toWebStream(createReadStream(filePath, { highWaterMark: MEDIA_CHUNK_BYTES })),
+        toWebStream(createReadStream(filePath, { start, end, highWaterMark: MEDIA_CHUNK_BYTES })),
         {
+          status: 206,
           headers: {
-            'Content-Length': fileSize.toString(),
-            'Content-Type': contentType,
+            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
             'Accept-Ranges': 'bytes',
+            'Content-Length': chunkSize.toString(),
+            'Content-Type': contentType,
           },
         },
       )
+    })
+
+    _db = getDatabase()
+    // Before anything reads the audio settings, and long before a Live session can
+    // exist: the reader falls back to the old keys anyway, so this is only here to
+    // make the two Outputs real and to log once what became of an older install's
+    // fixed destinations.
+    migrateAudioDevices(_db)
+    live = createLiveSession(_db, {
+      // Speech plays in the renderer, which is the only side with an
+      // output-device API — and the only side the operator can route to a
+      // virtual cable. The main process just says what to play and when.
+      onAnnouncement: (plan) => pushToWindow('live:announcement-push', plan),
+      // Under userData rather than in the app bundle: the cache is per-operator
+      // and grows as Parts are named, and a packaged app's resources are read-only.
+      clipsDir: clipsDir(app.getPath('userData')),
+    })
+    obs = createOBSSwitcher(_db, obsClient, live)
+    const userDataDir = app.getPath('userData')
+    // The one place the three sides of rendering are bolted together: the cache on
+    // disk, Piper, and the Voice download. Everything above this line takes them as
+    // arguments, which is what keeps Electron out of the render policy.
+    const clipStore = createFileClipStore(userDataDir)
+    render = createRenderService({
+      db: _db,
+      clips: clipStore,
+      synthesise: createPiperSynthesiser({ clips: clipStore, userDataDir }),
+      installVoice: async (voice, onDownload) => {
+        await ensureVoice(voice, { voicesDir: downloadedVoicesDir(userDataDir), onDownload })
+      },
+      isLive: () => live.getState().running,
+      onStatus: (status) => pushToWindow('speech:renderSummary-push', status),
+    })
+    publish = createChangePublisher(_db, live, () => _io)
+    control = createLiveControl({
+      session: live,
+      obs,
+      publish,
+      // Read per call rather than captured: the operator can toggle Preview-first
+      // between two Rundowns without anything being rewired.
+      previewFirst: () => getPreviewFirst(getDatabase()),
+    })
+    live.clear()
+    // App start is one of the only two moments the cache may be touched (ADR
+    // 0005). Deliberately not awaited: a slow sweep must not hold up the window,
+    // and a failed one is a disk-space problem, never a reason not to start.
+    // Before the sweep, and for the same reason it is safe here: app start is one
+    // of the two moments the cache may be touched. A clip whose length was lost to
+    // an interrupted render has to be measured before anything counts it as
+    // rendered, or it stays on disk unusable for good.
+    render
+      .backfillDurations()
+      .then(() => render?.sweepOrphans())
+      // Auto-rendering means "nothing should stay unrendered", so start-up is one
+      // of its triggers: a Project left half-rendered by a closed app, or one
+      // imported since, is exactly the case the operator turned this on for.
+      // After the repair, so a clip whose duration was just recovered is not
+      // synthesised a second time.
+      .then(() => {
+        if (!_db) return
+        for (const project of listProjects(_db)) render?.scheduleAutoRender(project.id)
+      })
+      .catch((err: unknown) => console.error('[speech] cache repair on start failed:', err))
+    registerIpcHandlers()
+    const audioDir = app.isPackaged
+      ? join(process.resourcesPath, 'audio')
+      : join(app.getAppPath(), 'resources', 'audio')
+    const io = startServer(_db, live, audioDir, (message) => {
+      pushToWindow('server:error', message)
+    })
+    if (io) setSocketServer(io)
+    createWindow()
+
+    if (getObsEnabled(_db)) {
+      obsAutoReconnect = true
+      const { url, password } = getObsSettings(_db)
+      obsClient.connect(url, password || undefined).catch(() => {})
     }
 
-    const match = rangeHeader.match(/bytes=(\d+)-(\d*)/)
-    if (!match) return new Response('Bad Range', { status: 400 })
+    const oscSettings = getOscSettings(_db)
+    if (oscSettings.enabled) {
+      startOscServer(oscSettings.port, { next: handleOscNext, skip: handleOscSkip })
+    }
 
-    const start = parseInt(match[1], 10)
-    const end = match[2] ? parseInt(match[2], 10) : fileSize - 1
-    const chunkSize = end - start + 1
+    // The Virtual output is a device, and a device has to exist before an Output
+    // can be pointed at it. Made at start so it is there while the operator sets
+    // the show up, not first asked for when a Cue is already due. Unconditional
+    // now that no setting says "I want an intercom": creation is idempotent, it is
+    // a no-op off Linux, and the sink this process loaded is unloaded at quit
+    // (ADR 0008). Not awaited — nothing downstream waits on it.
+    virtualSink.ensure().catch((err: unknown) => {
+      console.error('[audio] could not create the virtual output on start:', err)
+    })
 
-    return new Response(
-      toWebStream(createReadStream(filePath, { start, end, highWaterMark: MEDIA_CHUNK_BYTES })),
-      {
-        status: 206,
-        headers: {
-          'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-          'Accept-Ranges': 'bytes',
-          'Content-Length': chunkSize.toString(),
-          'Content-Type': contentType,
-        },
-      },
+    // Subscribe to OBS WebSocket events for auto-validation
+    const validationEvents = [
+      'StudioModeStateChanged',
+      'SceneCreated',
+      'SceneRemoved',
+      'SceneNameChanged',
+      'SceneTransitionCreated',
+      'SceneTransitionRemoved',
+    ]
+    for (const event of validationEvents) {
+      obsClient.onOBSEvent(event, () => {
+        if (_db) runValidation(_db)
+      })
+    }
+
+    obsClient.onStatusChange((status: OBSConnectionStatus) => {
+      pushToWindow('obs:status', { status })
+      if (status === 'connected' && _db) {
+        // A retry may still be pending from before this connection succeeded.
+        if (obsReconnectTimer) {
+          clearTimeout(obsReconnectTimer)
+          obsReconnectTimer = null
+        }
+        runValidation(_db)
+      }
+      if (status === 'disconnected' && obsAutoReconnect) {
+        // A flapping connection fires this repeatedly — keep exactly one retry pending.
+        if (obsReconnectTimer) clearTimeout(obsReconnectTimer)
+        obsReconnectTimer = setTimeout(() => {
+          obsReconnectTimer = null
+          if (!obsAutoReconnect || obsClient.status !== 'disconnected') return
+          void (async () => {
+            try {
+              // Inside the try: a throw here used to reject the timer callback
+              // with the retry already cleared and the status already
+              // 'disconnected', so no transition could ever re-arm the loop.
+              const { url, password } = getObsSettings(_db!)
+              await obsClient.connect(url, password || undefined)
+            } catch {
+              // ConnectionClosed will fire again → schedules next retry
+            }
+          })()
+        }, 5000)
+      }
+    })
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow()
+      }
+    })
+  })
+  // Startup is one long stretch of setup, and a throw anywhere in it aborts
+  // every step after the failure — no window, no OBS, no OSC, no server —
+  // leaving only an [unhandledRejection] line. A launch that produces nothing
+  // at all is the hardest fault to diagnose from a venue, so it is reported.
+  .catch((err: unknown) => {
+    console.error('[startup] failed:', err)
+    dialog.showErrorBox(
+      'Shotlister could not start',
+      `${err instanceof Error ? err.message : String(err)}\n\n` +
+        'The application did not finish starting up. Check the logs for details.',
     )
   })
-
-  _db = getDatabase()
-  // Before anything reads the audio settings, and long before a Live session can
-  // exist: the reader falls back to the old keys anyway, so this is only here to
-  // make the two Outputs real and to log once what became of an older install's
-  // fixed destinations.
-  migrateAudioDevices(_db)
-  live = createLiveSession(_db, {
-    // Speech plays in the renderer, which is the only side with an
-    // output-device API — and the only side the operator can route to a
-    // virtual cable. The main process just says what to play and when.
-    onAnnouncement: (plan) => pushToWindow('live:announcement-push', plan),
-    // Under userData rather than in the app bundle: the cache is per-operator
-    // and grows as Parts are named, and a packaged app's resources are read-only.
-    clipsDir: clipsDir(app.getPath('userData')),
-  })
-  obs = createOBSSwitcher(_db, obsClient, live)
-  const userDataDir = app.getPath('userData')
-  // The one place the three sides of rendering are bolted together: the cache on
-  // disk, Piper, and the Voice download. Everything above this line takes them as
-  // arguments, which is what keeps Electron out of the render policy.
-  const clipStore = createFileClipStore(userDataDir)
-  render = createRenderService({
-    db: _db,
-    clips: clipStore,
-    synthesise: createPiperSynthesiser({ clips: clipStore, userDataDir }),
-    installVoice: async (voice, onDownload) => {
-      await ensureVoice(voice, { voicesDir: downloadedVoicesDir(userDataDir), onDownload })
-    },
-    isLive: () => live.getState().running,
-    onStatus: (status) => pushToWindow('speech:renderSummary-push', status),
-  })
-  publish = createChangePublisher(_db, live, () => _io)
-  control = createLiveControl({
-    session: live,
-    obs,
-    publish,
-    // Read per call rather than captured: the operator can toggle Preview-first
-    // between two Rundowns without anything being rewired.
-    previewFirst: () => getPreviewFirst(getDatabase()),
-  })
-  live.clear()
-  // App start is one of the only two moments the cache may be touched (ADR
-  // 0005). Deliberately not awaited: a slow sweep must not hold up the window,
-  // and a failed one is a disk-space problem, never a reason not to start.
-  // Before the sweep, and for the same reason it is safe here: app start is one
-  // of the two moments the cache may be touched. A clip whose length was lost to
-  // an interrupted render has to be measured before anything counts it as
-  // rendered, or it stays on disk unusable for good.
-  render
-    .backfillDurations()
-    .then(() => render?.sweepOrphans())
-    // Auto-rendering means "nothing should stay unrendered", so start-up is one
-    // of its triggers: a Project left half-rendered by a closed app, or one
-    // imported since, is exactly the case the operator turned this on for.
-    // After the repair, so a clip whose duration was just recovered is not
-    // synthesised a second time.
-    .then(() => {
-      if (!_db) return
-      for (const project of listProjects(_db)) render?.scheduleAutoRender(project.id)
-    })
-    .catch((err: unknown) => console.error('[speech] cache repair on start failed:', err))
-  registerIpcHandlers()
-  const audioDir = app.isPackaged
-    ? join(process.resourcesPath, 'audio')
-    : join(app.getAppPath(), 'resources', 'audio')
-  const io = startServer(_db, live, audioDir, (message) => {
-    pushToWindow('server:error', message)
-  })
-  if (io) setSocketServer(io)
-  createWindow()
-
-  if (getObsEnabled(_db)) {
-    obsAutoReconnect = true
-    const { url, password } = getObsSettings(_db)
-    obsClient.connect(url, password || undefined).catch(() => {})
-  }
-
-  const oscSettings = getOscSettings(_db)
-  if (oscSettings.enabled) {
-    startOscServer(oscSettings.port, { next: handleOscNext, skip: handleOscSkip })
-  }
-
-  // The Virtual output is a device, and a device has to exist before an Output
-  // can be pointed at it. Made at start so it is there while the operator sets
-  // the show up, not first asked for when a Cue is already due. Unconditional
-  // now that no setting says "I want an intercom": creation is idempotent, it is
-  // a no-op off Linux, and the sink this process loaded is unloaded at quit
-  // (ADR 0008). Not awaited — nothing downstream waits on it.
-  virtualSink.ensure().catch((err: unknown) => {
-    console.error('[audio] could not create the virtual output on start:', err)
-  })
-
-  // Subscribe to OBS WebSocket events for auto-validation
-  const validationEvents = [
-    'StudioModeStateChanged',
-    'SceneCreated',
-    'SceneRemoved',
-    'SceneNameChanged',
-    'SceneTransitionCreated',
-    'SceneTransitionRemoved',
-  ]
-  for (const event of validationEvents) {
-    obsClient.onOBSEvent(event, () => {
-      if (_db) runValidation(_db)
-    })
-  }
-
-  obsClient.onStatusChange((status: OBSConnectionStatus) => {
-    pushToWindow('obs:status', { status })
-    if (status === 'connected' && _db) {
-      // A retry may still be pending from before this connection succeeded.
-      if (obsReconnectTimer) {
-        clearTimeout(obsReconnectTimer)
-        obsReconnectTimer = null
-      }
-      runValidation(_db)
-    }
-    if (status === 'disconnected' && obsAutoReconnect) {
-      // A flapping connection fires this repeatedly — keep exactly one retry pending.
-      if (obsReconnectTimer) clearTimeout(obsReconnectTimer)
-      obsReconnectTimer = setTimeout(async () => {
-        obsReconnectTimer = null
-        if (!obsAutoReconnect || obsClient.status !== 'disconnected') return
-        const { url, password } = getObsSettings(_db!)
-        try {
-          await obsClient.connect(url, password || undefined)
-        } catch {
-          // ConnectionClosed will fire again → schedules next retry
-        }
-      }, 5000)
-    }
-  })
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
-    }
-  })
-})
 
 app.on('will-quit', () => {
   stopOscServer()
