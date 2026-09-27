@@ -7,7 +7,7 @@ import { toWebStream } from './media-stream'
 import { createWaveformCache } from './waveform-cache'
 import { startServer } from './server'
 import { createVirtualSinkManager, loopbackHints } from './audio/virtual-sink'
-import { registerIpcHandler, pushToWindow } from './ipc/register'
+import { registerIpcHandler, pushToWindow, refuseWhileLive, setLiveGuard } from './ipc/register'
 import type {
   CameraUpsertInput,
   CreateShotInput,
@@ -273,24 +273,40 @@ function registerIpcHandlers(): void {
     return rundown
   })
 
-  registerIpcHandler('rundowns:rename', (payload: { id: string; name: string }) => {
-    const rundown = renameRundown(db, payload.id, payload.name)
-    publish.rundownChanged()
-    return rundown
-  })
+  registerIpcHandler(
+    'rundowns:rename',
+    refuseWhileLive('rename a Rundown', (payload: { id: string; name: string }) => {
+      const rundown = renameRundown(db, payload.id, payload.name)
+      publish.rundownChanged()
+      return rundown
+    }),
+  )
 
-  registerIpcHandler('rundowns:delete', (payload: { id: string }) => {
-    deleteRundown(db, payload.id)
-    publish.rundownChanged()
-  })
+  registerIpcHandler(
+    'rundowns:delete',
+    refuseWhileLive('delete a Rundown', (payload: { id: string }) => {
+      deleteRundown(db, payload.id)
+      publish.rundownChanged()
+    }),
+  )
 
-  registerIpcHandler('rundowns:setActive', (payload: { rundownId: string | null }) => {
-    control.openRundown(payload.rundownId)
-  })
+  // Switching the selection mid-show left the in-memory queue on the old
+  // Rundown: phones redrew the new Rundown's items with the old position marked
+  // live, and the next Next found no matching Shot, so OBS stopped switching
+  // for the rest of the night.
+  registerIpcHandler(
+    'rundowns:setActive',
+    refuseWhileLive('change the active Rundown', (payload: { rundownId: string | null }) => {
+      control.openRundown(payload.rundownId)
+    }),
+  )
 
-  registerIpcHandler('rundowns:reorder', ({ ids }: { ids: string[] }) => {
-    reorderRundowns(db, ids)
-  })
+  registerIpcHandler(
+    'rundowns:reorder',
+    refuseWhileLive('reorder Rundowns', ({ ids }: { ids: string[] }) => {
+      reorderRundowns(db, ids)
+    }),
+  )
 
   registerIpcHandler(
     'rundowns:setFolder',
@@ -299,13 +315,16 @@ function registerIpcHandlers(): void {
     },
   )
 
-  registerIpcHandler('rundowns:setKind', ({ id, kind }: { id: string; kind: RundownKind }) => {
-    const rundown = setRundownKind(db, id, kind)
-    // The Kind changes which target column the item Track reads, so phones and
-    // the Cue Tray have to be told even though no item row moved.
-    publish.rundownChanged()
-    return rundown
-  })
+  registerIpcHandler(
+    'rundowns:setKind',
+    refuseWhileLive('convert a Rundown', ({ id, kind }: { id: string; kind: RundownKind }) => {
+      const rundown = setRundownKind(db, id, kind)
+      // The Kind changes which target column the item Track reads, so phones and
+      // the Cue Tray have to be told even though no item row moved.
+      publish.rundownChanged()
+      return rundown
+    }),
+  )
 
   registerIpcHandler('rundowns:unassignedCount', ({ rundownId }: { rundownId: string }) =>
     unassignedItemCount(db, rundownId),
@@ -456,27 +475,39 @@ function registerIpcHandlers(): void {
     return listShots(db, payload.rundownId)
   })
 
-  registerIpcHandler('shots:create', (payload: CreateShotInput) => {
-    const shot = createShot(db, payload)
-    publish.rundownChanged()
-    return shot
-  })
+  registerIpcHandler(
+    'shots:create',
+    refuseWhileLive('add an item', (payload: CreateShotInput) => {
+      const shot = createShot(db, payload)
+      publish.rundownChanged()
+      return shot
+    }),
+  )
 
-  registerIpcHandler('shots:update', (payload: UpdateShotInput) => {
-    const shot = updateShot(db, payload)
-    publish.rundownChanged()
-    return shot
-  })
+  registerIpcHandler(
+    'shots:update',
+    refuseWhileLive('edit an item', (payload: UpdateShotInput) => {
+      const shot = updateShot(db, payload)
+      publish.rundownChanged()
+      return shot
+    }),
+  )
 
-  registerIpcHandler('shots:delete', (payload: { id: string; mode?: DeleteShotMode }) => {
-    deleteShot(db, payload.id, payload.mode)
-    publish.rundownChanged()
-  })
+  registerIpcHandler(
+    'shots:delete',
+    refuseWhileLive('delete an item', (payload: { id: string; mode?: DeleteShotMode }) => {
+      deleteShot(db, payload.id, payload.mode)
+      publish.rundownChanged()
+    }),
+  )
 
-  registerIpcHandler('shots:reorder', (payload: { ids: string[] }) => {
-    reorderShots(db, payload.ids)
-    publish.rundownChanged()
-  })
+  registerIpcHandler(
+    'shots:reorder',
+    refuseWhileLive('reorder items', (payload: { ids: string[] }) => {
+      reorderShots(db, payload.ids)
+      publish.rundownChanged()
+    }),
+  )
 
   registerIpcHandler('shots:split', (payload: SplitShotInput) => {
     const result = splitShot(db, payload)
@@ -937,6 +968,10 @@ app
       isLive: () => live.getState().running,
       onStatus: (status) => pushToWindow('speech:renderSummary-push', status),
     })
+    // Every guarded handler reads the session through this, at call time
+    // rather than registration time, so the session can be created here and
+    // the handlers registered further down.
+    setLiveGuard(() => live.getState().running)
     publish = createChangePublisher(_db, live, () => _io)
     control = createLiveControl({
       session: live,
