@@ -4,6 +4,7 @@ import type { Part, Rundown } from '../../shared/types'
 import type { PartScope } from '../../shared/ipc-contract'
 import { CAMERA_PALETTE } from '../../shared/camera-palette'
 import { visibleFolderNames } from './RundownSidebar'
+import { ASSIGNMENT_STRIP_ROW_GAP } from './timeline/assignment-strip'
 
 // ---------------------------------------------------------------------------
 // Assignment keymap
@@ -1074,7 +1075,16 @@ export function PartButtonBar({
 
   return (
     <div
-      style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        flexWrap: 'wrap',
+        // This is the bar that wraps inside the timeline's assignment strip, and
+        // the strip's height is derived from how many lines it takes: the gap the
+        // arithmetic assumes and the gap drawn here are the same number.
+        rowGap: ASSIGNMENT_STRIP_ROW_GAP,
+      }}
       role="group"
       aria-label="Assign part"
     >

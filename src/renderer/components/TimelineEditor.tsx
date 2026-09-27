@@ -18,6 +18,12 @@ import { ItemLane, type ItemLaneHandlers } from './timeline/ItemLane'
 import { MediaLane } from './timeline/MediaLane'
 import { LyricsLane, type LyricsLaneHandlers } from './timeline/LyricsLane'
 import { MarkerLane } from './timeline/MarkerLane'
+import {
+  ASSIGNMENT_STRIP_BORDER_PX,
+  ASSIGNMENT_STRIP_PADDING_Y,
+  assignmentStripLayout,
+  type AssignmentStripMeasure,
+} from './timeline/assignment-strip'
 import { createPlayhead, type Playhead } from '../timeline/playhead'
 import {
   alignReferenceMedia,
@@ -152,7 +158,8 @@ const TOOLBAR_HEIGHT = 36
 const LYRICS_ROW_HEIGHT = 34
 const MARKER_ROW_HEIGHT = 30
 const MEDIA_ROW_HEIGHT = 60
-const CAM_BUTTONS_HEIGHT = 48
+// The assignment strip's height is not a constant: it grows from one line of
+// buttons to two — see `timeline/assignment-strip.ts`.
 const OVERVIEW_HEIGHT = 24
 const PLAYHEAD_FIXED_PX = 120
 
@@ -302,6 +309,15 @@ export function TimelineEditor({
   } | null>(null)
   const [partPickerOpen, setPartPickerOpen] = useState(false)
   const [addPartOpen, setAddPartOpen] = useState(false)
+  /**
+   * What the assignment strip's buttons measure, from the observer below. Zeroes
+   * until it first runs, which `assignmentStripLayout` reads as one line — the
+   * height the strip has always had.
+   */
+  const [assignmentMeasure, setAssignmentMeasure] = useState<AssignmentStripMeasure>({
+    contentHeightPx: 0,
+    buttonHeightPx: 0,
+  })
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const isPlayingRef = useRef(isPlaying)
@@ -316,6 +332,8 @@ export function TimelineEditor({
   const grabOwnsPlayheadRef = useRef(false)
   const zoomRef = useRef(zoomPxPerSec)
   const overviewRef = useRef<HTMLDivElement>(null)
+  /** The assignment strip's content box — the thing that wraps, and is measured. */
+  const assignmentContentRef = useRef<HTMLDivElement>(null)
   const onAddMarkerRef = useRef(onAddMarker)
   const onLabelEditRef = useRef(onLabelEdit)
   const selectedShotIdRef = useRef(selectedShotId)
@@ -780,6 +798,34 @@ export function TimelineEditor({
     measure()
     return () => ro.disconnect()
   }, [playhead])
+
+  // The assignment strip measures itself, because how many lines its buttons wrap
+  // to depends on their text and on the window's width, and how tall one line is
+  // depends on the platform's font. Its own observer, deliberately: the widths
+  // above are mirrored into the Playhead's per-frame path and nothing here belongs
+  // near that. This runs when the strip resizes — never per frame.
+  useLayoutEffect(() => {
+    const el = assignmentContentRef.current
+    if (!el) return
+    function measure(): void {
+      if (!el) return
+      const button = el.querySelector('button')
+      const next: AssignmentStripMeasure = {
+        contentHeightPx: el.offsetHeight,
+        buttonHeightPx: button instanceof HTMLElement ? button.offsetHeight : 0,
+      }
+      setAssignmentMeasure((prev) =>
+        prev.contentHeightPx === next.contentHeightPx && prev.buttonHeightPx === next.buttonHeightPx
+          ? prev
+          : next,
+      )
+    }
+
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    measure()
+    return () => ro.disconnect()
+  }, [])
 
   // The overview marker's position is painted, not rendered, so React will not
   // reposition it when the geometry it is derived from changes. Repaint on the
@@ -1516,6 +1562,10 @@ export function TimelineEditor({
 
   const sortedCameras = useMemo(() => [...cameras].sort((a, b) => a.number - b.number), [cameras])
 
+  // One value for the strip's own height and for the timeline's total below, so
+  // the sum cannot claim a height the strip does not have.
+  const assignmentStrip = assignmentStripLayout(assignmentMeasure)
+
   const btnStyle: React.CSSProperties = {
     background: '#333',
     border: '1px solid #444',
@@ -1539,7 +1589,7 @@ export function TimelineEditor({
         flexShrink: 0,
         display: 'flex',
         flexDirection: 'column',
-        height: `${TOOLBAR_HEIGHT + RULER_HEIGHT + TRACK_HEIGHT + LYRICS_ROW_HEIGHT + MARKER_ROW_HEIGHT + MEDIA_ROW_HEIGHT + CAM_BUTTONS_HEIGHT + OVERVIEW_HEIGHT}px`,
+        height: `${TOOLBAR_HEIGHT + RULER_HEIGHT + TRACK_HEIGHT + LYRICS_ROW_HEIGHT + MARKER_ROW_HEIGHT + MEDIA_ROW_HEIGHT + assignmentStrip.heightPx + OVERVIEW_HEIGHT}px`,
         overflow: 'hidden',
       }}
       onClick={() => setContextMenu(null)}
@@ -1846,86 +1896,115 @@ export function TimelineEditor({
       {/* Row 7: assignment buttons — Cameras, or Parts in a Voice-over Rundown */}
       <div
         style={{
-          height: CAM_BUTTONS_HEIGHT,
+          height: assignmentStrip.heightPx,
+          // The height includes the padding and the border, so both have to count.
+          boxSizing: 'border-box',
           background: '#252525',
           flexShrink: 0,
           display: 'flex',
-          alignItems: 'center',
-          padding: '0 8px',
-          gap: '6px',
-          borderTop: '1px solid #2a2a2a',
+          // Centred while the buttons fit. Once they do not, a centred overflow
+          // hides its top half where no scroll can reach it.
+          alignItems: assignmentStrip.scrolls ? 'flex-start' : 'center',
+          padding: `${ASSIGNMENT_STRIP_PADDING_Y}px 8px`,
+          borderTop: `${ASSIGNMENT_STRIP_BORDER_PX}px solid #2a2a2a`,
+          // Sideways for the Camera buttons, which never wrap; downwards only for
+          // the third line of Parts and beyond.
           overflowX: 'auto',
+          overflowY: assignmentStrip.scrolls ? 'auto' : 'hidden',
         }}
       >
-        {isVoice && (
-          <>
-            <PartButtonBar
-              parts={partsInScope}
-              onAssign={assignPartAtPlayhead}
-              activePartId={shots.find((s) => s.id === selectedShotId)?.partId ?? null}
-              disabled={readOnly}
-              onAddNew={() => setAddPartOpen(true)}
-            />
-            <button
-              style={{
-                background: 'none',
-                border: '1px solid #555',
-                borderRadius: '3px',
-                color: '#ccc',
-                fontSize: '13px',
-                padding: '6px 14px',
-                cursor: readOnly ? 'default' : 'pointer',
-                opacity: readOnly ? 0.4 : 1,
-                whiteSpace: 'nowrap',
-              }}
-              disabled={readOnly}
-              title="Find a part by name"
-              onClick={() => setPartPickerOpen(true)}
-            >
-              Find part…
-            </button>
-          </>
-        )}
-        {!isVoice &&
-          sortedCameras.map((cam) => (
-            <button
-              key={cam.id}
-              style={{
-                background: 'none',
-                border: '1px solid #555',
-                borderRadius: '3px',
-                color: '#ccc',
-                fontSize: '13px',
-                padding: '6px 14px',
-                // Splitting is an edit, so these go the way of the toolbar's
-                // buttons in Live mode rather than silently doing nothing.
-                cursor: readOnly ? 'default' : 'pointer',
-                opacity: readOnly ? 0.4 : 1,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '5px',
-                whiteSpace: 'nowrap',
-              }}
-              disabled={readOnly}
-              title={`Split at playhead and assign CAM${cam.number} ${cam.name}`}
-              onClick={() => handleCamButtonClick(cam)}
-            >
-              <span
-                style={{
-                  width: '12px',
-                  height: '12px',
-                  borderRadius: '50%',
-                  background: cam.color,
-                  display: 'inline-block',
-                  flexShrink: 0,
-                }}
+        {/*
+          The measured box: its natural height is the full wrapped height even
+          when the strip above is clamped and scrolling, which is what tells the
+          layout there is a third line to scroll to.
+
+          `nowrap`, exactly as this row was before — the wrapping happens one level
+          in, inside `PartButtonBar`. Wrapping here instead would break a line
+          before shrinking anything, so "Find part…" would drop below the Parts and
+          cost a line of its own. And no `min-width: 0`: the Camera buttons keep
+          their width and push this box past the strip, so the strip scrolls
+          sideways rather than squashing them, while the Parts shrink to the
+          strip's width and wrap on their own.
+        */}
+        <div
+          ref={assignmentContentRef}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            flexWrap: 'nowrap',
+            gap: '6px',
+          }}
+        >
+          {isVoice && (
+            <>
+              <PartButtonBar
+                parts={partsInScope}
+                onAssign={assignPartAtPlayhead}
+                activePartId={shots.find((s) => s.id === selectedShotId)?.partId ?? null}
+                disabled={readOnly}
+                onAddNew={() => setAddPartOpen(true)}
               />
-              + CAM{cam.number} {cam.name}
-            </button>
-          ))}
-        {!isVoice && sortedCameras.length === 0 && (
-          <span style={{ color: '#444', fontSize: '11px' }}>No cameras configured</span>
-        )}
+              <button
+                style={{
+                  background: 'none',
+                  border: '1px solid #555',
+                  borderRadius: '3px',
+                  color: '#ccc',
+                  fontSize: '13px',
+                  padding: '6px 14px',
+                  cursor: readOnly ? 'default' : 'pointer',
+                  opacity: readOnly ? 0.4 : 1,
+                  whiteSpace: 'nowrap',
+                }}
+                disabled={readOnly}
+                title="Find a part by name"
+                onClick={() => setPartPickerOpen(true)}
+              >
+                Find part…
+              </button>
+            </>
+          )}
+          {!isVoice &&
+            sortedCameras.map((cam) => (
+              <button
+                key={cam.id}
+                style={{
+                  background: 'none',
+                  border: '1px solid #555',
+                  borderRadius: '3px',
+                  color: '#ccc',
+                  fontSize: '13px',
+                  padding: '6px 14px',
+                  // Splitting is an edit, so these go the way of the toolbar's
+                  // buttons in Live mode rather than silently doing nothing.
+                  cursor: readOnly ? 'default' : 'pointer',
+                  opacity: readOnly ? 0.4 : 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  whiteSpace: 'nowrap',
+                }}
+                disabled={readOnly}
+                title={`Split at playhead and assign CAM${cam.number} ${cam.name}`}
+                onClick={() => handleCamButtonClick(cam)}
+              >
+                <span
+                  style={{
+                    width: '12px',
+                    height: '12px',
+                    borderRadius: '50%',
+                    background: cam.color,
+                    display: 'inline-block',
+                    flexShrink: 0,
+                  }}
+                />
+                + CAM{cam.number} {cam.name}
+              </button>
+            ))}
+          {!isVoice && sortedCameras.length === 0 && (
+            <span style={{ color: '#444', fontSize: '11px' }}>No cameras configured</span>
+          )}
+        </div>
       </div>
 
       {/* Context menu */}
