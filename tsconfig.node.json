@@ -3,6 +3,13 @@
   "include": ["electron.vite.config.*", "src/main/**/*", "src/preload/**/*", "src/shared/**/*"],
   "compilerOptions": {
     "strict": true,
+    // The shared @electron-toolkit base sets "noImplicitAny": false, which beats
+    // the "strict" umbrella above. Restated here so an untyped parameter is an
+    // error, matching the explicit-any ban the lint config already enforces.
+    "noImplicitAny": true,
+    // node-osc publishes its types only through its "exports" map, which node10
+    // resolution cannot read.
+    "moduleResolution": "bundler",
     "composite": true,
     "baseUrl": ".",
     "paths": {

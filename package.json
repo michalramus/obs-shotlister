@@ -16,6 +16,7 @@
     "dist:win": "yarn fetch:piper win32-x64 && yarn build && electron-builder --win",
     "dist:linux": "yarn fetch:piper linux-x64 && yarn build && electron-builder --linux",
     "lint": "eslint src --ext .ts,.tsx",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "format": "prettier --write src",
     "test": "vitest run",
     "test:watch": "vitest"

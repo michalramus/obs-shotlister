@@ -3,6 +3,9 @@
   "include": ["src/renderer/**/*", "src/web/**/*", "src/shared/**/*"],
   "compilerOptions": {
     "strict": true,
+    // See tsconfig.node.json: the shared base disables this and "strict" does
+    // not win over an explicit setting.
+    "noImplicitAny": true,
     "composite": true,
     "baseUrl": ".",
     "paths": {
