@@ -139,8 +139,10 @@ already in flight for it stops at once.
 _Avoid_: delete, remove, drop
 
 **Preview-first**:
-A Live session start mode that loads the first Shot's scene into OBS preview and transitions
-it to program, rather than cutting to program directly.
+Whether opening a Camera Rundown loads its first Shot's scene into OBS preview, so the
+operator can see what Start will bring up. An operator setting, and that is the only thing
+it governs: Start always comes up from preview, arming it itself when nothing did. A
+Voice-over Rundown never reaches OBS, so the choice does not exist there.
 _Avoid_: pre-roll, standby, arm
 
 ### Views
