@@ -24,7 +24,8 @@ import {
   getGlobalVoiceSettings,
   saveProjectVoiceSettings,
 } from '../ipc/settings'
-import { upsertPart } from '../ipc/parts'
+import { deletePart, upsertPart } from '../ipc/parts'
+import { deleteProject } from '../ipc/projects'
 import { recordClip, recordPartRenders } from '../ipc/speech'
 import { ENGINE_ID, clipHash, partPhrase } from '../../shared/render-plan'
 import { numberTexts } from '../../shared/number-text'
@@ -573,6 +574,70 @@ describe('cleanOrphans', () => {
 
     expect(await h.service.cleanOrphans('p1')).toBe(0)
     expect((await h.clips.hashes()).sort()).toEqual(numberHashes().sort())
+    h.db.close()
+  })
+
+  it('collects the clip of a Part that was deleted', async () => {
+    // A rename strands one clip; a deletion strands one and leaves no Part
+    // behind to explain it, which is the case nothing else in the app notices.
+    const h = harness()
+    const part = upsertPart(h.db, { projectId: 'p1', name: 'gitara' })
+    recordPartRenders(h.db, 'p1')
+    const stranded = phraseHash('gitara')
+    h.clips.seed(stranded)
+    recordClip(h.db, { hash: stranded, text: 'gitara za', voice: VOICE, engine: ENGINE_ID }, 400)
+    deletePart(h.db, part.id)
+
+    expect(await h.service.cleanOrphans('p1')).toBe(1)
+
+    expect(await h.clips.hashes()).toEqual([])
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM speech_clips').get()).toEqual({ n: 0 })
+    h.db.close()
+  })
+
+  it('collects a deleted Project’s clips while leaving the surviving one’s alone', async () => {
+    // The intersection is what protects a shared clip, so the case that matters
+    // is the one where the *other* Project stops existing: nothing speaks for it
+    // any more, and its audio is exactly what an operator expects to reclaim.
+    const h = harness()
+    insertProject(h.db, 'p2')
+    upsertPart(h.db, { projectId: 'p1', name: 'gitara' })
+    upsertPart(h.db, { projectId: 'p2', name: 'refren' })
+    const mine = phraseHash('gitara')
+    const theirs = phraseHash('refren')
+    h.clips.seed(mine)
+    h.clips.seed(theirs)
+    recordClip(h.db, { hash: theirs, text: 'refren za', voice: VOICE, engine: ENGINE_ID }, 400)
+    deleteProject(h.db, 'p2')
+
+    expect(await h.service.cleanOrphans('p1')).toBe(1)
+
+    expect(await h.clips.hashes()).toEqual([mine])
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM speech_clips').get()).toEqual({ n: 0 })
+    h.db.close()
+  })
+
+  it('collects the whole set the Voice it left behind had rendered', async () => {
+    // A Voice change orphans sixty-one clips at once — the phrase and every
+    // number — because the Voice is part of each clip's content address. This is
+    // the one press of the button that actually frees a meaningful amount.
+    const h = harness()
+    upsertPart(h.db, { projectId: 'p1', name: 'gitara' })
+    const old = [phraseHash('gitara'), ...numberHashes()]
+    for (const hash of old) h.clips.seed(hash)
+    recordPartRenders(h.db, 'p1')
+    // Stale, not missing: the old clip still plays, it just says it in the wrong
+    // voice — which is the state the operator is looking at when they clean.
+    saveGlobalVoiceSettings(h.db, {
+      ...getGlobalVoiceSettings(h.db),
+      voice: 'en_US-amy-medium',
+    })
+    expect((await h.service.status('p1')).parts[0].state).toBe('stale')
+
+    expect(await h.service.cleanOrphans('p1')).toBe(old.length)
+
+    expect(await h.clips.hashes()).toEqual([])
+    expect((await h.service.status('p1')).parts[0].state).toBe('missing')
     h.db.close()
   })
 
