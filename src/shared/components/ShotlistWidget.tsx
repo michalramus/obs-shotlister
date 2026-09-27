@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import type { Shot, Camera, Part, RundownKind } from '../types'
 import { targetOf, targetsById, targetsOf } from '../rundown-item'
 import { formatMs, computeTiming, computeRemainingMs } from '../timing'
-import type { Cue, CuePlayback } from '../audio/cue-player'
+import type { Cue, CuePlayback, CuePlayOptions } from '../audio/cue-player'
+import { cuesDueAt } from '../audio/cue-schedule'
 
 // The countdown renders tenths of a second, so ticking faster than this only
 // costs phone battery — the old loop re-rendered the whole list at 60fps.
@@ -27,10 +28,10 @@ export interface ShotlistWidgetProps {
    * has no audio yet — the operator window before its clip directory is known —
    * says so.
    *
-   * Only playing, never routing: which devices the Cues reach, and whether an
-   * Intercom output gets a copy, belongs to whoever built the player. The
-   * operator window hands over one that knows its devices; the Phone view hands
-   * over one that cannot have any.
+   * Only playing, never routing: which devices the Cues reach belongs to whoever
+   * built the player. The operator window hands over one that knows its Outputs;
+   * the Phone view hands over one that cannot have any. The player is asked how
+   * many moments a Cue has — one per Output delay — and this fires each of them.
    */
   cuePlayer?: CuePlayback
   muteCount?: boolean
@@ -233,10 +234,7 @@ export function ShotlistWidget({
   const prevEffectiveDurRef = useRef<number | null>(null)
   const prevLiveIndexRef = useRef<number | null>(null)
   const capturedTransEffectiveDurRef = useRef<number | null>(null)
-  const prevRemainingSecRef = useRef<number | null>(null)
   const prevRemainingMsRef = useRef<number | null>(null)
-  const reachedZeroAtRef = useRef<number | null>(null)
-  const beepFiredRef = useRef<boolean>(false)
   const prevLiveIndexForAudioRef = useRef<number | null>(null)
   const prevStartedAtForAudioRef = useRef<number | null>(null)
   const prevLiveIndexForFilterBeepRef = useRef<number | null>(null)
@@ -245,18 +243,19 @@ export function ShotlistWidget({
   /**
    * Plays one Cue, where the Live session says a Cue is due.
    *
-   * @param silentToOperator Silences the operator's own copy only — the player
-   *   still feeds the Intercom output. Passed on rather than decided here.
+   * @param options Which Outputs, and whether the operator's own copy is silenced.
+   *   Passed on rather than decided here: muting is about the operator's ears, and
+   *   every other Output still gets the Cue.
    */
   const playCue = useCallback(
-    (cue: Cue, silentToOperator = false): void => {
+    (cue: Cue, options?: CuePlayOptions): void => {
       if (!cuePlayer) return
       // A Voice-over Rundown speaks its countdown instead. The fixed Cues are a
       // Camera Rundown's countdown and would talk over the Announcement — and
       // they count to the wrong thing anyway, since an Announcement counts down
       // to the next Call rather than to the end of this one.
       if (isVoice) return
-      cuePlayer.play(cue, silentToOperator)
+      cuePlayer.play(cue, options)
     },
     [cuePlayer, isVoice],
   )
@@ -290,46 +289,30 @@ export function ShotlistWidget({
           liveIndex !== prevLiveIndexForAudioRef.current ||
           startedAt !== prevStartedAtForAudioRef.current
         ) {
-          beepFiredRef.current = false
-          prevRemainingSecRef.current = null
+          // Cleared rather than carried over: the remaining time jumps back up at
+          // a new item, and a moment is only recognised by being crossed.
           prevRemainingMsRef.current = null
-          reachedZeroAtRef.current = null
           prevLiveIndexForAudioRef.current = liveIndex
           prevStartedAtForAudioRef.current = startedAt
         }
 
         // Only the countdown is needed here, so skip the full timing computation.
         const remainingMs = computeRemainingMs(shots, liveIndex, startedAt, tickNow)
-        const remainingSec = remainingMs !== null ? Math.floor(remainingMs / 1000) : null
-
-        const prevSec = prevRemainingSecRef.current
-        if (remainingSec !== null) prevRemainingSecRef.current = remainingSec
-        const prevMs = prevRemainingMsRef.current
+        const previousRemainingMs = prevRemainingMsRef.current
         if (remainingMs !== null) prevRemainingMsRef.current = remainingMs
 
-        // Countdown 3→1: play word at END of that second (when it ticks away)
-        // e.g. play 'three' when remainingSec goes from 3 to 2
-        if (
-          prevSec !== null &&
-          remainingSec !== null &&
-          remainingSec < prevSec &&
-          prevSec >= 1 &&
-          prevSec <= 3
-        ) {
-          const words: Record<number, Cue> = { 1: 'one', 2: 'two', 3: 'three' }
-          // Muting is passed in rather than checked here, so a muted operator
-          // still feeds the intercom.
-          playCue(words[prevSec], muteCount)
-        }
-
-        // Beep at expiry: fire once when remainingMs reaches 0 (progress bar at 100%)
-        // 'one' fires at 1→0 transition; beep fires on the same tick
-        if (!beepFiredRef.current && remainingMs !== null) {
-          if (remainingMs === 0 && prevMs !== null && prevMs > 0) {
-            reachedZeroAtRef.current = tickNow
-            beepFiredRef.current = true
-            playCue('beep', muteBeep)
-          }
+        // One firing per Cue per Output delay: an Output that takes 400ms to reach
+        // its listener is played 400ms before the operator's own copy. Which
+        // moments this tick crossed is decided in cue-schedule.ts.
+        for (const due of cuesDueAt({
+          previousRemainingMs,
+          remainingMs,
+          delaysMs: cuePlayer.cueDelaysMs(),
+        })) {
+          // Muting is passed on rather than checked here, so a muted operator still
+          // feeds every other Output.
+          const silentToOperator = due.cue === 'beep' ? muteBeep : muteCount
+          playCue(due.cue, { delayMs: due.delayMs, silentToOperator })
         }
       }
 
@@ -361,7 +344,13 @@ export function ShotlistWidget({
     return () => clearTimeout(t)
   }, [liveIndex])
 
-  // Filtered beep: play beep when the filtered camera goes live
+  // Filtered beep: play beep when the filtered camera goes live.
+  //
+  // Played on every Cue-carrying Output at once, with no delay applied: these two
+  // react to a Next the operator has just pressed, so there was no earlier moment
+  // to play them at. A delayed Output hears them its delay late, which is the
+  // truth about that route rather than something the app can fix — unlike the
+  // countdown, nothing can predict when an operator will cut.
   const hasFilterForEffect = cameraFilter !== undefined && cameraFilter.length > 0
   useEffect(() => {
     if (!cuePlayer || !running || !hasFilterForEffect || muteBeep || liveIndex === null) return

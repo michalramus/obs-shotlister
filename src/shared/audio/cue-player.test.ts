@@ -1,14 +1,29 @@
 import { describe, it, expect } from 'vitest'
+import type { AudioOutput } from '../ipc-contract'
 import { createCuePlayer, createPhoneCuePlayer, CUES } from './cue-player'
 import { fakeAudioWorld, type FakeAudioWorld } from './fake-audio.fixture'
 
 const BASE = 'media://audio'
 const BEEP = `${BASE}/beep.opus`
 
-/** The operator's player, already pointed at their speakers and an Intercom output. */
-async function operatorPlayer(world: FakeAudioWorld, intercom: string | null = 'shotlister-out') {
+function output(over: Partial<AudioOutput> = {}): AudioOutput {
+  return { enabled: true, sinkId: null, delayMs: 0, carries: 'both', ...over }
+}
+
+/**
+ * The operator's player, pointed at their own speakers and at a second Output.
+ *
+ * @param second Overrides for Output 2; `null` switches it off.
+ */
+async function operatorPlayer(
+  world: FakeAudioWorld,
+  second: Partial<AudioOutput> | null = { sinkId: 'shotlister-out' },
+) {
   const player = createCuePlayer(BASE, world.create)
-  player.setSinks({ cue: 'speakers', intercom })
+  player.setOutputs([
+    output({ sinkId: 'speakers' }),
+    second === null ? output({ enabled: false }) : output(second),
+  ])
   await world.landRoutes()
   return player
 }
@@ -25,7 +40,7 @@ describe('createCuePlayer', () => {
     expect(world.elements.every((audio) => audio.plays === 0)).toBe(true)
   })
 
-  it("plays a Cue on the operator's device and on the Intercom output", async () => {
+  it("plays a Cue on the operator's device and on the second Output", async () => {
     const world = fakeAudioWorld()
     const player = await operatorPlayer(world)
 
@@ -37,9 +52,9 @@ describe('createCuePlayer', () => {
     expect([own.plays, copy.plays]).toEqual([1, 1])
   })
 
-  it("plays a Cue once when the Intercom output is the operator's own device", async () => {
+  it("plays a Cue once when both Outputs name the operator's own device", async () => {
     const world = fakeAudioWorld()
-    const player = await operatorPlayer(world, 'speakers')
+    const player = await operatorPlayer(world, { sinkId: 'speakers' })
 
     player.play('beep')
 
@@ -47,11 +62,11 @@ describe('createCuePlayer', () => {
     expect(world.for(BEEP)[0].plays).toBe(1)
   })
 
-  it('keeps a fresh intercom copy muted until its routing lands', async () => {
+  it("keeps a fresh second copy muted until its routing lands", async () => {
     const world = fakeAudioWorld()
     const player = createCuePlayer(BASE, world.create)
 
-    player.setSinks({ cue: 'speakers', intercom: 'shotlister-out' })
+    player.setOutputs([output({ sinkId: 'speakers' }), output({ sinkId: 'shotlister-out' })])
     const [, copy] = world.for(BEEP)
     player.play('beep')
 
@@ -68,7 +83,7 @@ describe('createCuePlayer', () => {
     const world = fakeAudioWorld()
     const player = await operatorPlayer(world)
 
-    player.play('beep', true)
+    player.play('beep', { silentToOperator: true })
 
     // Their mute button is about their ears; muting the beep to concentrate must
     // not take the band's countdown away.
@@ -82,7 +97,7 @@ describe('createCuePlayer', () => {
     const world = fakeAudioWorld()
     const player = await operatorPlayer(world, null)
 
-    player.setSinks({ cue: 'headphones', intercom: null })
+    player.setOutputs([output({ sinkId: 'headphones' }), output({ enabled: false })])
 
     // Every Cue is already on the new device before one is due: switching on the
     // way to a beep would put that beep on the old device, which is the one beep
@@ -96,13 +111,57 @@ describe('createCuePlayer', () => {
     expect(world.for(BEEP)[0].routes).toEqual(['', 'speakers', 'headphones'])
   })
 
-  it('sets the volume on both devices', async () => {
+  it('sets the volume on both Outputs', async () => {
     const world = fakeAudioWorld()
     const player = await operatorPlayer(world)
 
     player.setVolume(0.25)
 
     expect(world.for(BEEP).map((audio) => audio.volume)).toEqual([0.25, 0.25])
+  })
+
+  it('plays only the Output whose moment is due', async () => {
+    const world = fakeAudioWorld()
+    const player = await operatorPlayer(world, { sinkId: 'shotlister-out', delayMs: 400 })
+
+    player.play('beep', { delayMs: 400 })
+
+    const [own, copy] = world.for(BEEP)
+    expect([own.plays, copy.plays]).toEqual([0, 1])
+
+    player.play('beep', { delayMs: 0 })
+
+    expect([own.plays, copy.plays]).toEqual([1, 1])
+  })
+
+  it('plays every Output for a Cue nobody could schedule ahead', async () => {
+    const world = fakeAudioWorld()
+    const player = await operatorPlayer(world, { sinkId: 'shotlister-out', delayMs: 400 })
+
+    // A beep reacting to a Next just pressed has no moment to be early for.
+    player.play('beep-low')
+
+    expect(world.for(`${BASE}/beep-low.opus`).map((audio) => audio.plays)).toEqual([1, 1])
+  })
+
+  it('reports one moment per distinct delay, earliest first', async () => {
+    const world = fakeAudioWorld()
+    const player = await operatorPlayer(world, { sinkId: 'shotlister-out', delayMs: 400 })
+
+    expect(player.cueDelaysMs()).toEqual([400, 0])
+  })
+
+  it('plays nothing when no Output carries Cues', async () => {
+    const world = fakeAudioWorld()
+    const player = createCuePlayer(BASE, world.create)
+
+    player.setOutputs([output({ carries: 'voice' }), output({ enabled: false })])
+    player.play('beep')
+
+    // An operator who gave the Cues no Output chose silence; the pool is empty and
+    // there is nothing to report as due.
+    expect(player.cueDelaysMs()).toEqual([])
+    expect(world.for(BEEP).every((audio) => audio.plays === 0)).toBe(true)
   })
 
   it('rebuilds a Cue after dispose rather than falling silent', async () => {
@@ -122,13 +181,20 @@ describe('createCuePlayer', () => {
 })
 
 describe('createPhoneCuePlayer', () => {
-  it('has no way to name an Intercom output', () => {
+  it('has no way to name an Output', () => {
     const world = fakeAudioWorld()
     const player = createPhoneCuePlayer(BASE, world.create)
 
-    // A camera operator's handset must never become an Intercom output, so it is
-    // not handed the method that would name one.
-    expect('setSinks' in player).toBe(false)
+    // A camera operator's handset must never be routed anywhere but its own
+    // speaker, so it is not handed the method that would name an Output.
+    expect('setOutputs' in player).toBe(false)
+  })
+
+  it('is one local Output with no delay, so the trigger fires once', () => {
+    const world = fakeAudioWorld()
+    const player = createPhoneCuePlayer(BASE, world.create)
+
+    expect(player.cueDelaysMs()).toEqual([0])
   })
 
   it('plays a Cue on the handset and nowhere else', () => {
