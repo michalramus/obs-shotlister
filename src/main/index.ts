@@ -615,18 +615,9 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler(
     'obs:transitions:upsert',
-    (payload: {
-      logicalName: string
-      obsTransitionName: string
-      constLengthMs?: number | null
-    }) => {
+    (payload: { logicalName: string; obsTransitionName: string }) => {
       try {
-        upsertTransitionMapping(
-          db,
-          payload.logicalName,
-          payload.obsTransitionName,
-          payload.constLengthMs ?? null,
-        )
+        upsertTransitionMapping(db, payload.logicalName, payload.obsTransitionName)
       } catch (err) {
         throw new Error(err instanceof Error ? err.message : String(err))
       }

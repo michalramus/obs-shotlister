@@ -482,7 +482,7 @@ export interface IpcContract {
   'obs:validate': { payload: NoPayload; result: OBSValidateResult | null }
   'obs:transitions:list': { payload: NoPayload; result: TransitionMapping[] }
   'obs:transitions:upsert': {
-    payload: { logicalName: string; obsTransitionName: string; constLengthMs?: number | null }
+    payload: { logicalName: string; obsTransitionName: string }
     result: void
   }
   'obs:transitions:delete': { payload: { logicalName: string }; result: void }

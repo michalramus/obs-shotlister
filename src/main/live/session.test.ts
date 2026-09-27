@@ -340,10 +340,9 @@ describe('LiveSession', () => {
         string,
         unknown
       >
-      // Only selection is durable — see ADR 0001.
-      expect(Object.keys(row).sort()).toEqual(
-        ['id', 'project_id', 'rundown_id', 'skipped_ids'].sort(),
-      )
+      // Only selection is durable — see ADR 0001. skipped_ids used to sit here
+      // too: inert, but a progress column the ADR says must not exist.
+      expect(Object.keys(row).sort()).toEqual(['id', 'project_id', 'rundown_id'].sort())
       expect(row.rundown_id).toBe('rd-1')
     })
   })

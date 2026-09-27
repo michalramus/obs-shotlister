@@ -215,6 +215,10 @@ export function upsertPart(db: Database.Database, input: PartUpsertInput): Part 
  * matches how deleting a Camera behaves.
  */
 export function deletePart(db: Database.Database, id: string): void {
+  db.transaction(() => deletePartRows(db, id))()
+}
+
+function deletePartRows(db: Database.Database, id: string): void {
   const existing = getPartRow(db, id)
   if (!existing) {
     throw new Error(`Part not found: ${id}`)

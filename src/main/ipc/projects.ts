@@ -11,6 +11,7 @@ import Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
 import type { Project, Camera } from '../../shared/types'
 import type { CameraUpsertInput } from '../../shared/ipc-contract'
+import { deleteRundownMediaSettings } from './rundowns'
 
 // ---------------------------------------------------------------------------
 // Row shapes returned from better-sqlite3
@@ -102,11 +103,22 @@ export function renameProject(db: Database.Database, id: string, name: string): 
 }
 
 export function deleteProject(db: Database.Database, id: string): void {
-  const result = db.prepare('DELETE FROM projects WHERE id = ?').run(id)
+  db.transaction(() => {
+    // Collected before the cascade takes the rows away. Reference media lives
+    // in `settings`, keyed by Rundown id with no foreign key, so nothing else
+    // would ever clean it up.
+    const rundownIds = (
+      db.prepare('SELECT id FROM rundowns WHERE project_id = ?').all(id) as Array<{ id: string }>
+    ).map((r) => r.id)
 
-  if (result.changes === 0) {
-    throw new Error(`Project not found: ${id}`)
-  }
+    const result = db.prepare('DELETE FROM projects WHERE id = ?').run(id)
+
+    if (result.changes === 0) {
+      throw new Error(`Project not found: ${id}`)
+    }
+
+    deleteRundownMediaSettings(db, rundownIds)
+  })()
 }
 
 // ---------------------------------------------------------------------------

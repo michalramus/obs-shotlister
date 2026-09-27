@@ -17,7 +17,7 @@ import type { LiveSession } from '../live/session'
 import { getCameraById } from '../ipc/projects'
 import { listShots } from '../ipc/shots'
 import { getRundown } from '../ipc/rundowns'
-import { resolveTransitionFull } from '../ipc/transitions'
+import { resolveTransition } from '../ipc/transitions'
 
 /**
  * Extra delay after a Transition before touching preview. Re-cueing preview
@@ -73,9 +73,10 @@ export function createOBSSwitcher(
   /** A Shot with no Transition name is a cut; a named one uses its own duration. */
   function transitionFor(shot: Shot): { obsName: string; durationMs: number } {
     const logical = shot.transitionName ?? 'cut'
-    const { obsName, constLengthMs } = resolveTransitionFull(db, logical)
-    const durationMs = logical === 'cut' || constLengthMs !== null ? 0 : (shot.transitionMs ?? 0)
-    return { obsName, durationMs }
+    return {
+      obsName: resolveTransition(db, logical),
+      durationMs: logical === 'cut' ? 0 : shot.transitionMs,
+    }
   }
 
   async function settle(transitionMs: number): Promise<void> {
@@ -117,7 +118,7 @@ export function createOBSSwitcher(
       if (!liveShot) return
 
       if (sceneFor(liveShot)) await applyTransition(liveShot)
-      await settle(liveShot.transitionMs ?? 0)
+      await settle(liveShot.transitionMs)
       await cuePreview(session.getNextVisibleShot())
     },
 
@@ -157,7 +158,7 @@ export function createOBSSwitcher(
       await cuePreview(liveShot)
       await new Promise<void>((resolve) => setTimeout(resolve, PREVIEW_SETTLE_MS))
       await applyTransition(liveShot)
-      await settle(liveShot.transitionMs ?? 0)
+      await settle(liveShot.transitionMs)
       await cuePreview(session.getNextVisibleShot())
     },
   }

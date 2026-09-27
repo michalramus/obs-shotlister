@@ -267,11 +267,18 @@ describe('indexes', () => {
     expect(detail).not.toContain('SCAN shots')
   })
 
-  it('adds const_length_ms to transition_mappings on a fresh database', () => {
+  // Both columns were dead weight: const_length_ms could only ever be written
+  // NULL, and skipped_ids was a progress column, which ADR 0001 forbids.
+  it('drops const_length_ms from transition_mappings', () => {
     const cols = database.prepare('PRAGMA table_info(transition_mappings)').all() as Array<{
       name: string
     }>
-    expect(cols.map((c) => c.name)).toContain('const_length_ms')
+    expect(cols.map((c) => c.name)).not.toContain('const_length_ms')
+  })
+
+  it('drops skipped_ids from live_state', () => {
+    const cols = database.prepare('PRAGMA table_info(live_state)').all() as Array<{ name: string }>
+    expect(cols.map((c) => c.name)).not.toContain('skipped_ids')
   })
 })
 

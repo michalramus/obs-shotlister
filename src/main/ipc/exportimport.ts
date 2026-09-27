@@ -362,7 +362,7 @@ export function importDatabase(db: Database.Database, data: any): void {
     db.exec('DELETE FROM rundowns')
     db.exec('DELETE FROM cameras')
     db.exec('DELETE FROM projects')
-    db.exec("UPDATE live_state SET rundown_id=NULL, skipped_ids='[]', project_id=NULL WHERE id=1")
+    db.exec('UPDATE live_state SET rundown_id=NULL, project_id=NULL WHERE id=1')
 
     for (const p of data.projects ?? []) {
       db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(

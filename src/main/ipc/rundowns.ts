@@ -189,6 +189,10 @@ export function unassignedItemCount(db: Database.Database, rundownId: string): n
  * first turns that into the same kind of refusal deleting a Part in use gives.
  */
 export function deleteRundown(db: Database.Database, id: string): void {
+  db.transaction(() => deleteRundownRows(db, id))()
+}
+
+function deleteRundownRows(db: Database.Database, id: string): void {
   const { count } = db
     .prepare(
       `SELECT COUNT(*) AS count FROM shots s
@@ -209,6 +213,21 @@ export function deleteRundown(db: Database.Database, id: string): void {
 
   if (result.changes === 0) {
     throw new Error(`Rundown not found: ${id}`)
+  }
+
+  // Reference media is keyed by Rundown id in `settings`, which has no foreign
+  // key to cascade through. Without this the rows outlive every Rundown that
+  // ever had media and nothing will ever read or remove them.
+  deleteRundownMediaSettings(db, [id])
+}
+
+/** Removes the `settings` rows that key Reference media to these Rundowns. */
+export function deleteRundownMediaSettings(db: Database.Database, rundownIds: string[]): void {
+  if (rundownIds.length === 0) return
+  const stmt = db.prepare('DELETE FROM settings WHERE key = ?')
+  for (const rundownId of rundownIds) {
+    stmt.run(`rundown_media_path_${rundownId}`)
+    stmt.run(`rundown_media_offset_${rundownId}`)
   }
 }
 

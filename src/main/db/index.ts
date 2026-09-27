@@ -135,14 +135,16 @@ export function applyMigrations(database: Database.Database): void {
       order_index  INTEGER NOT NULL
     );
 
+    -- No progress columns, by ADR-0001: which Shots have been skipped, where
+    -- the show has reached and when it started live only in memory. Only the
+    -- durable selection belongs here.
     CREATE TABLE IF NOT EXISTS live_state (
       id           INTEGER PRIMARY KEY CHECK (id = 1),
-      rundown_id   TEXT,
-      skipped_ids  TEXT NOT NULL DEFAULT '[]'
+      rundown_id   TEXT
     );
 
     -- Ensure singleton row exists
-    INSERT OR IGNORE INTO live_state (id, skipped_ids) VALUES (1, '[]');
+    INSERT OR IGNORE INTO live_state (id) VALUES (1);
   `)
 
   // Idempotent column additions (ALTER TABLE is not in CREATE TABLE IF NOT EXISTS)
@@ -257,11 +259,19 @@ export function applyMigrations(database: Database.Database): void {
 
   makeShotCameraNullable(database)
 
-  // Must run after transition_mappings exists, or it always throws on a fresh DB.
-  try {
-    database.exec('ALTER TABLE transition_mappings ADD COLUMN const_length_ms INTEGER')
-  } catch (_) {
-    /* column exists */
+  // Dropped rather than left inert. skipped_ids was the one progress column in
+  // the schema, which ADR-0001 says must not exist; const_length_ms could only
+  // ever be written NULL, so the branch that read it was unreachable. Both are
+  // removed here so a later reader cannot mistake either for live state.
+  for (const [table, column] of [
+    ['live_state', 'skipped_ids'],
+    ['transition_mappings', 'const_length_ms'],
+  ] as const) {
+    try {
+      database.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`)
+    } catch (_) {
+      /* already gone */
+    }
   }
 
   // Every hot read filters by a foreign key: listShots runs on each OBS cut and

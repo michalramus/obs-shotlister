@@ -297,10 +297,37 @@ export function deleteItem(
   })()
 }
 
-/** Renumbers items to the given order, which is the order the operator sees. */
+/**
+ * Renumbers items to the given order, which is the order the operator sees.
+ *
+ * The list must name every item in exactly one Rundown. Renumbering from 0
+ * without that guarantee leaves two items sharing an index, which makes
+ * `ORDER BY order_index` non-deterministic — and the Live queue addresses items
+ * by position, so the show would then drive whichever row SQLite returned
+ * first. Callers pass a complete list today; this refuses the day one stops.
+ */
 export function reorderItems(db: Database.Database, ids: string[]): void {
+  if (ids.length === 0) return
   const update = db.prepare('UPDATE shots SET order_index = ? WHERE id = ?')
   db.transaction(() => {
+    const placeholders = ids.map(() => '?').join(',')
+    const owning = db
+      .prepare(`SELECT DISTINCT rundown_id FROM shots WHERE id IN (${placeholders})`)
+      .all(...ids) as Array<{ rundown_id: string }>
+    if (owning.length !== 1) {
+      throw new Error(`reorderItems expects items from exactly one Rundown, got ${owning.length}`)
+    }
+    const rundownId = owning[0]!.rundown_id
+    const total = (
+      db.prepare('SELECT COUNT(*) AS n FROM shots WHERE rundown_id = ?').get(rundownId) as {
+        n: number
+      }
+    ).n
+    if (total !== ids.length) {
+      throw new Error(
+        `reorderItems expects every item in the Rundown: got ${ids.length} of ${total}`,
+      )
+    }
     ids.forEach((id, index) => {
       update.run(index, id)
     })
