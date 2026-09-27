@@ -81,7 +81,8 @@ export function LiveControls(): React.JSX.Element {
     }
   })
 
-  // Sync previewFirst from DB on mount (DB is source of truth for OSC)
+  // The stored setting is the source of truth — localStorage is only a cache so
+  // the checkbox paints right on the first frame instead of flipping.
   useEffect(() => {
     window.api.live
       .getPreviewFirst()
@@ -152,7 +153,7 @@ export function LiveControls(): React.JSX.Element {
       if (!proceed) return
     }
 
-    liveStart(activeRundownId, previewFirst).catch((err) => handleError('start', err))
+    liveStart(activeRundownId).catch((err) => handleError('start', err))
   }
 
   function canStart(): boolean {

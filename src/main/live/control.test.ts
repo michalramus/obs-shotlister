@@ -196,10 +196,9 @@ describe('LiveControl', () => {
   })
 
   describe('Next with startIfStopped', () => {
-    it('starts the Rundown, honouring Preview-first from the setting', () => {
+    it('starts the Rundown, coming up from preview like any other Start', () => {
       seed(db)
       session.setActiveRundown('rd-1')
-      previewFirst = true
 
       const state = control.next({ startIfStopped: true })
 
@@ -207,15 +206,6 @@ describe('LiveControl', () => {
       expect(state.liveIndex).toBe(0)
       expect(obs.calls).toEqual(['startFromPreview'])
       expect(publish.rundownChangedCount).toBe(1)
-    })
-
-    it('cuts to program when Preview-first is off', () => {
-      seed(db)
-      session.setActiveRundown('rd-1')
-
-      control.next({ startIfStopped: true })
-
-      expect(obs.calls).toEqual(['takeLiveShot'])
     })
 
     it('does nothing when no Rundown is active', () => {
@@ -238,15 +228,50 @@ describe('LiveControl', () => {
     })
   })
 
-  describe('Start', () => {
-    it('takes the opening Shot to program when told not to use Preview-first', () => {
+  describe('Opening a Rundown', () => {
+    it('cues the opening Shot into preview when Preview-first is on', () => {
       seed(db)
       previewFirst = true
 
-      const state = control.start({ rundownId: 'rd-1', previewFirst: false })
+      control.openRundown('rd-1')
+
+      expect(session.getState().rundownId).toBe('rd-1')
+      expect(publish.rundownChangedCount).toBe(1)
+      expect(obs.calls).toEqual(['cueRundownStart'])
+    })
+
+    it('leaves OBS alone when Preview-first is off', () => {
+      seed(db)
+
+      control.openRundown('rd-1')
+
+      expect(session.getState().rundownId).toBe('rd-1')
+      expect(publish.rundownChangedCount).toBe(1)
+      expect(obs.calls).toEqual([])
+    })
+
+    it('touches OBS for no Rundown at all when the Rundown is closed', () => {
+      seed(db)
+      previewFirst = true
+
+      control.openRundown(null)
+
+      expect(session.getState().rundownId).toBeNull()
+      expect(obs.calls).toEqual([])
+    })
+  })
+
+  describe('Start', () => {
+    it('comes up from preview whatever the Preview-first setting says', () => {
+      seed(db)
+      previewFirst = false
+
+      const state = control.start({ rundownId: 'rd-1' })
 
       expect(state.running).toBe(true)
-      expect(obs.calls).toEqual(['takeLiveShot'])
+      // `startFromPreview` arms preview itself, so an opening Shot that was never
+      // cued still transitions rather than cutting.
+      expect(obs.calls).toEqual(['startFromPreview'])
       expect(publish.liveStates).toEqual([state])
       expect(publish.rundownChangedCount).toBe(1)
     })

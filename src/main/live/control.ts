@@ -7,8 +7,9 @@
  * Those rules used to be restated at every entry point — the space bar, the IPC
  * handlers and the OSC pedal — and the copies had drifted: the pedal ignored the
  * Transition guard on Skip, the IPC handlers ignored it entirely, and the space
- * bar started a Live session without Preview-first while the other two honoured
- * it. Three answers to one question is three chances to be wrong on show night.
+ * bar brought a Live session up straight to program while the other two came up
+ * from preview. Three answers to one question is three chances to be wrong on
+ * show night.
  *
  * So this module owns the answers and the entry points own nothing but their
  * transport. `session`, `obs` and `publish` are passed in rather than reached
@@ -22,11 +23,25 @@ import type { ChangePublisher } from '../publisher'
 
 export interface LiveControl {
   /**
-   * Puts the active Rundown on air. `rundownId` defaults to the active one, and
-   * `previewFirst` to the stored setting — an intent that says nothing about
-   * Preview-first gets the operator's choice rather than a guess.
+   * Opens a Rundown: makes it the active one and tells everyone, then — when
+   * Preview-first is on — loads its first Shot's scene into OBS preview so the
+   * operator can see what Start will bring up. With the setting off, opening a
+   * Rundown does not touch OBS at all.
+   *
+   * This is the only thing Preview-first governs. A Voice-over Rundown never
+   * reaches OBS, so `cueRundownStart` finds no scene and does nothing.
    */
-  start: (opts?: { rundownId?: string; previewFirst?: boolean }) => LiveState
+  openRundown: (rundownId: string | null) => void
+  /**
+   * Puts the active Rundown on air, always coming up from preview.
+   * `rundownId` defaults to the active one.
+   *
+   * Start does not consult the Preview-first setting: `startFromPreview` arms
+   * preview itself when nothing armed it, so the transition is the same shape
+   * whether or not the opening Shot was cued when the Rundown was opened. That
+   * setting governs only what happens on opening a Rundown.
+   */
+  start: (opts?: { rundownId?: string }) => LiveState
   stop: () => LiveState
   /**
    * `startIfStopped` makes a Next with nothing running start the Rundown, which
@@ -42,7 +57,10 @@ export interface LiveControlDeps {
   session: LiveSession
   obs: OBSSwitcher
   publish: ChangePublisher
-  /** Reads the stored Preview-first setting. */
+  /**
+   * Reads the stored Preview-first setting, which decides whether opening a
+   * Rundown cues its first Shot into preview.
+   */
   previewFirst: () => boolean
 }
 
@@ -59,6 +77,12 @@ export function createLiveControl(deps: LiveControlDeps): LiveControl {
   }
 
   const control: LiveControl = {
+    openRundown(rundownId) {
+      session.setActiveRundown(rundownId)
+      publish.rundownChanged()
+      if (rundownId && previewFirst()) drive(obs.cueRundownStart(rundownId))
+    },
+
     start(opts = {}) {
       const rundownId = opts.rundownId ?? session.getState().rundownId
       if (!rundownId) throw new Error('Cannot start: no active rundown')
@@ -69,8 +93,7 @@ export function createLiveControl(deps: LiveControlDeps): LiveControl {
       // position alone does not tell phones that (ADR 0003).
       publish.rundownChanged()
 
-      if (opts.previewFirst ?? previewFirst()) drive(obs.startFromPreview())
-      else drive(obs.takeLiveShot())
+      drive(obs.startFromPreview())
       return state
     },
 

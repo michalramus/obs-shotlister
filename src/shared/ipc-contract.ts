@@ -238,6 +238,20 @@ export interface ProjectRenderSummary {
   }
 }
 
+/**
+ * How much audio one Project would lose if its recordings were deleted.
+ *
+ * `clipCount` is *exclusive*: only the clips no other Project wants, which is
+ * exactly what deleting this Project's recordings removes. Clips are
+ * content-addressed and shared on purpose, so these counts do not add up to the
+ * size of the cache — the operator has to be told that wherever they are shown.
+ */
+export interface ProjectClipStats {
+  projectId: string
+  name: string
+  clipCount: number
+}
+
 // ---------------------------------------------------------------------------
 // Announcements
 // ---------------------------------------------------------------------------
@@ -396,6 +410,8 @@ export interface IpcContract {
   'speech:cleanOrphans': { payload: { projectId: string }; result: number }
   /** Deletes this Project's audio, sparing anything another Project shares. */
   'speech:deleteProjectClips': { payload: { projectId: string }; result: number }
+  /** Per-Project exclusive clip counts, so deleting is never done blind. */
+  'speech:projectClipStats': { payload: NoPayload; result: ProjectClipStats[] }
 
   // --- Shots ---
   'shots:list': { payload: { rundownId: string }; result: Shot[] }
@@ -407,7 +423,7 @@ export interface IpcContract {
 
   // --- Live session ---
   'live:get': { payload: NoPayload; result: LiveState }
-  'live:start': { payload: { rundownId: string; previewFirst?: boolean }; result: LiveState }
+  'live:start': { payload: { rundownId: string }; result: LiveState }
   'live:stop': { payload: NoPayload; result: LiveState }
   'live:next': { payload: NoPayload; result: LiveState }
   'live:skip-next': { payload: NoPayload; result: LiveState }

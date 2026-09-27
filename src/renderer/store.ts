@@ -164,7 +164,7 @@ interface AppStore {
 
   // Live control actions
   loadLiveState: () => Promise<void>
-  liveStart: (rundownId: string, previewFirst?: boolean) => Promise<void>
+  liveStart: (rundownId: string) => Promise<void>
   liveStop: () => Promise<void>
   liveNext: () => Promise<void>
   liveSkipNext: () => Promise<void>
@@ -691,8 +691,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     get().setLiveState(state)
   },
 
-  liveStart: async (rundownId, previewFirst) => {
-    const state = await window.api.live.start({ rundownId, previewFirst })
+  liveStart: async (rundownId) => {
+    const state = await window.api.live.start({ rundownId })
     get().setLiveState(state)
   },
 

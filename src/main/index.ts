@@ -277,13 +277,7 @@ function registerIpcHandlers(): void {
   })
 
   registerIpcHandler('rundowns:setActive', (payload: { rundownId: string | null }) => {
-    live.setActiveRundown(payload.rundownId)
-    publish.rundownChanged()
-    if (payload.rundownId) {
-      obs
-        .cueRundownStart(payload.rundownId)
-        .catch((e: unknown) => console.error('[OBS] cueRundownStart:', e))
-    }
+    control.openRundown(payload.rundownId)
   })
 
   registerIpcHandler('rundowns:reorder', ({ ids }: { ids: string[] }) => {
@@ -490,9 +484,7 @@ function registerIpcHandlers(): void {
   // Live controls
   registerIpcHandler('live:get', () => live.getState())
 
-  registerIpcHandler('live:start', (payload: { rundownId: string; previewFirst?: boolean }) =>
-    control.start(payload),
-  )
+  registerIpcHandler('live:start', (payload: { rundownId: string }) => control.start(payload))
 
   registerIpcHandler('live:stop', () => control.stop())
 
@@ -950,7 +942,7 @@ app.whenReady().then(() => {
     obs,
     publish,
     // Read per call rather than captured: the operator can toggle Preview-first
-    // between two Live sessions without anything being rewired.
+    // between two Rundowns without anything being rewired.
     previewFirst: () => getPreviewFirst(getDatabase()),
   })
   live.clear()
