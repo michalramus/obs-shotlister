@@ -743,4 +743,36 @@ describe('cleanOrphans against the real cache directory', () => {
     expect((await clips.read(wanted)).length).toBeGreaterThan(44)
     db.close()
   })
+
+  it('unlinks every file the Voice it left behind had rendered', async () => {
+    // Sixty-one real unlinks in one press, which is the only case where this
+    // button frees anything worth the operator's attention — and the only one
+    // where a per-file failure could quietly leave the cache half-swept.
+    const db = openMemoryDb()
+    insertProject(db, 'p1')
+    const clips = createFileClipStore(userData)
+    const service = createRenderService({
+      db,
+      clips,
+      synthesise: createFakeSynthesiser(clips).synthesise,
+      installVoice: () => Promise.resolve(),
+      isLive: () => false,
+    })
+
+    upsertPart(db, { projectId: 'p1', name: 'gitara' })
+    const old = [phraseHash('gitara'), ...numberHashes()]
+    for (const hash of old) await clips.put({ hash }, wavOf(200))
+    recordPartRenders(db, 'p1')
+
+    const other = 'en_US-amy-medium'
+    saveGlobalVoiceSettings(db, { ...getGlobalVoiceSettings(db), voice: other })
+    // What a render under the new Voice would already have put there.
+    const kept = phraseHash('gitara', 'za', other)
+    await clips.put({ hash: kept }, wavOf(200))
+
+    expect(await service.cleanOrphans('p1')).toBe(old.length)
+
+    expect(await readdir(clipsDir(userData))).toEqual([`${kept}.wav`])
+    db.close()
+  })
 })
