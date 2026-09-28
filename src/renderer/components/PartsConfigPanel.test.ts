@@ -6,7 +6,7 @@ import {
   partsByNumber,
   filterParts,
   isPartInScope,
-  scopeLabel,
+  scopeFolderOptions,
   scopeOfPart,
 } from './PartsConfigPanel'
 import type { Part, Rundown } from '../../shared/types'
@@ -227,22 +227,24 @@ describe('isPartInScope', () => {
   })
 })
 
-describe('scopeLabel', () => {
-  const rundowns = [rundown('r1', 'Band A')]
-
-  it('names the project scope', () => {
-    expect(scopeLabel(part(1, 'gitara'), rundowns)).toBe('Project')
+describe('scopeFolderOptions', () => {
+  it('leaves the list alone for a project-scoped part', () => {
+    expect(scopeFolderOptions(['Band A'], part(1, 'gitara'))).toEqual(['Band A'])
   })
 
-  it('names the folder', () => {
-    expect(scopeLabel(part(1, 'gitara', { folder: 'Band A' }), rundowns)).toBe('Folder: Band A')
+  it('leaves the list alone when the folder is already in it', () => {
+    expect(scopeFolderOptions(['Band A'], part(1, 'gitara', { folder: 'Band A' }))).toEqual([
+      'Band A',
+    ])
   })
 
-  it('names the owning rundown', () => {
-    expect(scopeLabel(part(1, 'gitara', { rundownId: 'r1' }), rundowns)).toBe('Rundown: r1')
-  })
-
-  it('falls back when the owning rundown is not loaded', () => {
-    expect(scopeLabel(part(1, 'gitara', { rundownId: 'gone' }), rundowns)).toBe('Rundown')
+  // The folder list comes from the Rundowns that exist, so a folder whose last
+  // Rundown left has no option — and a select with no matching option shows the
+  // first one, which would read as "Project" on a part that is not.
+  it('offers a folder no rundown is left in', () => {
+    expect(scopeFolderOptions(['Band A'], part(1, 'gitara', { folder: 'Emptied' }))).toEqual([
+      'Band A',
+      'Emptied',
+    ])
   })
 })

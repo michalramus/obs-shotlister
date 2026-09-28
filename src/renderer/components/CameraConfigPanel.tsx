@@ -1,7 +1,11 @@
 import React, { useState } from 'react'
 import { useAppStore } from '../store'
 import type { Camera } from '../../shared/types'
-import { CAMERA_PALETTE, nextCameraColor } from '../../shared/camera-palette'
+import { nextCameraColor } from '../../shared/camera-palette'
+import { ps } from './panel-styles'
+import { ColorSwatch, PaletteStrip } from './ColorPicker'
+import { ConfirmDestructive } from './ConfirmDestructive'
+import { useDraftRow } from './use-draft-row'
 
 // ---------------------------------------------------------------------------
 // Resolve marker color options
@@ -29,306 +33,37 @@ export const RESOLVE_COLORS = [
 export type ResolveColor = (typeof RESOLVE_COLORS)[number]
 
 // ---------------------------------------------------------------------------
+// Refusals
+// ---------------------------------------------------------------------------
+
+/**
+ * What a refused delete means, in the operator's terms.
+ *
+ * Deleting a Camera a Shot still points at trips the foreign key, and the raw
+ * `SqliteError: FOREIGN KEY constraint failed` says neither that Shots are the
+ * reason nor what to do. The count belongs in the main process, which can
+ * actually run it — every Rundown's Shots, not just the open one's — so this
+ * names the cause without pretending to a number it cannot get.
+ */
+export function describeCameraDeleteError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err)
+  if (/FOREIGN KEY/i.test(message)) {
+    return 'Shots still use this camera. Point those shots at another camera, or delete them, and then delete the camera.'
+  }
+  return message === '' ? 'Failed to delete camera.' : message
+}
+
+// ---------------------------------------------------------------------------
 // Styles
 // ---------------------------------------------------------------------------
 
 const s = {
-  overlay: {
-    position: 'fixed' as const,
-    inset: 0,
-    background: 'rgba(0,0,0,0.65)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1000,
-  } satisfies React.CSSProperties,
+  ...ps,
 
-  panel: {
-    background: '#1e1e1e',
-    borderRadius: '10px',
-    border: '1px solid #444',
-    padding: '28px',
-    width: '680px',
-    maxWidth: '95vw',
-    maxHeight: '80vh',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '16px',
-    overflowY: 'auto' as const,
-  } satisfies React.CSSProperties,
-
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  } satisfies React.CSSProperties,
-
-  title: {
-    margin: 0,
-    fontSize: '17px',
-    fontWeight: 600,
-    color: '#fff',
-  } satisfies React.CSSProperties,
-
-  sectionTitle: {
-    margin: '8px 0 6px',
-    fontSize: '13px',
-    fontWeight: 600,
-    color: '#888',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.05em',
-  } satisfies React.CSSProperties,
-
-  closeBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#aaa',
-    fontSize: '20px',
-    cursor: 'pointer',
-    lineHeight: 1,
-    padding: '4px 8px',
-  } satisfies React.CSSProperties,
-
-  table: {
-    width: '100%',
-    borderCollapse: 'collapse' as const,
-    fontSize: '14px',
-  } satisfies React.CSSProperties,
-
-  th: {
-    textAlign: 'left' as const,
-    padding: '6px 8px',
-    color: '#888',
-    fontWeight: 500,
-    borderBottom: '1px solid #333',
-    fontSize: '12px',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.05em',
-  } satisfies React.CSSProperties,
-
-  td: {
-    padding: '6px 8px',
-    verticalAlign: 'middle' as const,
-    borderBottom: '1px solid #2a2a2a',
-    color: '#ddd',
-  } satisfies React.CSSProperties,
-
-  input: {
-    padding: '5px 8px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px solid #555',
-    background: '#2a2a2a',
-    color: '#fff',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-  } satisfies React.CSSProperties,
-
-  numberInput: {
-    padding: '5px 8px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px solid #555',
-    background: '#2a2a2a',
-    color: '#fff',
-    width: '56px',
-    boxSizing: 'border-box' as const,
-  } satisfies React.CSSProperties,
-
-  select: {
-    padding: '5px 8px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px solid #555',
-    background: '#2a2a2a',
-    color: '#fff',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-  } satisfies React.CSSProperties,
-
-  colorSwatch: {
-    display: 'inline-block',
-    width: '28px',
-    height: '28px',
-    borderRadius: '4px',
-    border: '2px solid #555',
-    cursor: 'pointer',
-    verticalAlign: 'middle',
-  } satisfies React.CSSProperties,
-
-  colorInput: {
-    position: 'absolute' as const,
-    opacity: 0,
-    width: '28px',
-    height: '28px',
-    cursor: 'pointer',
-    top: 0,
-    left: 0,
-  } satisfies React.CSSProperties,
-
-  paletteStrip: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(12, 1fr)',
-    gap: '2px',
-    marginTop: '4px',
-    width: '132px',
-  } satisfies React.CSSProperties,
-
-  paletteSwatch: {
-    width: '9px',
-    height: '9px',
-    borderRadius: '2px',
-    border: '1px solid rgba(0,0,0,0.4)',
-    padding: 0,
-    cursor: 'pointer',
-  } satisfies React.CSSProperties,
-
-  colorCell: {
-    position: 'relative' as const,
-    display: 'inline-block',
-  } satisfies React.CSSProperties,
-
-  iconBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#888',
-    cursor: 'pointer',
-    fontSize: '16px',
-    padding: '4px',
-    borderRadius: '4px',
-  } satisfies React.CSSProperties,
-
-  addBtn: {
-    padding: '7px 14px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px dashed #555',
-    background: 'none',
-    color: '#aaa',
-    cursor: 'pointer',
-    alignSelf: 'flex-start' as const,
-  } satisfies React.CSSProperties,
-
-  errorText: {
+  errorMark: {
     color: '#e74c3c',
-    fontSize: '13px',
-    margin: 0,
+    fontSize: '12px',
   } satisfies React.CSSProperties,
-
-  confirmOverlay: {
-    position: 'fixed' as const,
-    inset: 0,
-    background: 'rgba(0,0,0,0.6)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1100,
-  } satisfies React.CSSProperties,
-
-  confirmDialog: {
-    background: '#2a2a2a',
-    borderRadius: '8px',
-    padding: '24px',
-    minWidth: '300px',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '16px',
-    border: '1px solid #444',
-  } satisfies React.CSSProperties,
-
-  confirmTitle: {
-    margin: 0,
-    fontSize: '15px',
-    fontWeight: 600,
-    color: '#fff',
-  } satisfies React.CSSProperties,
-
-  row: {
-    display: 'flex',
-    gap: '8px',
-    justifyContent: 'flex-end',
-  } satisfies React.CSSProperties,
-
-  cancelBtn: {
-    padding: '6px 14px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px solid #555',
-    background: '#3a3a3a',
-    color: '#ccc',
-    cursor: 'pointer',
-  } satisfies React.CSSProperties,
-
-  dangerBtn: {
-    padding: '6px 14px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: 'none',
-    background: '#c0392b',
-    color: '#fff',
-    cursor: 'pointer',
-  } satisfies React.CSSProperties,
-}
-
-// ---------------------------------------------------------------------------
-// Delete camera confirmation dialog
-// ---------------------------------------------------------------------------
-
-interface DeleteCameraDialogProps {
-  camera: Camera
-  onCancel: () => void
-  onConfirm: () => Promise<void>
-}
-
-function DeleteCameraDialog({
-  camera,
-  onCancel,
-  onConfirm,
-}: DeleteCameraDialogProps): React.JSX.Element {
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const handleConfirm = async (): Promise<void> => {
-    setLoading(true)
-    setError(null)
-    try {
-      await onConfirm()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete camera.')
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div
-      style={s.confirmOverlay}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="delete-cam-title"
-    >
-      <div style={s.confirmDialog}>
-        <h3 id="delete-cam-title" style={s.confirmTitle}>
-          Delete camera?
-        </h3>
-        <p style={{ margin: 0, color: '#ccc', fontSize: '14px' }}>
-          Delete{' '}
-          <strong style={{ color: '#fff' }}>
-            #{camera.number} {camera.name}
-          </strong>
-          ? This cannot be undone.
-        </p>
-        {error !== null && <p style={s.errorText}>{error}</p>}
-        <div style={s.row}>
-          <button style={s.cancelBtn} onClick={onCancel} disabled={loading}>
-            Cancel
-          </button>
-          <button style={s.dangerBtn} onClick={() => void handleConfirm()} disabled={loading}>
-            {loading ? 'Deleting…' : 'Delete camera'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
 }
 
 // ---------------------------------------------------------------------------
@@ -349,28 +84,14 @@ interface CameraRowProps {
 
 function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Element {
   const upsertCamera = useAppStore((st) => st.upsertCamera)
-  const [draft, setDraft] = useState<CameraRowState>({
-    number: camera.number,
-    name: camera.name,
-    color: camera.color,
-    resolveColor: camera.resolveColor,
-  })
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  // Commit changes on blur from any field
-  const handleBlur = async (): Promise<void> => {
-    if (
-      draft.number === camera.number &&
-      draft.name === camera.name &&
-      draft.color === camera.color &&
-      draft.resolveColor === camera.resolveColor
-    ) {
-      return
-    }
-    setSaving(true)
-    setError(null)
-    try {
+  const row = useDraftRow<CameraRowState>(
+    {
+      number: camera.number,
+      name: camera.name,
+      color: camera.color,
+      resolveColor: camera.resolveColor,
+    },
+    async (draft) => {
       await upsertCamera({
         id: camera.id,
         projectId: camera.projectId,
@@ -378,14 +99,14 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
         name: draft.name,
         color: draft.color,
         resolveColor: draft.resolveColor,
+        // The scene is not edited here, but it is written here: the main process
+        // rewrites every column, so it has to be carried through. It comes from
+        // the store, which the OBS panel writes through too — a scene set there
+        // and a rename here are the same Camera.
         obsScene: camera.obsScene ?? null,
       })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed.')
-    } finally {
-      setSaving(false)
-    }
-  }
+    },
+  )
 
   return (
     <tr>
@@ -394,56 +115,46 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
           style={s.numberInput}
           type="number"
           min={1}
-          value={draft.number}
+          value={row.draft.number}
           aria-label="Camera number"
-          onChange={(e) => setDraft((d) => ({ ...d, number: parseInt(e.target.value, 10) || 1 }))}
-          onBlur={() => void handleBlur()}
-          disabled={saving}
+          onChange={(e) => row.set({ number: parseInt(e.target.value, 10) || 1 })}
+          onBlur={row.commit}
+          disabled={row.saving}
         />
       </td>
       <td style={s.td}>
         <input
-          style={s.input}
+          style={s.cellInput}
           type="text"
-          value={draft.name}
+          value={row.draft.name}
           aria-label="Camera name"
-          onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-          onBlur={() => void handleBlur()}
-          disabled={saving}
+          onChange={(e) => row.set({ name: e.target.value })}
+          onBlur={row.commit}
+          disabled={row.saving}
         />
       </td>
       <td style={{ ...s.td, width: '56px' }}>
-        <div style={s.colorCell}>
-          <div style={{ ...s.colorSwatch, background: draft.color }} title={draft.color} />
-          <input
-            type="color"
-            style={s.colorInput}
-            value={draft.color}
-            aria-label="Camera color"
-            onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
-            onBlur={() => void handleBlur()}
-            disabled={saving}
-          />
-        </div>
+        <ColorSwatch
+          value={row.draft.color}
+          label="Camera color"
+          onChange={(color) => row.set({ color })}
+          onBlur={row.commit}
+          disabled={row.saving}
+        />
         <PaletteStrip
-          selected={draft.color}
-          onPick={(c) => {
-            setDraft((d) => ({ ...d, color: c }))
-          }}
-          disabled={saving}
+          selected={row.draft.color}
+          onPick={(color) => row.pick({ color })}
+          disabled={row.saving}
         />
       </td>
       <td style={s.td}>
         <select
           style={s.select}
-          value={draft.resolveColor ?? ''}
+          value={row.draft.resolveColor ?? ''}
           aria-label="Resolve color"
-          onChange={(e) => {
-            const val = e.target.value
-            setDraft((d) => ({ ...d, resolveColor: val === '' ? null : val }))
-          }}
-          onBlur={() => void handleBlur()}
-          disabled={saving}
+          onChange={(e) => row.set({ resolveColor: e.target.value === '' ? null : e.target.value })}
+          onBlur={row.commit}
+          disabled={row.saving}
         >
           <option value="">— None —</option>
           {RESOLVE_COLORS.map((c) => (
@@ -454,8 +165,8 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
         </select>
       </td>
       <td style={{ ...s.td, width: '48px' }}>
-        {error !== null && (
-          <span style={{ color: '#e74c3c', fontSize: '12px' }} title={error}>
+        {row.error !== null && (
+          <span style={s.errorMark} title={row.error}>
             ⚠
           </span>
         )}
@@ -464,7 +175,7 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
           onClick={() => onRequestDelete(camera)}
           title="Delete camera"
           aria-label={`Delete camera ${camera.name}`}
-          disabled={saving}
+          disabled={row.saving}
         >
           ✕
         </button>
@@ -477,40 +188,6 @@ function CameraRow({ camera, onRequestDelete }: CameraRowProps): React.JSX.Eleme
 // New camera row — temporary form at the bottom of the table
 // ---------------------------------------------------------------------------
 
-interface PaletteStripProps {
-  selected: string
-  onPick: (color: string) => void
-  disabled?: boolean
-}
-
-/** The default palette as clickable swatches, so it is reachable without the OS picker. */
-function PaletteStrip({ selected, onPick, disabled }: PaletteStripProps): React.JSX.Element {
-  return (
-    <div style={s.paletteStrip} role="group" aria-label="Palette colors">
-      {CAMERA_PALETTE.map((c) => {
-        const isSelected = c.toLowerCase() === selected.trim().toLowerCase()
-        return (
-          <button
-            key={c}
-            type="button"
-            title={c}
-            aria-label={c}
-            aria-pressed={isSelected}
-            disabled={disabled}
-            onClick={() => onPick(c)}
-            style={{
-              ...s.paletteSwatch,
-              background: c,
-              outline: isSelected ? '2px solid #fff' : 'none',
-              outlineOffset: isSelected ? '1px' : undefined,
-            }}
-          />
-        )
-      })}
-    </div>
-  )
-}
-
 interface NewCameraRowProps {
   projectId: string
   nextNumber: number
@@ -520,36 +197,28 @@ interface NewCameraRowProps {
 function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): React.JSX.Element {
   const upsertCamera = useAppStore((st) => st.upsertCamera)
   const cameras = useAppStore((st) => st.cameras)
-  const [number, setNumber] = useState(nextNumber)
-  const [name, setName] = useState('')
-  // Pre-filled from the palette; the picker below still lets it be overridden.
-  const [color, setColor] = useState(() => nextCameraColor(cameras))
-  const [resolveColor, setResolveColor] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const handleSave = async (): Promise<void> => {
-    if (!name.trim()) {
-      setError('Name is required.')
-      return
-    }
-    setSaving(true)
-    setError(null)
-    try {
+  const row = useDraftRow<CameraRowState>(
+    {
+      number: nextNumber,
+      name: '',
+      // Pre-filled from the palette; the picker below still lets it be overridden.
+      color: nextCameraColor(cameras),
+      resolveColor: null,
+    },
+    async (draft) => {
+      if (!draft.name.trim()) throw new Error('Name is required.')
       await upsertCamera({
         projectId,
-        number,
-        name: name.trim(),
-        color,
-        resolveColor,
+        number: draft.number,
+        name: draft.name.trim(),
+        color: draft.color,
+        resolveColor: draft.resolveColor,
         obsScene: null,
       })
       onDone()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add camera.')
-      setSaving(false)
-    }
-  }
+    },
+    'Failed to add camera.',
+  )
 
   return (
     <tr>
@@ -558,49 +227,49 @@ function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): Rea
           style={s.numberInput}
           type="number"
           min={1}
-          value={number}
+          value={row.draft.number}
           aria-label="Camera number"
-          onChange={(e) => setNumber(parseInt(e.target.value, 10) || 1)}
-          disabled={saving}
+          onChange={(e) => row.set({ number: parseInt(e.target.value, 10) || 1 })}
+          disabled={row.saving}
         />
       </td>
       <td style={s.td}>
         <input
           autoFocus
-          style={s.input}
+          style={s.cellInput}
           type="text"
           placeholder="Camera name"
-          value={name}
+          value={row.draft.name}
           aria-label="Camera name"
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => row.set({ name: e.target.value })}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') void handleSave()
+            if (e.key === 'Enter') row.submit()
             if (e.key === 'Escape') onDone()
           }}
-          disabled={saving}
+          disabled={row.saving}
         />
       </td>
       <td style={{ ...s.td, width: '56px' }}>
-        <div style={s.colorCell}>
-          <div style={{ ...s.colorSwatch, background: color }} title={color} />
-          <input
-            type="color"
-            style={s.colorInput}
-            value={color}
-            aria-label="Camera color"
-            onChange={(e) => setColor(e.target.value)}
-            disabled={saving}
-          />
-        </div>
-        <PaletteStrip selected={color} onPick={setColor} disabled={saving} />
+        <ColorSwatch
+          value={row.draft.color}
+          label="Camera color"
+          onChange={(color) => row.set({ color })}
+          disabled={row.saving}
+        />
+        {/* Nothing is written until the ✓, so a pick here only fills the draft. */}
+        <PaletteStrip
+          selected={row.draft.color}
+          onPick={(color) => row.set({ color })}
+          disabled={row.saving}
+        />
       </td>
       <td style={s.td}>
         <select
           style={s.select}
-          value={resolveColor ?? ''}
+          value={row.draft.resolveColor ?? ''}
           aria-label="Resolve color"
-          onChange={(e) => setResolveColor(e.target.value === '' ? null : e.target.value)}
-          disabled={saving}
+          onChange={(e) => row.set({ resolveColor: e.target.value === '' ? null : e.target.value })}
+          disabled={row.saving}
         >
           <option value="">— None —</option>
           {RESOLVE_COLORS.map((c) => (
@@ -611,17 +280,17 @@ function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): Rea
         </select>
       </td>
       <td style={{ ...s.td, width: '48px', whiteSpace: 'nowrap' }}>
-        {error !== null && (
-          <span style={{ color: '#e74c3c', fontSize: '12px', marginRight: '4px' }} title={error}>
+        {row.error !== null && (
+          <span style={{ ...s.errorMark, marginRight: '4px' }} title={row.error}>
             ⚠
           </span>
         )}
         <button
           style={{ ...s.iconBtn, color: '#4a90d9' }}
-          onClick={() => void handleSave()}
+          onClick={row.submit}
           title="Save camera"
           aria-label="Save new camera"
-          disabled={saving}
+          disabled={row.saving}
         >
           ✓
         </button>
@@ -630,7 +299,7 @@ function NewCameraRow({ projectId, nextNumber, onDone }: NewCameraRowProps): Rea
           onClick={onDone}
           title="Cancel"
           aria-label="Cancel new camera"
-          disabled={saving}
+          disabled={row.saving}
         >
           ✕
         </button>
@@ -668,7 +337,7 @@ export function CameraConfigPanel({ onClose }: CameraConfigPanelProps): React.JS
   return (
     <>
       <div style={s.overlay} role="dialog" aria-modal="true" aria-labelledby="camera-config-title">
-        <div style={s.panel}>
+        <div style={s.panel({ width: '680px', maxHeight: '80vh', gap: '16px' })}>
           <div style={s.header}>
             <h2 id="camera-config-title" style={s.title}>
               Cameras
@@ -711,10 +380,12 @@ export function CameraConfigPanel({ onClose }: CameraConfigPanelProps): React.JS
       </div>
 
       {pendingDelete !== null && (
-        <DeleteCameraDialog
-          camera={pendingDelete}
+        <ConfirmDestructive
+          noun="camera"
+          subject={`#${pendingDelete.number} ${pendingDelete.name}`}
           onCancel={() => setPendingDelete(null)}
           onConfirm={handleConfirmDelete}
+          describeError={describeCameraDeleteError}
         />
       )}
     </>

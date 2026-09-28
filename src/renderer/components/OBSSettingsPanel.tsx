@@ -6,92 +6,11 @@ import type {
   TransitionMapping,
 } from '../../shared/ipc-contract'
 import type { Camera } from '../../shared/types'
+import { ps } from './panel-styles'
+import { useDraftRow } from './use-draft-row'
 
 const s = {
-  overlay: {
-    position: 'fixed' as const,
-    inset: 0,
-    background: 'rgba(0,0,0,0.65)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1000,
-  } satisfies React.CSSProperties,
-
-  panel: {
-    background: '#1e1e1e',
-    borderRadius: '10px',
-    border: '1px solid #444',
-    padding: '28px',
-    width: '560px',
-    maxWidth: '95vw',
-    maxHeight: '85vh',
-    overflowY: 'auto' as const,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '20px',
-  } satisfies React.CSSProperties,
-
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    flexShrink: 0,
-  } satisfies React.CSSProperties,
-
-  title: {
-    margin: 0,
-    fontSize: '17px',
-    fontWeight: 600,
-    color: '#fff',
-  } satisfies React.CSSProperties,
-
-  sectionTitle: {
-    margin: '0 0 10px',
-    fontSize: '13px',
-    fontWeight: 600,
-    color: '#888',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.05em',
-  } satisfies React.CSSProperties,
-
-  closeBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#aaa',
-    fontSize: '20px',
-    cursor: 'pointer',
-    padding: '4px 8px',
-  } satisfies React.CSSProperties,
-
-  label: {
-    fontSize: '12px',
-    color: '#888',
-    marginBottom: '4px',
-    display: 'block',
-  } satisfies React.CSSProperties,
-
-  input: {
-    padding: '8px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px solid #555',
-    background: '#2a2a2a',
-    color: '#fff',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-  } satisfies React.CSSProperties,
-
-  select: {
-    padding: '5px 8px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px solid #555',
-    background: '#2a2a2a',
-    color: '#fff',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-  } satisfies React.CSSProperties,
+  ...ps,
 
   connectBtn: (status: OBSConnectionStatus): React.CSSProperties => ({
     padding: '8px 16px',
@@ -133,93 +52,12 @@ const s = {
     color: '#27ae60',
   } satisfies React.CSSProperties,
 
-  errorText: {
-    color: '#e74c3c',
-    fontSize: '13px',
-  } satisfies React.CSSProperties,
-
-  toggleRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    fontSize: '14px',
-    color: '#ccc',
-  } satisfies React.CSSProperties,
-
-  toggleTrack: (on: boolean): React.CSSProperties => ({
-    width: '44px',
-    height: '24px',
-    borderRadius: '12px',
-    background: on ? '#27ae60' : '#555',
-    border: 'none',
-    cursor: 'pointer',
-    position: 'relative',
-    flexShrink: 0,
-    transition: 'background 0.2s',
-  }),
-
-  toggleThumb: (on: boolean): React.CSSProperties => ({
-    position: 'absolute',
-    top: '2px',
-    left: on ? '22px' : '2px',
-    width: '20px',
-    height: '20px',
-    borderRadius: '50%',
-    background: '#fff',
-    transition: 'left 0.15s',
-  }),
-
-  table: {
-    width: '100%',
-    borderCollapse: 'collapse' as const,
-    fontSize: '14px',
-  } satisfies React.CSSProperties,
-
-  th: {
-    textAlign: 'left' as const,
-    padding: '6px 8px',
-    color: '#888',
-    fontWeight: 500,
-    borderBottom: '1px solid #333',
-    fontSize: '12px',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.05em',
-  } satisfies React.CSSProperties,
-
-  td: {
-    padding: '6px 8px',
-    verticalAlign: 'middle' as const,
-    borderBottom: '1px solid #2a2a2a',
-    color: '#ddd',
-  } satisfies React.CSSProperties,
-
   refreshBtn: {
     padding: '5px 10px',
     fontSize: '12px',
     borderRadius: '4px',
     border: '1px solid #555',
     background: '#2a2a2a',
-    color: '#aaa',
-    cursor: 'pointer',
-    alignSelf: 'flex-start' as const,
-  } satisfies React.CSSProperties,
-
-  iconBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#888',
-    cursor: 'pointer',
-    fontSize: '16px',
-    padding: '4px',
-    borderRadius: '4px',
-  } satisfies React.CSSProperties,
-
-  addBtn: {
-    padding: '7px 14px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px dashed #555',
-    background: 'none',
     color: '#aaa',
     cursor: 'pointer',
     alignSelf: 'flex-start' as const,
@@ -249,9 +87,12 @@ function TransitionMappingsSection({
   const [newObsName, setNewObsName] = useState('')
   const [addingNew, setAddingNew] = useState(false)
 
+  // Refetched when the connection comes up, not only on mount: while OBS is
+  // disconnected `getTransitions` answers with an empty list, and a dropdown that
+  // never asks again leaves the operator hand-typing transition names.
   useEffect(() => {
     void fetchAll()
-  }, [])
+  }, [obsConnected])
 
   async function fetchAll(): Promise<void> {
     try {
@@ -460,6 +301,73 @@ function TransitionMappingsSection({
   )
 }
 
+// ---------------------------------------------------------------------------
+// Camera → OBS scene
+//
+// The scene is a column of the Camera, so it is edited here but owned by the
+// same store the Cameras panel edits. A private copy of the list is what made
+// renaming a Camera wipe its scene: the main process rewrites every column on an
+// upsert, so the Cameras panel sent the scene it had — from a store nothing had
+// told about a scene set here.
+// ---------------------------------------------------------------------------
+
+interface CameraSceneRowProps {
+  camera: Camera
+  scenes: string[]
+  connected: boolean
+}
+
+function CameraSceneRow({ camera, scenes, connected }: CameraSceneRowProps): React.JSX.Element {
+  const upsertCamera = useAppStore((st) => st.upsertCamera)
+  const row = useDraftRow<{ obsScene: string }>(
+    { obsScene: camera.obsScene ?? '' },
+    async (draft) => {
+      await upsertCamera({ ...camera, obsScene: draft.obsScene === '' ? null : draft.obsScene })
+    },
+  )
+
+  return (
+    <tr>
+      <td style={s.td}>
+        CAM{camera.number} — {camera.name}
+      </td>
+      <td style={s.td}>
+        {connected && scenes.length > 0 ? (
+          <select
+            style={s.select}
+            value={row.draft.obsScene}
+            aria-label={`OBS scene for ${camera.name}`}
+            disabled={row.saving}
+            onChange={(e) => row.pick({ obsScene: e.target.value })}
+          >
+            <option value="">— None —</option>
+            {scenes.map((scene) => (
+              <option key={scene} value={scene}>
+                {scene}
+              </option>
+            ))}
+            {row.draft.obsScene !== '' && !scenes.includes(row.draft.obsScene) && (
+              <option value={row.draft.obsScene}>{row.draft.obsScene}</option>
+            )}
+          </select>
+        ) : (
+          <input
+            style={s.input}
+            type="text"
+            value={row.draft.obsScene}
+            placeholder={connected ? 'Scene name' : 'OBS not connected'}
+            aria-label={`OBS scene for ${camera.name}`}
+            disabled={row.saving}
+            onChange={(e) => row.set({ obsScene: e.target.value })}
+            onBlur={row.commit}
+          />
+        )}
+        {row.error !== null && <p style={{ ...s.errorText, marginTop: '4px' }}>{row.error}</p>}
+      </td>
+    </tr>
+  )
+}
+
 interface OBSSettingsPanelProps {
   onClose: () => void
 }
@@ -477,9 +385,9 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
   const [obsEnabled, setObsEnabled] = useState(false)
 
   // Section C: Camera → OBS scene mappings
-  const [cameras, setCameras] = useState<Camera[]>([])
+  const cameras = useAppStore((st) => st.cameras)
+  const loadCameras = useAppStore((st) => st.loadCameras)
   const [obsScenes, setObsScenes] = useState<string[]>([])
-  const [sceneSaving, setSceneSaving] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     window.api.obs
@@ -497,18 +405,20 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
       .getEnabled()
       .then(setObsEnabled)
       .catch(() => {})
-    // Subscribe to pushed validation results
-    window.api.obs.onValidationResult((result) => setValidationResult(result))
+    // Returned so the listener goes when the panel does: `subscribe` hands back
+    // its own disposer, and dropping it leaks one listener per open.
+    return window.api.obs.onValidationResult((result) => setValidationResult(result))
   }, [setObsStatus])
 
+  // Reloaded rather than assumed fresh: the store loads cameras when the active
+  // project changes, which can be long before this panel is opened.
   useEffect(() => {
     if (activeProjectId) {
-      window.api.cameras
-        .list({ projectId: activeProjectId })
-        .then(setCameras)
-        .catch(() => {})
+      loadCameras(activeProjectId).catch((err: unknown) =>
+        console.error('[OBSSettingsPanel] loadCameras:', err),
+      )
     }
-  }, [activeProjectId])
+  }, [activeProjectId, loadCameras])
 
   useEffect(() => {
     if (obsStatus === 'connected') {
@@ -593,31 +503,9 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
     }
   }
 
-  async function handleSceneChange(camera: Camera, obsScene: string): Promise<void> {
-    setSceneSaving((prev) => ({ ...prev, [camera.id]: true }))
-    try {
-      await window.api.cameras.upsert({
-        id: camera.id,
-        projectId: camera.projectId,
-        number: camera.number,
-        name: camera.name,
-        color: camera.color,
-        resolveColor: camera.resolveColor,
-        obsScene: obsScene || null,
-      })
-      setCameras((prev) =>
-        prev.map((c) => (c.id === camera.id ? { ...c, obsScene: obsScene || null } : c)),
-      )
-    } catch (err) {
-      console.error('[OBSSettingsPanel] upsertCamera:', err)
-    } finally {
-      setSceneSaving((prev) => ({ ...prev, [camera.id]: false }))
-    }
-  }
-
   return (
     <div style={s.overlay} role="dialog" aria-modal="true">
-      <div style={s.panel}>
+      <div style={s.panel({ width: '560px', maxHeight: '85vh', gap: '20px' })}>
         <div style={s.header}>
           <h2 style={s.title}>OBS Settings</h2>
           <button style={s.closeBtn} onClick={onClose} aria-label="Close">
@@ -764,51 +652,12 @@ export function OBSSettingsPanel({ onClose }: OBSSettingsPanelProps): React.JSX.
               </thead>
               <tbody>
                 {cameras.map((cam) => (
-                  <tr key={cam.id}>
-                    <td style={s.td}>
-                      CAM{cam.number} — {cam.name}
-                    </td>
-                    <td style={s.td}>
-                      {obsStatus === 'connected' && obsScenes.length > 0 ? (
-                        <select
-                          style={s.select}
-                          value={cam.obsScene ?? ''}
-                          aria-label={`OBS scene for ${cam.name}`}
-                          disabled={sceneSaving[cam.id] === true}
-                          onChange={(e) => void handleSceneChange(cam, e.target.value)}
-                        >
-                          <option value="">— None —</option>
-                          {obsScenes.map((scene) => (
-                            <option key={scene} value={scene}>
-                              {scene}
-                            </option>
-                          ))}
-                          {cam.obsScene && !obsScenes.includes(cam.obsScene) && (
-                            <option value={cam.obsScene}>{cam.obsScene}</option>
-                          )}
-                        </select>
-                      ) : (
-                        <input
-                          style={s.input}
-                          type="text"
-                          value={cam.obsScene ?? ''}
-                          placeholder={
-                            obsStatus === 'connected' ? 'Scene name' : 'OBS not connected'
-                          }
-                          aria-label={`OBS scene for ${cam.name}`}
-                          onChange={(e) => {
-                            const val = e.target.value
-                            setCameras((prev) =>
-                              prev.map((c) =>
-                                c.id === cam.id ? { ...c, obsScene: val || null } : c,
-                              ),
-                            )
-                          }}
-                          onBlur={(e) => void handleSceneChange(cam, e.target.value)}
-                        />
-                      )}
-                    </td>
-                  </tr>
+                  <CameraSceneRow
+                    key={cam.id}
+                    camera={cam}
+                    scenes={obsScenes}
+                    connected={obsStatus === 'connected'}
+                  />
                 ))}
               </tbody>
             </table>

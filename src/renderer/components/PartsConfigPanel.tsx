@@ -5,6 +5,10 @@ import type { PartScope } from '../../shared/ipc-contract'
 import { CAMERA_PALETTE } from '../../shared/camera-palette'
 import { visibleFolderNames } from './RundownSidebar'
 import { ASSIGNMENT_STRIP_ROW_GAP } from './timeline/assignment-strip'
+import { ps } from './panel-styles'
+import { ColorSwatch, PaletteStrip } from './ColorPicker'
+import { ConfirmDestructive } from './ConfirmDestructive'
+import { useDraftRow } from './use-draft-row'
 
 // ---------------------------------------------------------------------------
 // Assignment keymap
@@ -98,16 +102,6 @@ export function scopeOfPart(part: Part): PartScope {
   return { kind: 'project' }
 }
 
-/** How a Part's scope reads in the panel. */
-export function scopeLabel(part: Part, rundowns: Rundown[]): string {
-  if (part.rundownId !== null) {
-    const owner = rundowns.find((r) => r.id === part.rundownId)
-    return owner ? `Rundown: ${owner.name}` : 'Rundown'
-  }
-  if (part.folder !== null) return `Folder: ${part.folder}`
-  return 'Project'
-}
-
 /**
  * Whether `rundown` may choose `part` for a new Call — the additive union of
  * Project, folder and Rundown scope (ADR 0006).
@@ -149,183 +143,12 @@ function valueToScope(value: string): PartScope {
 // ---------------------------------------------------------------------------
 
 const s = {
-  overlay: {
-    position: 'fixed' as const,
-    inset: 0,
-    background: 'rgba(0,0,0,0.65)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1000,
-  } satisfies React.CSSProperties,
-
-  panel: {
-    background: '#1e1e1e',
-    borderRadius: '10px',
-    border: '1px solid #444',
-    padding: '28px',
-    width: '720px',
-    maxWidth: '95vw',
-    maxHeight: '80vh',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '16px',
-    overflowY: 'auto' as const,
-  } satisfies React.CSSProperties,
-
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  } satisfies React.CSSProperties,
-
-  title: {
-    margin: 0,
-    fontSize: '17px',
-    fontWeight: 600,
-    color: '#fff',
-  } satisfies React.CSSProperties,
+  ...ps,
 
   hint: {
     margin: 0,
     fontSize: '12px',
     color: '#777',
-  } satisfies React.CSSProperties,
-
-  closeBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#aaa',
-    fontSize: '20px',
-    cursor: 'pointer',
-    lineHeight: 1,
-    padding: '4px 8px',
-  } satisfies React.CSSProperties,
-
-  table: {
-    width: '100%',
-    borderCollapse: 'collapse' as const,
-    fontSize: '14px',
-  } satisfies React.CSSProperties,
-
-  th: {
-    textAlign: 'left' as const,
-    padding: '6px 8px',
-    color: '#888',
-    fontWeight: 500,
-    borderBottom: '1px solid #333',
-    fontSize: '12px',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.05em',
-  } satisfies React.CSSProperties,
-
-  td: {
-    padding: '6px 8px',
-    verticalAlign: 'middle' as const,
-    borderBottom: '1px solid #2a2a2a',
-    color: '#ddd',
-  } satisfies React.CSSProperties,
-
-  input: {
-    padding: '5px 8px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px solid #555',
-    background: '#2a2a2a',
-    color: '#fff',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-  } satisfies React.CSSProperties,
-
-  numberInput: {
-    padding: '5px 8px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px solid #555',
-    background: '#2a2a2a',
-    color: '#fff',
-    width: '56px',
-    boxSizing: 'border-box' as const,
-  } satisfies React.CSSProperties,
-
-  select: {
-    padding: '5px 8px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px solid #555',
-    background: '#2a2a2a',
-    color: '#fff',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-  } satisfies React.CSSProperties,
-
-  colorSwatch: {
-    display: 'inline-block',
-    width: '28px',
-    height: '28px',
-    borderRadius: '4px',
-    border: '2px solid #555',
-    cursor: 'pointer',
-    verticalAlign: 'middle',
-  } satisfies React.CSSProperties,
-
-  colorInput: {
-    position: 'absolute' as const,
-    opacity: 0,
-    width: '28px',
-    height: '28px',
-    cursor: 'pointer',
-    top: 0,
-    left: 0,
-  } satisfies React.CSSProperties,
-
-  paletteStrip: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(12, 1fr)',
-    gap: '2px',
-    marginTop: '4px',
-    width: '132px',
-  } satisfies React.CSSProperties,
-
-  paletteSwatch: {
-    width: '9px',
-    height: '9px',
-    borderRadius: '2px',
-    border: '1px solid rgba(0,0,0,0.4)',
-    padding: 0,
-    cursor: 'pointer',
-  } satisfies React.CSSProperties,
-
-  colorCell: {
-    position: 'relative' as const,
-    display: 'inline-block',
-  } satisfies React.CSSProperties,
-
-  iconBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#888',
-    cursor: 'pointer',
-    fontSize: '16px',
-    padding: '4px',
-    borderRadius: '4px',
-  } satisfies React.CSSProperties,
-
-  addBtn: {
-    padding: '7px 14px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px dashed #555',
-    background: 'none',
-    color: '#aaa',
-    cursor: 'pointer',
-    alignSelf: 'flex-start' as const,
-  } satisfies React.CSSProperties,
-
-  errorText: {
-    color: '#e74c3c',
-    fontSize: '13px',
-    margin: 0,
   } satisfies React.CSSProperties,
 
   bulkBar: {
@@ -351,58 +174,9 @@ const s = {
     cursor: 'pointer',
   } satisfies React.CSSProperties,
 
-  confirmOverlay: {
-    position: 'fixed' as const,
-    inset: 0,
-    background: 'rgba(0,0,0,0.6)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1100,
-  } satisfies React.CSSProperties,
-
-  confirmDialog: {
-    background: '#2a2a2a',
-    borderRadius: '8px',
-    padding: '24px',
-    minWidth: '320px',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '16px',
-    border: '1px solid #444',
-  } satisfies React.CSSProperties,
-
-  confirmTitle: {
-    margin: 0,
-    fontSize: '15px',
-    fontWeight: 600,
-    color: '#fff',
-  } satisfies React.CSSProperties,
-
-  row: {
-    display: 'flex',
-    gap: '8px',
-    justifyContent: 'flex-end',
-  } satisfies React.CSSProperties,
-
-  cancelBtn: {
-    padding: '6px 14px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px solid #555',
-    background: '#3a3a3a',
-    color: '#ccc',
-    cursor: 'pointer',
-  } satisfies React.CSSProperties,
-
-  dangerBtn: {
-    padding: '6px 14px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: 'none',
-    background: '#c0392b',
-    color: '#fff',
-    cursor: 'pointer',
+  errorMark: {
+    color: '#e74c3c',
+    fontSize: '12px',
   } satisfies React.CSSProperties,
 
   partBtn: {
@@ -459,102 +233,6 @@ const s = {
 }
 
 // ---------------------------------------------------------------------------
-// Palette strip — same affordance the Camera panel offers
-// ---------------------------------------------------------------------------
-
-interface PaletteStripProps {
-  selected: string
-  onPick: (color: string) => void
-  disabled?: boolean
-}
-
-function PaletteStrip({ selected, onPick, disabled }: PaletteStripProps): React.JSX.Element {
-  return (
-    <div style={s.paletteStrip} role="group" aria-label="Palette colors">
-      {CAMERA_PALETTE.map((c) => {
-        const isSelected = c.toLowerCase() === selected.trim().toLowerCase()
-        return (
-          <button
-            key={c}
-            type="button"
-            title={c}
-            aria-label={c}
-            aria-pressed={isSelected}
-            disabled={disabled}
-            onClick={() => onPick(c)}
-            style={{
-              ...s.paletteSwatch,
-              background: c,
-              outline: isSelected ? '2px solid #fff' : 'none',
-              outlineOffset: isSelected ? '1px' : undefined,
-            }}
-          />
-        )
-      })}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Delete part confirmation
-// ---------------------------------------------------------------------------
-
-interface DeletePartDialogProps {
-  part: Part
-  onCancel: () => void
-  onConfirm: () => Promise<void>
-}
-
-function DeletePartDialog({ part, onCancel, onConfirm }: DeletePartDialogProps): React.JSX.Element {
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const handleConfirm = async (): Promise<void> => {
-    setLoading(true)
-    setError(null)
-    try {
-      await onConfirm()
-    } catch (err) {
-      // The refusal carries the number of Calls still pointing at the Part;
-      // swallowing it here would let the operator believe it was deleted.
-      setError(err instanceof Error ? err.message : 'Failed to delete part.')
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div
-      style={s.confirmOverlay}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="delete-part-title"
-    >
-      <div style={s.confirmDialog}>
-        <h3 id="delete-part-title" style={s.confirmTitle}>
-          Delete part?
-        </h3>
-        <p style={{ margin: 0, color: '#ccc', fontSize: '14px' }}>
-          Delete{' '}
-          <strong style={{ color: '#fff' }}>
-            #{part.number} {part.name}
-          </strong>
-          ? This cannot be undone.
-        </p>
-        {error !== null && <p style={s.errorText}>{error}</p>}
-        <div style={s.row}>
-          <button style={s.cancelBtn} onClick={onCancel} disabled={loading}>
-            Cancel
-          </button>
-          <button style={s.dangerBtn} onClick={() => void handleConfirm()} disabled={loading}>
-            {loading ? 'Deleting…' : 'Delete part'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Part row — inline edit, plus the promotion control
 // ---------------------------------------------------------------------------
 
@@ -575,6 +253,20 @@ interface PartRowProps {
   onRequestDelete: (part: Part) => void
 }
 
+/**
+ * The folders the scope select offers for one Part.
+ *
+ * `folders` is derived from the Rundowns that exist, so the last Rundown leaving
+ * a folder takes that folder's option with it. A select whose value matches no
+ * option shows the first one instead — "Project" — and the row would then claim
+ * a Project-scoped Part while greying it as defined elsewhere. The Part's own
+ * folder is therefore always offered, empty or not.
+ */
+export function scopeFolderOptions(folders: string[], part: Part): string[] {
+  if (part.folder === null || folders.includes(part.folder)) return folders
+  return [...folders, part.folder]
+}
+
 function PartRow({
   part,
   rundowns,
@@ -587,22 +279,9 @@ function PartRow({
 }: PartRowProps): React.JSX.Element {
   const upsertPart = useAppStore((st) => st.upsertPart)
   const promotePart = useAppStore((st) => st.promotePart)
-  const [draft, setDraft] = useState<PartRowState>({
-    number: part.number,
-    name: part.name,
-    color: part.color,
-  })
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  // Commit changes on blur from any field, exactly as the Camera panel does.
-  const handleBlur = async (): Promise<void> => {
-    if (draft.number === part.number && draft.name === part.name && draft.color === part.color) {
-      return
-    }
-    setSaving(true)
-    setError(null)
-    try {
+  const row = useDraftRow<PartRowState>(
+    { number: part.number, name: part.name, color: part.color },
+    async (draft) => {
       await upsertPart({
         id: part.id,
         projectId: part.projectId,
@@ -610,25 +289,28 @@ function PartRow({
         name: draft.name,
         color: draft.color,
       })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed.')
-    } finally {
-      setSaving(false)
-    }
-  }
+    },
+  )
+  // Scope is not part of the draft: promotion is a move rather than an edit, and
+  // it commits the moment the select changes.
+  const [promoting, setPromoting] = useState(false)
+  const [promoteError, setPromoteError] = useState<string | null>(null)
 
   const handleScopeChange = async (value: string): Promise<void> => {
-    setSaving(true)
-    setError(null)
+    setPromoting(true)
+    setPromoteError(null)
     try {
       // Promotion keeps the Part's id, so every Call pointing at it survives.
       await promotePart(part.id, valueToScope(value))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Promotion failed.')
+      setPromoteError(err instanceof Error ? err.message : 'Promotion failed.')
     } finally {
-      setSaving(false)
+      setPromoting(false)
     }
   }
+
+  const busy = row.saving || promoting
+  const error = row.error ?? promoteError
 
   const ownRundown = part.rundownId !== null ? rundowns.find((r) => r.id === part.rundownId) : null
   const activeRundown =
@@ -663,41 +345,36 @@ function PartRow({
           style={s.numberInput}
           type="number"
           min={1}
-          value={draft.number}
+          value={row.draft.number}
           aria-label="Part number"
-          onChange={(e) => setDraft((d) => ({ ...d, number: parseInt(e.target.value, 10) || 1 }))}
-          onBlur={() => void handleBlur()}
-          disabled={saving}
+          onChange={(e) => row.set({ number: parseInt(e.target.value, 10) || 1 })}
+          onBlur={row.commit}
+          disabled={busy}
         />
       </td>
       <td style={s.td}>
         <input
-          style={s.input}
+          style={s.cellInput}
           type="text"
-          value={draft.name}
+          value={row.draft.name}
           aria-label="Part name"
-          onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-          onBlur={() => void handleBlur()}
-          disabled={saving}
+          onChange={(e) => row.set({ name: e.target.value })}
+          onBlur={row.commit}
+          disabled={busy}
         />
       </td>
       <td style={{ ...s.td, width: '56px' }}>
-        <div style={s.colorCell}>
-          <div style={{ ...s.colorSwatch, background: draft.color }} title={draft.color} />
-          <input
-            type="color"
-            style={s.colorInput}
-            value={draft.color}
-            aria-label="Part color"
-            onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
-            onBlur={() => void handleBlur()}
-            disabled={saving}
-          />
-        </div>
+        <ColorSwatch
+          value={row.draft.color}
+          label="Part color"
+          onChange={(color) => row.set({ color })}
+          onBlur={row.commit}
+          disabled={busy}
+        />
         <PaletteStrip
-          selected={draft.color}
-          onPick={(c) => setDraft((d) => ({ ...d, color: c }))}
-          disabled={saving}
+          selected={row.draft.color}
+          onPick={(color) => row.pick({ color })}
+          disabled={busy}
         />
       </td>
       <td style={s.td}>
@@ -706,10 +383,10 @@ function PartRow({
           value={scopeToValue(scopeOfPart(part))}
           aria-label={`Scope of ${part.name}`}
           onChange={(e) => void handleScopeChange(e.target.value)}
-          disabled={saving}
+          disabled={busy}
         >
           <option value="project">Project</option>
-          {folders.map((f) => (
+          {scopeFolderOptions(folders, part).map((f) => (
             <option key={f} value={`folder:${f}`}>
               Folder: {f}
             </option>
@@ -723,7 +400,7 @@ function PartRow({
       </td>
       <td style={{ ...s.td, width: '48px', whiteSpace: 'nowrap' }}>
         {error !== null && (
-          <span style={{ color: '#e74c3c', fontSize: '12px' }} title={error}>
+          <span style={s.errorMark} title={error}>
             ⚠
           </span>
         )}
@@ -732,7 +409,7 @@ function PartRow({
           onClick={() => onRequestDelete(part)}
           title="Delete part"
           aria-label={`Delete part ${part.name}`}
-          disabled={saving}
+          disabled={busy}
         >
           ✕
         </button>
@@ -753,6 +430,14 @@ interface NewPartRowProps {
   onDone: () => void
 }
 
+interface NewPartRowState {
+  number: number
+  name: string
+  /** Null until the operator picks one; the main process fills it in. */
+  color: string | null
+  scopeValue: string
+}
+
 function NewPartRow({
   projectId,
   nextNumber,
@@ -761,36 +446,23 @@ function NewPartRow({
   onDone,
 }: NewPartRowProps): React.JSX.Element {
   const upsertPart = useAppStore((st) => st.upsertPart)
-  const [number, setNumber] = useState(nextNumber)
-  const [name, setName] = useState('')
-  const [color, setColor] = useState<string | null>(null)
-  const [scopeValue, setScopeValue] = useState('project')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const handleSave = async (): Promise<void> => {
-    if (!name.trim()) {
-      setError('Name is required.')
-      return
-    }
-    setSaving(true)
-    setError(null)
-    try {
+  const row = useDraftRow<NewPartRowState>(
+    { number: nextNumber, name: '', color: null, scopeValue: 'project' },
+    async (draft) => {
+      if (!draft.name.trim()) throw new Error('Name is required.')
       // An unset colour is left to the main process, which picks the first
       // palette entry the Project has not used — same rule as a new Camera.
       await upsertPart({
         projectId,
-        number,
-        name: name.trim(),
-        color: color ?? undefined,
-        scope: valueToScope(scopeValue),
+        number: draft.number,
+        name: draft.name.trim(),
+        color: draft.color ?? undefined,
+        scope: valueToScope(draft.scopeValue),
       })
       onDone()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add part.')
-      setSaving(false)
-    }
-  }
+    },
+    'Failed to add part.',
+  )
 
   return (
     <tr>
@@ -800,52 +472,50 @@ function NewPartRow({
           style={s.numberInput}
           type="number"
           min={1}
-          value={number}
+          value={row.draft.number}
           aria-label="Part number"
-          onChange={(e) => setNumber(parseInt(e.target.value, 10) || 1)}
-          disabled={saving}
+          onChange={(e) => row.set({ number: parseInt(e.target.value, 10) || 1 })}
+          disabled={row.saving}
         />
       </td>
       <td style={s.td}>
         <input
           autoFocus
-          style={s.input}
+          style={s.cellInput}
           type="text"
           placeholder="Part name"
-          value={name}
+          value={row.draft.name}
           aria-label="Part name"
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => row.set({ name: e.target.value })}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') void handleSave()
+            if (e.key === 'Enter') row.submit()
             if (e.key === 'Escape') onDone()
           }}
-          disabled={saving}
+          disabled={row.saving}
         />
       </td>
       <td style={{ ...s.td, width: '56px' }}>
-        <div style={s.colorCell}>
-          <div
-            style={{ ...s.colorSwatch, background: color ?? 'transparent' }}
-            title={color ?? 'Next free palette colour'}
-          />
-          <input
-            type="color"
-            style={s.colorInput}
-            value={color ?? '#000000'}
-            aria-label="Part color"
-            onChange={(e) => setColor(e.target.value)}
-            disabled={saving}
-          />
-        </div>
-        <PaletteStrip selected={color ?? ''} onPick={setColor} disabled={saving} />
+        <ColorSwatch
+          value={row.draft.color}
+          label="Part color"
+          emptyTitle="Next free palette colour"
+          onChange={(color) => row.set({ color })}
+          disabled={row.saving}
+        />
+        {/* Nothing is written until the ✓, so a pick here only fills the draft. */}
+        <PaletteStrip
+          selected={row.draft.color ?? ''}
+          onPick={(color) => row.set({ color })}
+          disabled={row.saving}
+        />
       </td>
       <td style={s.td}>
         <select
           style={s.select}
-          value={scopeValue}
+          value={row.draft.scopeValue}
           aria-label="Scope"
-          onChange={(e) => setScopeValue(e.target.value)}
-          disabled={saving}
+          onChange={(e) => row.set({ scopeValue: e.target.value })}
+          disabled={row.saving}
         >
           <option value="project">Project</option>
           {folders.map((f) => (
@@ -859,17 +529,17 @@ function NewPartRow({
         </select>
       </td>
       <td style={{ ...s.td, width: '48px', whiteSpace: 'nowrap' }}>
-        {error !== null && (
-          <span style={{ color: '#e74c3c', fontSize: '12px', marginRight: '4px' }} title={error}>
+        {row.error !== null && (
+          <span style={{ ...s.errorMark, marginRight: '4px' }} title={row.error}>
             ⚠
           </span>
         )}
         <button
           style={{ ...s.iconBtn, color: '#4a90d9' }}
-          onClick={() => void handleSave()}
+          onClick={row.submit}
           title="Save part"
           aria-label="Save new part"
-          disabled={saving}
+          disabled={row.saving}
         >
           ✓
         </button>
@@ -878,7 +548,7 @@ function NewPartRow({
           onClick={onDone}
           title="Cancel"
           aria-label="Cancel new part"
-          disabled={saving}
+          disabled={row.saving}
         >
           ✕
         </button>
@@ -947,7 +617,7 @@ export function PartsConfigPanel({ onClose }: PartsConfigPanelProps): React.JSX.
   return (
     <>
       <div style={s.overlay} role="dialog" aria-modal="true" aria-labelledby="parts-config-title">
-        <div style={s.panel}>
+        <div style={s.panel({ width: '720px', maxHeight: '80vh', gap: '16px' })}>
           <div style={s.header}>
             <h2 id="parts-config-title" style={s.title}>
               Parts
@@ -968,16 +638,8 @@ export function PartsConfigPanel({ onClose }: PartsConfigPanelProps): React.JSX.
                 {selectedIds.length} selected — set one colour to group them (all zwrotkas green,
                 say).
               </span>
-              <div style={s.colorCell}>
-                <div style={{ ...s.colorSwatch, background: bulkColor }} title={bulkColor} />
-                <input
-                  type="color"
-                  style={s.colorInput}
-                  value={bulkColor}
-                  aria-label="Group color"
-                  onChange={(e) => setBulkColor(e.target.value)}
-                />
-              </div>
+              <ColorSwatch value={bulkColor} label="Group color" onChange={setBulkColor} />
+              {/* The bar has its own Set colour button, so a pick only stages one. */}
               <PaletteStrip selected={bulkColor} onPick={setBulkColor} />
               <button style={s.primaryBtn} onClick={() => void handleApplyColor()}>
                 Set colour
@@ -1039,8 +701,9 @@ export function PartsConfigPanel({ onClose }: PartsConfigPanelProps): React.JSX.
       </div>
 
       {pendingDelete !== null && (
-        <DeletePartDialog
-          part={pendingDelete}
+        <ConfirmDestructive
+          noun="part"
+          subject={`#${pendingDelete.number} ${pendingDelete.name}`}
           onCancel={() => setPendingDelete(null)}
           onConfirm={handleConfirmDelete}
         />
@@ -1276,7 +939,7 @@ export function AddPartDialog({ onClose, onCreated }: AddPartDialogProps): React
         />
         <p style={s.hint}>Added to this rundown. Promote it later from the Parts panel.</p>
         {error !== null && <p style={s.errorText}>{error}</p>}
-        <div style={s.row}>
+        <div style={s.buttonRow}>
           <button style={s.cancelBtn} onClick={onClose} disabled={saving}>
             Cancel
           </button>

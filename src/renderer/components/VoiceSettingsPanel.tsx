@@ -15,6 +15,7 @@ import type {
 import { toMediaUrl } from '../../shared/media-url'
 import { NUMBER_CLIP_MAX, NUMBER_CLIP_MIN } from '../../shared/number-text'
 import { OUTPUT_DELAY_MAX_MS, OUTPUT_DELAY_MIN_MS } from '../../shared/audio/outputs'
+import { ps } from './panel-styles'
 
 // ---------------------------------------------------------------------------
 // Countdown parsing
@@ -329,96 +330,12 @@ const STATE_COLOR: Record<RenderState, string> = {
 }
 
 const s = {
-  overlay: {
-    position: 'fixed' as const,
-    inset: 0,
-    background: 'rgba(0,0,0,0.65)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1000,
-  } satisfies React.CSSProperties,
-
-  panel: {
-    background: '#1e1e1e',
-    borderRadius: '10px',
-    border: '1px solid #444',
-    padding: '28px',
-    width: '620px',
-    maxWidth: '95vw',
-    maxHeight: '85vh',
-    overflowY: 'auto' as const,
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: '20px',
-  } satisfies React.CSSProperties,
-
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    flexShrink: 0,
-  } satisfies React.CSSProperties,
-
-  title: {
-    margin: 0,
-    fontSize: '17px',
-    fontWeight: 600,
-    color: '#fff',
-  } satisfies React.CSSProperties,
-
-  sectionTitle: {
-    margin: '0 0 10px',
-    fontSize: '13px',
-    fontWeight: 600,
-    color: '#888',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.05em',
-  } satisfies React.CSSProperties,
-
-  closeBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#aaa',
-    fontSize: '20px',
-    cursor: 'pointer',
-    lineHeight: 1,
-    padding: '4px 8px',
-  } satisfies React.CSSProperties,
-
-  label: {
-    fontSize: '12px',
-    color: '#888',
-    marginBottom: '4px',
-    display: 'block',
-  } satisfies React.CSSProperties,
+  ...ps,
 
   hint: {
     margin: '4px 0 0',
     fontSize: '12px',
     color: '#777',
-  } satisfies React.CSSProperties,
-
-  input: {
-    padding: '8px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px solid #555',
-    background: '#2a2a2a',
-    color: '#fff',
-    width: '100%',
-    boxSizing: 'border-box' as const,
-  } satisfies React.CSSProperties,
-
-  select: {
-    padding: '5px 8px',
-    fontSize: '14px',
-    borderRadius: '4px',
-    border: '1px solid #555',
-    background: '#2a2a2a',
-    color: '#fff',
-    width: '100%',
-    boxSizing: 'border-box' as const,
   } satisfies React.CSSProperties,
 
   fieldRow: {
@@ -433,8 +350,7 @@ const s = {
   } satisfies React.CSSProperties,
 
   errorText: {
-    color: '#e74c3c',
-    fontSize: '13px',
+    ...ps.errorText,
     margin: '4px 0 0',
     // A render failure explains itself over several lines — which binary, and
     // what to do about it. Collapsing them runs the fix into the diagnosis.
@@ -463,6 +379,8 @@ const s = {
     cursor: 'pointer',
   } satisfies React.CSSProperties,
 
+  // Not the panel-wide danger button: everything in the cache section deletes,
+  // so an outline reads as "careful" without three filled red buttons in a row.
   dangerBtn: {
     padding: '7px 10px',
     fontSize: '12px',
@@ -499,37 +417,6 @@ const s = {
     background: '#241d1d',
   } satisfies React.CSSProperties,
 
-  toggleRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    fontSize: '14px',
-    color: '#ccc',
-  } satisfies React.CSSProperties,
-
-  toggleTrack: (on: boolean): React.CSSProperties => ({
-    width: '44px',
-    height: '24px',
-    borderRadius: '12px',
-    background: on ? '#27ae60' : '#555',
-    border: 'none',
-    cursor: 'pointer',
-    position: 'relative',
-    flexShrink: 0,
-    transition: 'background 0.2s',
-  }),
-
-  toggleThumb: (on: boolean): React.CSSProperties => ({
-    position: 'absolute',
-    top: '2px',
-    left: on ? '22px' : '2px',
-    width: '20px',
-    height: '20px',
-    borderRadius: '50%',
-    background: '#fff',
-    transition: 'left 0.15s',
-  }),
-
   summaryRow: {
     display: 'flex',
     alignItems: 'center',
@@ -540,28 +427,8 @@ const s = {
   } satisfies React.CSSProperties,
 
   table: {
-    width: '100%',
-    borderCollapse: 'collapse' as const,
-    fontSize: '14px',
+    ...ps.table,
     marginTop: '12px',
-  } satisfies React.CSSProperties,
-
-  th: {
-    textAlign: 'left' as const,
-    padding: '6px 8px',
-    color: '#888',
-    fontWeight: 500,
-    borderBottom: '1px solid #333',
-    fontSize: '12px',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.05em',
-  } satisfies React.CSSProperties,
-
-  td: {
-    padding: '6px 8px',
-    verticalAlign: 'middle' as const,
-    borderBottom: '1px solid #2a2a2a',
-    color: '#ddd',
   } satisfies React.CSSProperties,
 
   expandBtn: {
@@ -749,6 +616,55 @@ export function virtualOutputGuidanceIndex(
   return 1
 }
 
+/** A marked device's own name, without the mark the list added to it. */
+export function loopbackDeviceName(device: OutputDevice): string {
+  return device.label.endsWith(LOOPBACK_SUFFIX)
+    ? device.label.slice(0, -LOOPBACK_SUFFIX.length)
+    : device.label
+}
+
+export interface VirtualOutputStatus {
+  kind: 'created' | 'found' | 'unavailable'
+  text: string
+}
+
+/**
+ * The Virtual output's status line: created, found, or unavailable.
+ *
+ * `present` only ever means *created by us*, and the manager answers false for
+ * every platform it cannot create on (ADR 0008). Read as "not there", that turned
+ * a mac with BlackHole already selected into a page of instructions for
+ * installing BlackHole. Found is the whole macOS and Windows story, so it is a
+ * branch of its own: the device is not ours and there is nothing to create, and
+ * the operator still needs to know which one carries the show onward.
+ *
+ * The Output's own device is preferred over any other match — this line sits
+ * under one Output and is about that route.
+ */
+export function describeVirtualOutput(
+  virtual: VirtualOutputState,
+  sinkId: string | null,
+  marked: OutputDevice[],
+): VirtualOutputStatus {
+  if (virtual.present && virtual.monitorLabel !== null) {
+    return {
+      kind: 'created',
+      text: `${virtual.label} is running. Select “${virtual.monitorLabel}” as the input in your intercom client.`,
+    }
+  }
+
+  const loopback = marked.filter((d) => d.label.endsWith(LOOPBACK_SUFFIX))
+  const found = loopback.find((d) => d.deviceId === sinkId) ?? loopback[0]
+  if (found !== undefined) {
+    return {
+      kind: 'found',
+      text: `“${loopbackDeviceName(found)}” is a loopback device. Record its input in your intercom client to send this output on.`,
+    }
+  }
+
+  return { kind: 'unavailable', text: virtual.guidance ?? '' }
+}
+
 /**
  * One Output's delay, in milliseconds.
  *
@@ -852,6 +768,7 @@ function OutputSection({
 }: OutputSectionProps): React.JSX.Element {
   const number = index + 1
   const off = !output.enabled
+  const status = virtual === null ? null : describeVirtualOutput(virtual, output.sinkId, marked)
 
   function handleTest(): void {
     const sinkId = output.sinkId
@@ -937,12 +854,12 @@ function OutputSection({
           </p>
         </div>
 
-        {showVirtual && virtual !== null && (
+        {showVirtual && status !== null && (
           <p style={s.hint}>
-            {virtual.present && virtual.monitorLabel !== null
-              ? `${virtual.label} is running. Select “${virtual.monitorLabel}” as the input in your intercom client.`
-              : (virtual.guidance ?? '')}
-            {virtual.creatable && !virtual.present && (
+            {status.text}
+            {/* Nothing to create where a device was found, and nothing to create
+                at all off Linux: the button belongs to the one case it answers. */}
+            {status.kind === 'unavailable' && virtual?.creatable === true && (
               <>
                 {' '}
                 <button
@@ -1532,7 +1449,7 @@ export function VoiceSettingsPanel({ onClose }: VoiceSettingsPanelProps): React.
 
   return (
     <div style={s.overlay} role="dialog" aria-modal="true" aria-labelledby="voice-settings-title">
-      <div style={s.panel}>
+      <div style={s.panel({ width: '620px', maxHeight: '85vh', gap: '20px' })}>
         <div style={s.header}>
           <h2 id="voice-settings-title" style={s.title}>
             Voice &amp; Audio Settings

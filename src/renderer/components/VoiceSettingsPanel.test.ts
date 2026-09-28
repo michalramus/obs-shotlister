@@ -20,6 +20,8 @@ import {
   describeOutputDelay,
   outputWith,
   virtualOutputGuidanceIndex,
+  describeVirtualOutput,
+  loopbackDeviceName,
   toggleProjectSelection,
   summarizeClipSelection,
   describeClipSelection,
@@ -34,6 +36,7 @@ import type {
   PartRenderState,
   ProjectClipStats,
   RenderState,
+  VirtualOutputState,
 } from '../../shared/ipc-contract'
 
 function part(name: string, state: RenderState): PartRenderState {
@@ -431,6 +434,95 @@ describe('virtualOutputGuidanceIndex', () => {
     // An operator with nothing installed yet still has to be told what to install.
     const outputs: [AudioOutput, AudioOutput] = [output({ sinkId: 'speakers' }), output()]
     expect(virtualOutputGuidanceIndex(outputs, marked)).toBe(1)
+  })
+})
+
+describe('describeVirtualOutput', () => {
+  const marked = markLoopbackDevices(
+    [
+      { deviceId: 'speakers', label: 'MacBook Pro Speakers' },
+      { deviceId: 'cable', label: 'BlackHole 2ch' },
+      { deviceId: 'other', label: 'Loopback Audio' },
+    ],
+    ['blackhole', 'loopback audio'],
+  )
+
+  const created: VirtualOutputState = {
+    creatable: true,
+    present: true,
+    label: 'Shotlister Out',
+    monitorLabel: 'Monitor of Shotlister Out',
+    guidance: null,
+  }
+
+  /** What every non-Linux platform reports, whatever is actually installed. */
+  const unsupported: VirtualOutputState = {
+    creatable: false,
+    present: false,
+    label: null,
+    monitorLabel: null,
+    guidance: 'BlackHole — brew install blackhole-2ch',
+  }
+
+  it('says what to record once the app has created the sink', () => {
+    const status = describeVirtualOutput(created, null, [])
+    expect(status.kind).toBe('created')
+    expect(status.text).toContain('Monitor of Shotlister Out')
+  })
+
+  // The defect: `present` means "created by us", and it is false on macOS and
+  // Windows whatever is installed — so an operator already routed to BlackHole
+  // was told to install BlackHole.
+  it('names the device it found where the app cannot create one', () => {
+    const status = describeVirtualOutput(unsupported, 'cable', marked)
+    expect(status.kind).toBe('found')
+    expect(status.text).toContain('BlackHole 2ch')
+    expect(status.text).not.toContain(LOOPBACK_SUFFIX.trim())
+    expect(status.text).not.toContain('brew install')
+  })
+
+  it('prefers the device this Output is pointed at over any other match', () => {
+    expect(describeVirtualOutput(unsupported, 'other', marked).text).toContain('Loopback Audio')
+  })
+
+  it('finds a device no Output has been pointed at yet', () => {
+    const status = describeVirtualOutput(unsupported, null, marked)
+    expect(status.kind).toBe('found')
+    expect(status.text).toContain('BlackHole 2ch')
+  })
+
+  it('says what to install only when nothing is there to find', () => {
+    const status = describeVirtualOutput(unsupported, null, [
+      { deviceId: 'speakers', label: 'MacBook Pro Speakers' },
+    ])
+    expect(status.kind).toBe('unavailable')
+    expect(status.text).toBe(unsupported.guidance)
+  })
+
+  it('reports a Linux sink that is not up yet as unavailable, with the reason', () => {
+    const notYet: VirtualOutputState = {
+      creatable: true,
+      present: false,
+      label: 'Shotlister Out',
+      monitorLabel: null,
+      guidance: 'Not created yet.',
+    }
+    expect(describeVirtualOutput(notYet, null, [])).toEqual({
+      kind: 'unavailable',
+      text: 'Not created yet.',
+    })
+  })
+})
+
+describe('loopbackDeviceName', () => {
+  it('drops the mark the device list added', () => {
+    expect(loopbackDeviceName({ deviceId: 'b', label: `BlackHole 2ch${LOOPBACK_SUFFIX}` })).toBe(
+      'BlackHole 2ch',
+    )
+  })
+
+  it('leaves an unmarked device alone', () => {
+    expect(loopbackDeviceName({ deviceId: 'a', label: 'Speakers' })).toBe('Speakers')
   })
 })
 

@@ -44,8 +44,7 @@ export function ConfirmDestructive({
       // Never swallowed: a refusal the operator does not see reads as a delete
       // that worked, and the row is still there when they look again.
       setError(
-        describeError?.(err) ??
-          (err instanceof Error ? err.message : `Failed to delete ${noun}.`),
+        describeError?.(err) ?? (err instanceof Error ? err.message : `Failed to delete ${noun}.`),
       )
       setLoading(false)
     }
