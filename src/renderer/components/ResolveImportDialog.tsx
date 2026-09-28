@@ -2,6 +2,8 @@ import React, { useState } from 'react'
 import { useAppStore } from '../store'
 import type { Camera } from '../../shared/types'
 import type { ParsedRow } from '../../shared/ipc-contract'
+import { tryParseTimecode } from '../../shared/timecode'
+import { formatMs } from '../../shared/timing'
 
 const FPS_OPTIONS = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60] as const
 
@@ -126,21 +128,10 @@ const s = {
   } satisfies React.CSSProperties,
 }
 
-function msToMss(ms: number): string {
-  const totalSec = Math.floor(ms / 1000)
-  const m = Math.floor(totalSec / 60)
-  const sec = totalSec % 60
-  return `${m}:${sec.toString().padStart(2, '0')}`
-}
-
-function parseTimecodeForPreview(tc: string, fps: number): number | null {
-  const parts = tc.split(':')
-  if (parts.length !== 4) return null
-  const nums = parts.map((p) => parseInt(p, 10))
-  if (nums.some((n) => isNaN(n))) return null
-  const [hh, mm, ss, ff] = nums
-  return (hh * 3600 + mm * 60 + ss) * 1000 + Math.round((ff / fps) * 1000)
-}
+// The preview's whole job is letting the operator check the frame rate before
+// committing, and a wrong choice moves every duration by well under a second —
+// invisible when truncated to whole seconds. formatMs keeps the tenths, and is
+// the same formatter the shotlist uses.
 
 interface Props {
   onClose: () => void
@@ -157,6 +148,7 @@ export function ResolveImportDialog({ onClose }: Props): React.JSX.Element {
   const [mapping, setMapping] = useState<Record<string, string | null>>({})
   const [mode, setMode] = useState<'append' | 'replace'>('append')
   const [importing, setImporting] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
   const [filePicked, setFilePicked] = useState(false)
 
   async function handlePickFile(): Promise<void> {
@@ -184,6 +176,7 @@ export function ResolveImportDialog({ onClose }: Props): React.JSX.Element {
   async function handleImport(): Promise<void> {
     if (!activeRundownId) return
     setImporting(true)
+    setImportError(null)
     try {
       await window.api.shots.importCsvConfirm({
         rundownId: activeRundownId,
@@ -195,13 +188,24 @@ export function ResolveImportDialog({ onClose }: Props): React.JSX.Element {
       await loadShots(activeRundownId)
       onClose()
     } catch (err) {
-      console.error('[ResolveImportDialog] confirm error:', err)
+      // The import is one transaction: a single bad row rolls all of it back.
+      // Saying so beats a button that flicks back to "Import 42 shots" with
+      // nothing imported and nothing on screen to explain it.
+      setImportError(
+        err instanceof Error ? err.message : 'The import failed and nothing was changed.',
+      )
     } finally {
       setImporting(false)
     }
   }
 
   const importableCount = rows.filter((r) => mapping[r.resolveColor] != null).length
+  // Rows the writer would refuse. Counted over the mapped ones only, since the
+  // rest are skipped anyway — but one of these fails the whole transaction, so
+  // the button refuses rather than rolling everything back after the fact.
+  const unreadableCount = rows.filter(
+    (r) => mapping[r.resolveColor] != null && tryParseTimecode(r.durationTimecode, fps) === null,
+  ).length
 
   return (
     <div style={s.overlay} data-testid="resolve-import-dialog">
@@ -320,11 +324,11 @@ export function ResolveImportDialog({ onClose }: Props): React.JSX.Element {
                   {rows.map((row, i) => {
                     const camId = mapping[row.resolveColor]
                     const cam = cameras.find((c) => c.id === camId)
-                    const durationMs = parseTimecodeForPreview(row.durationTimecode, fps)
+                    const durationMs = tryParseTimecode(row.durationTimecode, fps)
                     const isMapped = camId != null
 
                     return (
-                      <tr key={i} style={isMapped ? {} : { opacity: 0.5 }}>
+                      <tr key={i} style={isMapped && durationMs !== null ? {} : { opacity: 0.5 }}>
                         <td style={s.td}>{i + 1}</td>
                         <td style={s.td}>{row.resolveColor}</td>
                         <td style={s.td}>
@@ -336,8 +340,17 @@ export function ResolveImportDialog({ onClose }: Props): React.JSX.Element {
                         </td>
                         <td style={s.td}>{row.label}</td>
                         <td style={s.td}>
-                          {durationMs !== null ? msToMss(durationMs) : row.durationTimecode}
-                          {!isMapped && (
+                          {durationMs !== null ? (
+                            formatMs(durationMs)
+                          ) : (
+                            <>
+                              {row.durationTimecode}
+                              <span style={{ ...s.warning, marginLeft: '4px' }}>
+                                ← unreadable timecode
+                              </span>
+                            </>
+                          )}
+                          {isMapped || durationMs === null ? null : (
                             <span style={{ ...s.warning, marginLeft: '4px' }}>
                               ← will be skipped
                             </span>
@@ -352,6 +365,22 @@ export function ResolveImportDialog({ onClose }: Props): React.JSX.Element {
           </>
         )}
 
+        {unreadableCount > 0 && (
+          <p style={s.warning} role="alert">
+            {unreadableCount === 1
+              ? '1 row has a timecode this importer cannot read'
+              : `${unreadableCount} rows have timecodes this importer cannot read`}
+            . Resolve wrote drop-frame timecode (00:00:05;12) if the project runs at 29.97 or 59.94
+            fps — re-export with non-drop-frame timecode.
+          </p>
+        )}
+
+        {importError !== null && (
+          <p style={s.warning} role="alert">
+            {importError} Nothing was imported.
+          </p>
+        )}
+
         <div style={s.footer}>
           <button style={s.cancelBtn} onClick={onClose} disabled={importing}>
             Cancel
@@ -360,7 +389,7 @@ export function ResolveImportDialog({ onClose }: Props): React.JSX.Element {
             <button
               style={s.primaryBtn}
               onClick={() => void handleImport()}
-              disabled={importing || importableCount === 0}
+              disabled={importing || importableCount === 0 || unreadableCount > 0}
               aria-label={`Import ${importableCount} shots`}
             >
               {importing

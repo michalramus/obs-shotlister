@@ -20,27 +20,8 @@ import type { ParsedRow, ParseResult, ConfirmImportInput } from '../../shared/ip
 // Timecode parsing
 // ---------------------------------------------------------------------------
 
-/**
- * Parses a timecode string HH:MM:SS:FF to milliseconds.
- * durationMs = (HH*3600 + MM*60 + SS) * 1000 + (FF / fps) * 1000
- */
-export function parseTimecode(timecode: string, fps: number): number {
-  if (!Number.isFinite(fps) || fps <= 0) {
-    throw new Error(`Invalid fps: ${fps}`)
-  }
-  const parts = timecode.split(':')
-  if (parts.length !== 4) {
-    throw new Error(`Invalid timecode format: "${timecode}". Expected HH:MM:SS:FF`)
-  }
-
-  const [hh, mm, ss, ff] = parts.map((p) => {
-    const n = parseInt(p, 10)
-    if (isNaN(n)) throw new Error(`Invalid timecode part "${p}" in "${timecode}"`)
-    return n
-  })
-
-  return (hh * 3600 + mm * 60 + ss) * 1000 + Math.round((ff / fps) * 1000)
-}
+export { parseTimecode }
+import { parseTimecode } from '../../shared/timecode'
 
 // ---------------------------------------------------------------------------
 // CSV parsing
