@@ -3,7 +3,7 @@ import { io } from 'socket.io-client'
 import { useWebStore } from './store'
 import { ShotlistWidget } from '../shared/components/ShotlistWidget'
 import { createPhoneCuePlayer, type PhoneCuePlayer } from '../shared/audio/cue-player'
-import { shotHeldThroughTransition } from '../shared/live-view'
+import { transitionHoldMs } from '../shared/live-view'
 import type { Rundown, Shot, Camera } from '../shared/types'
 
 // Connect to the same origin (Electron's embedded Express server)
@@ -186,9 +186,10 @@ export default function App(): React.JSX.Element {
 
       // The Shot being held through the incoming Transition keeps its row until
       // the Transition finishes; a Skip of some future Shot hides immediately.
-      if (shotHeldThroughTransition(shots, liveIndex) === shotId) {
-        const transitionMs = liveIndex !== null ? (shots[liveIndex]?.transitionMs ?? 0) : 0
-        setTimeout(() => setShotHidden(shotId), transitionMs)
+      // The operator window applies the same helper — see ADR 0004.
+      const holdMs = transitionHoldMs(shots, liveIndex, shotId)
+      if (holdMs > 0) {
+        setTimeout(() => setShotHidden(shotId), holdMs)
         return
       }
       setShotHidden(shotId)

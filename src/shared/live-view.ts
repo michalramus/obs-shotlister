@@ -31,6 +31,21 @@ export function shotHeldThroughTransition(shots: Shot[], liveIndex: number | nul
 }
 
 /**
+ * How long `shotId` must stay on the list after the main process hides it.
+ *
+ * ADR 0004: the outgoing Shot is still on screen in OBS for the length of the
+ * incoming Transition, so it stays on the shotlist for exactly that long. Zero
+ * for a Shot that is not the one being held — a Skip of some future Shot hides
+ * it at once. Shared so the operator window and the Phone view cannot disagree
+ * about it, which is the divergence the ADR was written to end.
+ */
+export function transitionHoldMs(shots: Shot[], liveIndex: number | null, shotId: string): number {
+  if (shotHeldThroughTransition(shots, liveIndex) !== shotId) return 0
+  if (liveIndex === null) return 0
+  return shots[liveIndex]?.transitionMs ?? 0
+}
+
+/**
  * Applies a live position to the shotlist: every Shot before the live one is
  * hidden, except the one being held through the incoming Transition.
  *

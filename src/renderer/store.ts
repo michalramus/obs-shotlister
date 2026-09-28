@@ -9,7 +9,7 @@ import type {
   Lyric,
   RundownKind,
 } from '../shared/types'
-import { applyLivePosition } from '../shared/live-view'
+import { applyLivePosition, transitionHoldMs } from '../shared/live-view'
 import { defaultAudioOutputs } from '../shared/audio/outputs'
 import type {
   LiveState,
@@ -48,6 +48,11 @@ interface AppStore {
   liveIndex: number | null // index into shots[] of current live shot
   startedAt: number | null // Date.now() when live shot started
   running: boolean // whether rundown is started
+  /**
+   * The outgoing Shot being held on the list through the incoming Transition,
+   * per ADR 0004. In memory only, like the rest of live position.
+   */
+  heldShotId: string | null
 
   // UI mode
   uiMode: 'edit' | 'live'
@@ -180,6 +185,12 @@ interface AppStore {
   liveRestart: () => Promise<void>
 }
 
+/** Marks one Shot hidden, leaving the array alone when it already is. */
+function hideShot(shots: Shot[], shotId: string): Shot[] {
+  if (!shots.some((shot) => shot.id === shotId && !shot.hidden)) return shots
+  return shots.map((shot) => (shot.id === shotId ? { ...shot, hidden: true } : shot))
+}
+
 export const useAppStore = create<AppStore>((set, get) => ({
   // Data
   projects: [],
@@ -210,6 +221,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   liveIndex: null,
   startedAt: null,
   running: false,
+  heldShotId: null,
 
   // UI mode
   uiMode: 'edit' as 'edit' | 'live',
@@ -260,14 +272,37 @@ export const useAppStore = create<AppStore>((set, get) => ({
       liveIndex: state.liveIndex,
       startedAt: state.startedAt,
       running: state.running,
+      // A stopped show has nothing on air, so nothing is being held.
+      heldShotId: state.running ? s.heldShotId : null,
       // Same derivation the Phone view uses — see src/shared/live-view.ts.
       shots: applyLivePosition(s.shots, state.liveIndex),
     })),
 
-  markShotHidden: (shotId) =>
-    set((s) => ({
-      shots: s.shots.map((shot) => (shot.id === shotId ? { ...shot, hidden: true } : shot)),
-    })),
+  /**
+   * Hides a Shot the main process has dropped from the queue.
+   *
+   * ADR 0004: the outgoing Shot is still on air for the length of the incoming
+   * Transition, so it is held on the list for exactly that long. The Phone view
+   * has always done this; the operator window used to hide it the instant the
+   * push arrived, so for a one-second fade the two surfaces disagreed about
+   * what was on air — the exact divergence the ADR records as fixed.
+   */
+  markShotHidden: (shotId) => {
+    const { shots, liveIndex } = get()
+    const holdMs = transitionHoldMs(shots, liveIndex, shotId)
+    if (holdMs <= 0) {
+      set((s) => ({ shots: hideShot(s.shots, shotId) }))
+      return
+    }
+    // Remembered, not just delayed: the live actions refetch the shotlist, and
+    // the main process already reports this Shot as hidden, so without the note
+    // the refetch would drop it again before the Transition finished.
+    set({ heldShotId: shotId })
+    setTimeout(() => {
+      if (get().heldShotId !== shotId) return
+      set((s) => ({ shots: hideShot(s.shots, shotId), heldShotId: null }))
+    }, holdMs)
+  },
 
   handleLiveStatePush: (state) => {
     const { running, activeRundownId, loadShots } = get()
@@ -464,7 +499,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
   // Shot CRUD
   loadShots: async (rundownId) => {
     const shots = await window.api.shots.list({ rundownId })
-    set({ shots })
+    // The held Shot comes back hidden — main dropped it from the queue the
+    // moment Next was pressed. It stays on the list until its Transition ends.
+    const heldShotId = get().heldShotId
+    set({
+      shots: heldShotId
+        ? shots.map((shot) => (shot.id === heldShotId ? { ...shot, hidden: false } : shot))
+        : shots,
+    })
     await get().loadMarkers(rundownId)
     await get().loadRundownMedia(rundownId)
     await get().loadLyrics(rundownId)

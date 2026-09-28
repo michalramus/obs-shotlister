@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { applyLivePosition, shotHeldThroughTransition, startedAtFromElapsed } from './live-view'
+import {
+  applyLivePosition,
+  shotHeldThroughTransition,
+  startedAtFromElapsed,
+  transitionHoldMs,
+} from './live-view'
 import type { Shot } from './types'
 
 function shot(id: string, opts: { hidden?: boolean; transitionMs?: number } = {}): Shot {
@@ -102,5 +107,44 @@ describe('startedAtFromElapsed', () => {
 
   it('handles a shot that just went live', () => {
     expect(startedAtFromElapsed(0, 10_000)).toBe(10_000)
+  })
+})
+
+/**
+ * Both surfaces call this. The operator window used to hide the outgoing Shot
+ * the instant the push arrived while the Phone view held it, so on a
+ * one-second fade the two disagreed about what was on air — the divergence
+ * ADR 0004 records as fixed.
+ */
+describe('transitionHoldMs', () => {
+  it('returns the incoming Transition length for the Shot being held', () => {
+    const shots = [shot('a'), shot('b', { transitionMs: 1000 }), shot('c')]
+    expect(transitionHoldMs(shots, 1, 'a')).toBe(1000)
+  })
+
+  it('returns 0 for a Shot that is not the held one, so a Skip hides at once', () => {
+    const shots = [shot('a'), shot('b', { transitionMs: 1000 }), shot('c')]
+    expect(transitionHoldMs(shots, 1, 'c')).toBe(0)
+  })
+
+  it('returns 0 on a cut, where there is no Transition to outlive', () => {
+    const shots = [shot('a'), shot('b'), shot('c')]
+    expect(transitionHoldMs(shots, 1, 'a')).toBe(0)
+  })
+
+  it('returns 0 when nothing is live', () => {
+    const shots = [shot('a'), shot('b', { transitionMs: 1000 })]
+    expect(transitionHoldMs(shots, null, 'a')).toBe(0)
+  })
+
+  it('agrees with shotHeldThroughTransition about which Shot is held', () => {
+    const shots = [shot('a'), shot('b', { transitionMs: 400 }), shot('c', { transitionMs: 700 })]
+    for (const liveIndex of [0, 1, 2]) {
+      const held = shotHeldThroughTransition(shots, liveIndex)
+      for (const s of shots) {
+        const expected = s.id === held ? shots[liveIndex].transitionMs : 0
+        expect(transitionHoldMs(shots, liveIndex, s.id)).toBe(expected)
+      }
+    }
   })
 })
