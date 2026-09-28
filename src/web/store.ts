@@ -36,11 +36,6 @@ export const useWebStore = create<WebStore>((set) => ({
   connected: false,
 
   setRundownState: (data) => {
-    try {
-      localStorage.setItem('obs-queuer-cameras', JSON.stringify(data.cameras))
-    } catch (err) {
-      console.error('[store] localStorage setItem:', err)
-    }
     set({
       rundown: data.rundown,
       shots: data.shots,

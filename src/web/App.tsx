@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
 import { useWebStore } from './store'
 import { ShotlistWidget } from '../shared/components/ShotlistWidget'
@@ -128,6 +128,15 @@ export default function App(): React.JSX.Element {
       return null
     }
   })
+
+  // Stable across renders: this is a dependency of the widget's animation-frame
+  // ticker and of both Cue effects, and the ticker re-renders every 50ms. A
+  // fresh array each render cancelled and re-registered all three about twenty
+  // times a second, for the whole time a phone sits on a stage.
+  const cameraFilter = useMemo(
+    () => (selectedCamera !== null ? [selectedCamera] : []),
+    [selectedCamera],
+  )
 
   function handleCameraChange(num: number | null): void {
     setSelectedCamera(num)
@@ -311,7 +320,7 @@ export default function App(): React.JSX.Element {
             liveIndex={liveIndex}
             startedAt={startedAt}
             running={running}
-            cameraFilter={selectedCamera !== null ? [selectedCamera] : []}
+            cameraFilter={cameraFilter}
             cuePlayer={cuePlayer}
             muteCount={muteCount}
             muteBeep={muteBeep}

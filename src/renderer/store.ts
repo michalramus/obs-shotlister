@@ -58,10 +58,6 @@ interface AppStore {
   uiMode: 'edit' | 'live'
   setUiMode: (mode: 'edit' | 'live') => void
 
-  // Camera filter
-  cameraFilter: number | null
-  setCameraFilter: (filter: number | null) => void
-
   // OBS state
   obsStatus: OBSConnectionStatus
   obsValidationResult: OBSValidateResult | null
@@ -228,26 +224,6 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setUiMode: (mode) => {
     set({ uiMode: mode })
     window.api.ui.setMode(mode).catch((err: unknown) => console.error('[store] setUiMode:', err))
-  },
-
-  // Camera filter
-  cameraFilter: (() => {
-    try {
-      const raw = localStorage.getItem('obs-queuer-camera-filter')
-      if (!raw) return null
-      const n = parseInt(raw, 10)
-      return isNaN(n) ? null : n
-    } catch {
-      return null
-    }
-  })(),
-  setCameraFilter: (filter) => {
-    set({ cameraFilter: filter })
-    try {
-      localStorage.setItem('obs-queuer-camera-filter', filter !== null ? String(filter) : '')
-    } catch (err) {
-      console.error('[store] setCameraFilter localStorage:', err)
-    }
   },
 
   // OBS state
