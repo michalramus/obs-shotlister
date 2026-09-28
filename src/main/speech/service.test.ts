@@ -207,6 +207,45 @@ describe('renderMissing', () => {
   })
 })
 
+describe('abortRender', () => {
+  it('stops a batch already in flight, rather than only the next one (ADR 0005)', async () => {
+    // The refusal in `renderMissing` only covers a batch that has not started.
+    // Sixty-one clips is about five minutes on Apple Silicon, so a session
+    // starting a minute in used to leave Piper spawning for four more on the
+    // machine driving OBS — which is the one machine ADR 0005 is about.
+    const h: Harness = harness({
+      behaviour: () => {
+        if (h.fake.asked.length === 2) {
+          h.live.running = true
+          h.service.abortRender()
+        }
+        return 400
+      },
+    })
+    upsertPart(h.db, { projectId: 'p1', name: 'gitara' })
+
+    const summary = await h.service.renderMissing('p1')
+
+    expect(h.fake.asked).toHaveLength(2)
+    // The clips it did finish keep their audio and their length: they are
+    // recorded as each one lands, which is what makes stopping cheap.
+    expect(await h.clips.hashes()).toHaveLength(2)
+    expect(h.db.prepare('SELECT COUNT(*) AS n FROM speech_clips').get()).toEqual({ n: 2 })
+    // Stopping is not a failure, so nothing is latched and nothing throws — the
+    // rest renders on the next explicit ask, after the show.
+    expect(summary.rendering).toBe(false)
+    h.db.close()
+  })
+
+  it('does nothing at all when no batch is running', () => {
+    const h = harness()
+    expect(() => {
+      h.service.abortRender()
+    }).not.toThrow()
+    h.db.close()
+  })
+})
+
 describe('the Live-session refusals (ADR 0005)', () => {
   let h: Harness
 
@@ -312,6 +351,48 @@ describe('scheduleAutoRender', () => {
 
     await vi.advanceTimersByTimeAsync(AUTO_RENDER_DEBOUNCE_MS)
     expect(h.fake.asked.map((item) => item.text)).toEqual(['gitara za'])
+    h.db.close()
+  })
+
+  it('re-queues an auto-render that collided with a batch already running', async () => {
+    // Only the Live-session drop above is deliberate. This one lost the ask
+    // entirely: `renderMissing` returns the running batch's status instead of
+    // throwing, so the queue entry was already gone and nothing retried it.
+    let releaseInstall = (): void => {}
+    let firstBatch = true
+    const h = harness({
+      behaviour: () => 400,
+      installVoice: () => {
+        if (!firstBatch) return Promise.resolve()
+        firstBatch = false
+        // Holds the manual batch open, the way a voice download or fifty
+        // remaining clips would.
+        return new Promise<void>((resolve) => {
+          releaseInstall = resolve
+        })
+      },
+    })
+    enableAutoRender(h.db)
+    const part = upsertPart(h.db, { projectId: 'p1', name: 'gitara' })
+    for (const hash of numberHashes()) h.clips.seed(hash)
+
+    const manual = h.service.renderMissing('p1')
+    await vi.advanceTimersByTimeAsync(0)
+
+    // The operator renames the Part while the manual batch runs. That batch
+    // worked out what was missing before the rename, so the new phrase is in
+    // neither it nor anything else — dropped, this stays `stale` until somebody
+    // notices, which on the night is a countdown with no Part name.
+    upsertPart(h.db, { projectId: 'p1', id: part.id, name: 'gitara solo' })
+    h.service.scheduleAutoRender('p1')
+    await vi.advanceTimersByTimeAsync(AUTO_RENDER_DEBOUNCE_MS)
+    expect(h.fake.asked).toHaveLength(0)
+
+    releaseInstall()
+    await manual
+    await vi.advanceTimersByTimeAsync(AUTO_RENDER_DEBOUNCE_MS)
+
+    expect(h.fake.asked.map((item) => item.text)).toEqual(['gitara za', 'gitara solo za'])
     h.db.close()
   })
 

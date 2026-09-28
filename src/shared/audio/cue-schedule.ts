@@ -41,9 +41,11 @@ export interface CueFiring {
 export interface CueTickInput {
   /**
    * The remaining time at the previous tick. `null` means there is no previous
-   * reading — the first tick of a Live session, or of a new item — and nothing
-   * fires: a moment can only be recognised by being crossed, and the alternative
-   * is firing every Cue whose moment has already gone.
+   * reading — the first tick of a Live session, or of a new item — and almost
+   * nothing fires: a moment can only be recognised by being crossed, and the
+   * alternative is firing every Cue whose moment has already gone. The one
+   * exception is an expiry beep the item is too short to ever reach; see
+   * {@link cuesDueAt}.
    */
   previousRemainingMs: number | null
   /** The remaining time now. `null` when nothing is live. */
@@ -61,30 +63,48 @@ export interface CueTickInput {
  * within one item, so no moment can fire twice, and the caller needs no "already
  * fired" flag per Cue.
  *
- * A delay longer than the time the Cue ever had simply drops that copy. Its
- * moment was before the item went live, and there is nothing to play early
- * against — the same answer the Announcement scheduler gives a countdown number
- * that no longer fits.
+ * A delay longer than the time the Cue ever had drops that copy of a countdown
+ * word: its moment was before the item went live, there is nothing to play early
+ * against, and that is the same answer the Announcement scheduler gives a number
+ * that no longer fits. The expiry beep is not dropped with them — it is clamped
+ * into the item and played at the first reading instead, because a countdown one
+ * word short still counts down while a missing beep reads as a fault.
  */
 export function cuesDueAt(input: CueTickInput): CueFiring[] {
   const { previousRemainingMs, remainingMs, delaysMs } = input
-  if (previousRemainingMs === null || remainingMs === null) return []
+  if (remainingMs === null) return []
 
   const due: CueFiring[] = []
-  for (const [second, cue] of COUNTDOWN_WORDS) {
-    for (const delayMs of delaysMs) {
-      if (crossed(previousRemainingMs, remainingMs, second * 1000 + delayMs)) {
-        due.push({ cue, delayMs })
+  if (previousRemainingMs !== null) {
+    for (const [second, cue] of COUNTDOWN_WORDS) {
+      for (const delayMs of delaysMs) {
+        if (crossed(previousRemainingMs, remainingMs, second * 1000 + delayMs)) {
+          due.push({ cue, delayMs })
+        }
       }
     }
   }
 
   for (const delayMs of delaysMs) {
-    // The remaining time is clamped at zero, so a route that runs ahead — a
-    // negative delay, which would want the beep played *after* the Shot ended —
-    // gets it at expiry instead of losing it. The beep is the one Cue whose
-    // absence reads as a fault rather than as a setting.
-    if (crossed(previousRemainingMs, remainingMs, Math.max(delayMs, 0))) {
+    // Clamped at both ends, because the beep is the one Cue whose absence reads
+    // as a fault rather than as a setting. A negative delay — a route that runs
+    // ahead, wanting the beep *after* the Shot ended — is clamped to expiry; and
+    // a delay longer than the whole item, whose moment fell before the item went
+    // live, is clamped to the first reading of that item and played at once.
+    // Neither is ever dropped, which is what the countdown words above do with a
+    // moment they cannot reach: a number nobody had room for is one word short,
+    // while a missing expiry beep is the band waiting for a cue that never comes.
+    const moment = Math.max(delayMs, 0)
+    if (previousRemainingMs === null) {
+      // The item's first reading: nothing has been crossed yet, so the only beep
+      // that can be due is one whose moment is beyond the item's whole life.
+      // Firing it here is also what makes it fire exactly once — from the next
+      // tick on, that moment is above the previous reading and can never be
+      // crossed.
+      if (moment > remainingMs) due.push({ cue: 'beep', delayMs })
+      continue
+    }
+    if (crossed(previousRemainingMs, remainingMs, moment)) {
       due.push({ cue: 'beep', delayMs })
     }
   }

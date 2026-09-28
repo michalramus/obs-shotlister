@@ -62,10 +62,16 @@ export interface LiveControlDeps {
    * Rundown cues its first Shot into preview.
    */
   previewFirst: () => boolean
+  /**
+   * Stops a render batch already in flight. ADR 0005: nothing synthesises while
+   * a show runs. The render service refuses to *start* during a session, but a
+   * batch already running kept spawning Piper on the machine driving OBS.
+   */
+  abortRender?: () => void
 }
 
 export function createLiveControl(deps: LiveControlDeps): LiveControl {
-  const { session, obs, publish, previewFirst } = deps
+  const { session, obs, publish, previewFirst, abortRender } = deps
 
   /**
    * An OBS that is unreachable, misconfigured or mid-restart must never take the
@@ -84,6 +90,7 @@ export function createLiveControl(deps: LiveControlDeps): LiveControl {
     },
 
     start(opts = {}) {
+      abortRender?.()
       const rundownId = opts.rundownId ?? session.getState().rundownId
       if (!rundownId) throw new Error('Cannot start: no active rundown')
 

@@ -23,6 +23,10 @@ import { access, mkdir, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+// The one place that knows where a voice may already be. Imported rather than
+// restated so the installer and the synthesiser can never look in different
+// places, which is exactly how a bundled voice came to be downloaded again.
+import { voiceSearchDirs } from './engine'
 
 /**
  * The catalogue revision every voice is taken from.
@@ -200,8 +204,18 @@ async function downloadVerified(
 }
 
 export interface EnsureVoiceOptions {
-  /** Where a downloaded voice is kept: `<userData>/piper-voices`. */
+  /** Where a downloaded voice is kept, and the only place one is ever written. */
   voicesDir: string
+  /**
+   * Where a voice may already be, in the order they win. Defaults to
+   * {@link voiceSearchDirs} of {@link EnsureVoiceOptions.voicesDir}, which is
+   * what the synthesiser reads.
+   *
+   * An argument only so a test can name two ordinary directories: the real
+   * default reaches Electron for the bundle's path, and nothing about the search
+   * order is worth proving against a packaged app.
+   */
+  searchDirs?: readonly string[]
   /** Called once, before a download starts, so a slow render can say what it is doing. */
   onDownload?: (voice: string, bytes: number) => void
   signal?: AbortSignal
@@ -211,15 +225,36 @@ export interface EnsureVoiceOptions {
  * Makes sure a voice's model and config are on disk, downloading them if they
  * are not, and returns where they ended up.
  *
- * A voice already present is the fast path and costs two `access` calls — this
- * runs before every render, and the normal answer is "it is already here".
+ * A voice already present is the fast path and costs two `access` calls per
+ * directory — this runs before every render, and the normal answer is "it is
+ * already here".
+ *
+ * Every directory the synthesiser would read is looked in, bundled first, and
+ * not only the one a download writes to (ADR 0007). Looking in the download
+ * directory alone is what made an operator's documented offline workaround — pin
+ * a voice into `scripts/fetch-piper.mjs` and rebuild — fail at the venue: the
+ * catalogue was unreachable, this threw, and the batch latched the engine as
+ * broken while the model it needed sat in the bundle where `resolveVoice` would
+ * have found it.
  */
 export async function ensureVoice(voice: string, opts: EnsureVoiceOptions): Promise<VoiceFiles> {
   if (!VOICE_PATTERN.test(voice)) throw new Error(`invalid voice id ${JSON.stringify(voice)}`)
 
+  for (const dir of opts.searchDirs ?? voiceSearchDirs(opts.voicesDir)) {
+    // Piper's convention puts the config beside the model as `<model>.json`, so
+    // a directory with one and not the other is a half-installed voice and does
+    // not count — the same rule `resolveVoice` applies to the same directories.
+    const found = join(dir, `${voice}.onnx`)
+    const foundConfig = `${found}.json`
+    if ((await exists(found)) && (await exists(foundConfig))) {
+      return { model: found, config: foundConfig }
+    }
+  }
+
+  // A download only ever lands in `voicesDir`: the bundle is read-only in a
+  // packaged app, and a voice that shipped with it was verified at build time.
   const model = join(opts.voicesDir, `${voice}.onnx`)
   const config = `${model}.json`
-  if ((await exists(model)) && (await exists(config))) return { model, config }
 
   const repoPath = voiceRepoPath(voice)
   if (repoPath === null) {

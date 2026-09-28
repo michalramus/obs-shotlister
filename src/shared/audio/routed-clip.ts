@@ -87,7 +87,17 @@ export function createRoutedClip(
   if (duplicate) audio.muted = true
 
   function route(next: string | null): void {
-    if (typeof audio.setSinkId !== 'function') return
+    if (typeof audio.setSinkId !== 'function') {
+      // Nothing can be mis-routed in a renderer that cannot name a device:
+      // every copy plays on the system default, which is where this one already
+      // is. Unmuted here because the mute above is only ever lifted by a routing
+      // that lands, and no routing will be attempted — a copy left muted would
+      // be played, gated and counted, and simply never heard. Reachable
+      // wherever Output 1 carries only Cues, which leaves every Announcement a
+      // non-primary copy.
+      audio.muted = false
+      return
+    }
     // '' is how the API says "system default". Passing it matters: clips are
     // pooled and keep whichever sink they were last given, so without this,
     // choosing System default leaves them on the old device until a restart.

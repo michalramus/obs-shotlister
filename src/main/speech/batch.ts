@@ -15,7 +15,15 @@
 
 import type { RenderPlanItem } from '../../shared/render-plan'
 
-function messageOf(error: unknown): string {
+/**
+ * What to print when something that is not an Error is thrown.
+ *
+ * Exported, and the only copy: the same sentence used to be defined here and in
+ * `speech/service`, which meant one of them could be taught about a `cause`
+ * chain and the other not — and then the same failure would read differently
+ * depending on which side of the batch logged it.
+ */
+export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
@@ -31,8 +39,13 @@ export interface SynthesisedClip {
  * until the bytes are readable at its hash — the caller writes the duration to
  * the database the moment it hears about a clip, and a row is a promise that a
  * file exists.
+ *
+ * The signal is the batch's, handed on so the work in flight stops with it and
+ * not merely the work after it: a clip takes about five seconds on Apple
+ * Silicon, and a Live session starting must not wait that long for the child
+ * process to finish (ADR 0005).
  */
-export type Synthesiser = (item: RenderPlanItem) => Promise<SynthesisedClip>
+export type Synthesiser = (item: RenderPlanItem, signal?: AbortSignal) => Promise<SynthesisedClip>
 
 /**
  * Marks a failure as "the engine cannot run at all", as opposed to "this one
@@ -143,9 +156,16 @@ export async function renderAll(
     let fatal = false
     let clip: SynthesisedClip | undefined
     try {
-      clip = await synthesise(item)
+      clip = await synthesise(item, opts.signal)
       rendered.push(clip)
     } catch (caught) {
+      // A clip the cancellation killed is not a clip that failed. Reporting it
+      // as one would put a render failure in the log for the one thing the app
+      // did on purpose, and leave the operator looking for a broken Part.
+      if (opts.signal?.aborted) {
+        aborted = true
+        break
+      }
       error = messageOf(caught)
       fatal = isEngineUnusable(caught)
       failed.push({ item, message: error })

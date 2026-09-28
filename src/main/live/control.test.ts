@@ -93,6 +93,7 @@ describe('LiveControl', () => {
   let obs: FakeSwitcher
   let publish: FakePublisher
   let previewFirst: boolean
+  let abortedRenders: number
   let control: LiveControl
 
   beforeEach(() => {
@@ -101,11 +102,15 @@ describe('LiveControl', () => {
     obs = fakeObs()
     publish = fakePublish()
     previewFirst = false
+    abortedRenders = 0
     control = createLiveControl({
       session,
       obs,
       publish,
       previewFirst: () => previewFirst,
+      abortRender: () => {
+        abortedRenders += 1
+      },
     })
   })
 
@@ -342,6 +347,29 @@ describe('LiveControl', () => {
 
       expect(publish.hiddenShotIds).toEqual([])
       expect(obs.calls).toEqual(['cueNextShot'])
+    })
+  })
+
+  /**
+   * ADR 0005: no speech synthesis while a Live session runs. The service
+   * refused to *start* a batch during a show, but one already in flight kept
+   * spawning Piper for minutes on the machine driving OBS.
+   */
+  describe('starting a show stops any render already in flight', () => {
+    it('aborts the batch before the queue is filled', () => {
+      seed(db)
+      session.setActiveRundown('rd-1')
+      control.start()
+      expect(abortedRenders).toBe(1)
+    })
+
+    it('aborts on every start, including a restart', () => {
+      seed(db)
+      session.setActiveRundown('rd-1')
+      control.start()
+      control.stop()
+      control.start()
+      expect(abortedRenders).toBe(2)
     })
   })
 })

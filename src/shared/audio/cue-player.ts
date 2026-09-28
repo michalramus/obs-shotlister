@@ -84,12 +84,29 @@ const DEFAULT_DESTINATIONS: readonly SoundDestination[] = [
 ]
 
 /**
+ * Says when the machine's audio devices have changed. Returns an unsubscribe.
+ *
+ * Injected so the recovery below can be asserted on without unplugging a USB
+ * interface, and so a Phone view served over plain http — where
+ * `navigator.mediaDevices` does not exist at all — is simply never told.
+ */
+export type DeviceChangeWatcher = (onChange: () => void) => () => void
+
+export function watchAudioDevices(onChange: () => void): () => void {
+  const devices = globalThis.navigator?.mediaDevices
+  if (!devices) return () => undefined
+  devices.addEventListener('devicechange', onChange)
+  return () => devices.removeEventListener('devicechange', onChange)
+}
+
+/**
  * @param baseUrl Where the Cue clips are served from — `media://` in the operator
  *   window, `/audio` over the LAN.
  */
 export function createCuePlayer(
   baseUrl: string,
   createElement: AudioElementFactory = createAudioElement,
+  watchDevices: DeviceChangeWatcher = watchAudioDevices,
 ): CuePlayer {
   let destinations: readonly SoundDestination[] = DEFAULT_DESTINATIONS
   let volume = 1
@@ -107,6 +124,26 @@ export function createCuePlayer(
   // Preloaded up front rather than at the first beep, which is the one beep that
   // would then arrive late.
   for (const cue of CUES) soundFor(cue)
+
+  /**
+   * Re-attempts the routing of every pooled Cue.
+   *
+   * The fallback to the default device, and the muting that keeps another
+   * Output's copy out of the operator's ear, are both `setSinkId`'s rejection
+   * handler — so neither can run unless routing is attempted again. An
+   * Announcement gets that for free, because a fresh element is built and routed
+   * for every Call; a Cue is pooled and was routed once, so the operator's USB
+   * interface unplugged mid-show left `one`, `two`, `three` and `beep` bound to a
+   * dead sink for the rest of the session, silent and unlogged. Devices change
+   * between Cues rather than during one, which is why this is hung off the event
+   * rather than done on the way to a beep: `setSinkId` is async and a beep is
+   * 200ms.
+   */
+  function reroute(): void {
+    for (const sound of pool.values()) sound.setDestinations(destinations)
+  }
+
+  const unwatch = watchDevices(reroute)
 
   return {
     play(cue, options) {
@@ -131,6 +168,7 @@ export function createCuePlayer(
     },
 
     dispose() {
+      unwatch()
       for (const sound of pool.values()) sound.release()
       // Emptied rather than marked dead: a remount asks for the same Cues again,
       // and rebuilding one lazily is better than a silent countdown.
@@ -142,7 +180,12 @@ export function createCuePlayer(
 export function createPhoneCuePlayer(
   baseUrl: string,
   createElement: AudioElementFactory = createAudioElement,
+  watchDevices: DeviceChangeWatcher = watchAudioDevices,
 ): PhoneCuePlayer {
-  const { play, cueDelaysMs, setVolume, dispose } = createCuePlayer(baseUrl, createElement)
+  const { play, cueDelaysMs, setVolume, dispose } = createCuePlayer(
+    baseUrl,
+    createElement,
+    watchDevices,
+  )
   return { play, cueDelaysMs, setVolume, dispose }
 }

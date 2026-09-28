@@ -1,8 +1,10 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { VOICES_REVISION, voiceRepoPath, streamingDigest } from './voices'
+import { VOICES_REVISION, voiceRepoPath, streamingDigest, ensureVoice } from './voices'
 
 describe('voiceRepoPath', () => {
   it('nests a voice the way the catalogue does', () => {
@@ -101,5 +103,74 @@ describe('streamingDigest', () => {
     const digest = streamingDigest(entry)
     digest.update(body.subarray(0, 4))
     expect(digest.finish().bytes).toBe(4)
+  })
+})
+
+describe('ensureVoice', () => {
+  const made: string[] = []
+
+  afterEach(async () => {
+    vi.restoreAllMocks()
+    for (const dir of made.splice(0)) await rm(dir, { recursive: true, force: true })
+  })
+
+  /** A directory holding a complete voice: Piper wants the config beside the model. */
+  async function voicesDir(voices: readonly string[]): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'shotlister-voices-'))
+    made.push(dir)
+    await mkdir(dir, { recursive: true })
+    for (const voice of voices) {
+      await writeFile(join(dir, `${voice}.onnx`), 'model')
+      await writeFile(join(dir, `${voice}.onnx.json`), '{}')
+    }
+    return dir
+  }
+
+  it('uses a bundled voice without reaching the catalogue', async () => {
+    // ADR 0007's documented offline workaround: pin a voice into
+    // scripts/fetch-piper.mjs and rebuild. Looking only in the downloaded
+    // directory made that fail at a venue with no network — the catalogue was
+    // unreachable, so the batch latched the engine as broken while the model sat
+    // in the bundle where `resolveVoice` would have found it.
+    const bundled = await voicesDir(['pl_PL-gosia-medium'])
+    const downloaded = await voicesDir([])
+    const fetched = vi.spyOn(globalThis, 'fetch')
+
+    const files = await ensureVoice('pl_PL-gosia-medium', {
+      voicesDir: downloaded,
+      searchDirs: [bundled, downloaded],
+    })
+
+    expect(files.model).toBe(join(bundled, 'pl_PL-gosia-medium.onnx'))
+    expect(fetched).not.toHaveBeenCalled()
+  })
+
+  it('prefers the bundled copy over a downloaded one, as the synthesiser does', async () => {
+    // A build-time copy was verified against the pinned revision, so it wins over
+    // anything later written into userData — and `resolveVoice` would run it
+    // whatever this returned, which is the disagreement worth preventing.
+    const bundled = await voicesDir(['pl_PL-gosia-medium'])
+    const downloaded = await voicesDir(['pl_PL-gosia-medium'])
+
+    const files = await ensureVoice('pl_PL-gosia-medium', {
+      voicesDir: downloaded,
+      searchDirs: [bundled, downloaded],
+    })
+
+    expect(files.model).toBe(join(bundled, 'pl_PL-gosia-medium.onnx'))
+  })
+
+  it('ignores a half-installed voice, which is a model with no config', async () => {
+    const bundled = await mkdtemp(join(tmpdir(), 'shotlister-voices-'))
+    made.push(bundled)
+    await writeFile(join(bundled, 'pl_PL-gosia-medium.onnx'), 'model')
+    const downloaded = await voicesDir(['pl_PL-gosia-medium'])
+
+    const files = await ensureVoice('pl_PL-gosia-medium', {
+      voicesDir: downloaded,
+      searchDirs: [bundled, downloaded],
+    })
+
+    expect(files.model).toBe(join(downloaded, 'pl_PL-gosia-medium.onnx'))
   })
 })

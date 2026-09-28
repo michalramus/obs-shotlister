@@ -94,6 +94,50 @@ describe('renderAll', () => {
     expect(result.aborted).toBe(true)
   })
 
+  it('hands the synthesiser the batch’s signal, so the clip in flight stops too', async () => {
+    // Stopping between items is not enough: a clip is about five seconds on
+    // Apple Silicon, and a Live session must not wait that long for the child
+    // process the operator's machine is already running (ADR 0005).
+    const clips = createMemoryClipStore()
+    const controller = new AbortController()
+    const fake = createFakeSynthesiser(clips, () => 400)
+    const signals: (AbortSignal | undefined)[] = []
+
+    await renderAll(
+      plan(1),
+      (item, signal) => {
+        signals.push(signal)
+        return fake.synthesise(item, signal)
+      },
+      undefined,
+      { signal: controller.signal },
+    )
+
+    expect(signals).toEqual([controller.signal])
+  })
+
+  it('reports a clip the cancellation killed as cancelled, not as a failure', async () => {
+    const clips = createMemoryClipStore()
+    const controller = new AbortController()
+    const fake = createFakeSynthesiser(clips, (item) => {
+      if (item.text !== 'clip 2') return 400
+      // What a killed Piper reports: the signal is already set by the time the
+      // child dies, because it is what killed it.
+      controller.abort()
+      return new Error('piper was cancelled')
+    })
+
+    const result = await renderAll(plan(5), fake.synthesise, undefined, {
+      signal: controller.signal,
+    })
+
+    // A render failure in the log sends the operator looking for a broken Part,
+    // and nothing here is broken — the app stopped it on purpose.
+    expect(result.failed).toEqual([])
+    expect(result.rendered).toHaveLength(1)
+    expect(result.aborted).toBe(true)
+  })
+
   it('renders nothing, and reports nothing wrong, for an empty plan', async () => {
     const clips = createMemoryClipStore()
     const fake = createFakeSynthesiser(clips)

@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { createRoutedClip, createRoutedSound, type SoundDestination } from './routed-clip'
+import {
+  createRoutedClip,
+  createRoutedSound,
+  type RoutableAudio,
+  type SoundDestination,
+} from './routed-clip'
 import { fakeAudioWorld } from './fake-audio.fixture'
 
 afterEach(() => {
@@ -21,7 +26,40 @@ function copyTo(sinkId: string | null, delayMs = 0): SoundDestination {
   return { sinkId, delayMs, primary: false }
 }
 
+/**
+ * A renderer with no `setSinkId`: every element plays on the system default and
+ * there is no device to name. Chromium has it, so this is the Phone view and
+ * anything running outside it.
+ */
+function unroutableWorld(): ReturnType<typeof fakeAudioWorld> {
+  const world = fakeAudioWorld()
+  return {
+    ...world,
+    create: (url: string): RoutableAudio => {
+      const audio = world.create(url)
+      // Defined away rather than deleted: the fake carries it on its prototype.
+      Object.defineProperty(audio, 'setSinkId', { value: undefined })
+      return audio
+    },
+  }
+}
+
 describe('createRoutedClip', () => {
+  it('plays a copy that cannot be routed rather than swallowing it', () => {
+    const world = unroutableWorld()
+    const clip = createRoutedClip('gitara.opus', 'shotlister-out', world.create, true)
+
+    clip.play()
+
+    // A non-primary copy starts muted because `setSinkId` is async, and it is
+    // unmuted by the routing landing — so a renderer that never attempts one
+    // would leave it muted forever, played and gated and never heard. It is
+    // routinely the only copy an Announcement has: Output 1 carrying Cues alone
+    // makes every voice destination a non-primary one.
+    expect(world.elements[0].audible).toBe(true)
+    expect(world.elements[0].plays).toBe(1)
+  })
+
   it('opens the device when the clip is made, not when it is played', () => {
     const world = fakeAudioWorld()
     createRoutedClip('beep.opus', 'speakers', world.create)

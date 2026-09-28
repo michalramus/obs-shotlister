@@ -87,6 +87,21 @@ export function downloadedVoicesDir(userDataDir: string): string {
   return join(userDataDir, 'piper-voices')
 }
 
+/**
+ * Every directory a voice may already be in, in the order they win.
+ *
+ * Stated once because two different questions read it: {@link resolveVoice},
+ * which decides whether a clip can be synthesised, and `ensureVoice`, which
+ * decides whether anything has to be downloaded first. They used to disagree —
+ * the installer looked only in the downloaded directory — so a voice pinned into
+ * `scripts/fetch-piper.mjs` and shipped in the bundle was re-downloaded at every
+ * venue with a network, and at a venue without one the install failed and
+ * nothing rendered at all, with the model sitting on disk the whole time.
+ */
+export function voiceSearchDirs(downloadedDir: string): string[] {
+  return [bundledVoicesDir(), downloadedDir]
+}
+
 export function piperBinaryPath(): string {
   return join(piperDir(), process.platform === 'win32' ? 'piper.exe' : 'piper')
 }
@@ -176,7 +191,7 @@ export function piperArgs(
 export function resolveVoice(voice: string, userDataDir: string): VoiceFiles | null {
   if (!VOICE_PATTERN.test(voice)) throw new Error(`invalid voice id ${JSON.stringify(voice)}`)
 
-  for (const dir of [bundledVoicesDir(), downloadedVoicesDir(userDataDir)]) {
+  for (const dir of voiceSearchDirs(downloadedVoicesDir(userDataDir))) {
     const model = join(dir, `${voice}.onnx`)
     const config = `${model}.json`
     if (existsSync(model) && existsSync(config)) return { model, config }
@@ -377,5 +392,8 @@ export async function synthesise(
  * Piper exists. A test hands them something else.
  */
 export function createPiperSynthesiser(opts: SynthesiseOptions): Synthesiser {
-  return (item) => synthesise(item, opts)
+  // The batch's own signal wins over any standing one, because the batch is what
+  // gets cancelled: a Live session starting has to reach the child process that
+  // is running right now, not only the ones after it.
+  return (item, signal) => synthesise(item, signal ? { ...opts, signal } : opts)
 }

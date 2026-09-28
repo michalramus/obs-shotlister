@@ -29,13 +29,9 @@ import {
   recordClip,
 } from '../ipc/speech'
 import { getGlobalVoiceSettings } from '../ipc/settings'
-import { renderAll, type Synthesiser } from './batch'
+import { messageOf, renderAll, type Synthesiser } from './batch'
 import type { ClipStore } from './clip-store'
 import { audibleDurationMs } from './wav'
-
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
 
 /**
  * Puts one Voice's model on disk, once per batch (ADR 0007).
@@ -73,6 +69,21 @@ export interface RenderService {
    * that cannot afford a spike.
    */
   renderMissing: (projectId: string) => Promise<ProjectRenderSummary>
+  /**
+   * Stops a batch that is already running. A no-op when none is.
+   *
+   * {@link renderMissing}'s refusal only covers a batch that has not started
+   * yet, and a batch is slow: sixty-one clips is about five minutes on Apple
+   * Silicon, so a session starting a minute in would otherwise leave Piper
+   * spawning for four more on the machine driving OBS. Whatever starts a Live
+   * session calls this, which is the other half of ADR 0005's "no speech
+   * synthesis runs while a Live session is running".
+   *
+   * Every clip the batch finished keeps its audio and its duration: those are
+   * recorded as each one lands rather than at the end, precisely so a render
+   * stopped half-way is worth the minutes it already spent.
+   */
+  abortRender: () => void
   /**
    * Measures cached clips that have no recorded duration, and records it.
    *
@@ -142,6 +153,8 @@ export function createRenderService(deps: RenderServiceDeps): RenderService {
   const { db, clips, synthesise, installVoice, isLive, onStatus } = deps
 
   let rendering = false
+  /** The batch in flight, so a Live session can stop it. Null when none is. */
+  let renderAbort: AbortController | null = null
   let autoRenderTimer: ReturnType<typeof setTimeout> | null = null
   /** Projects queued during the current debounce. Every one of them renders. */
   const autoRenderQueue = new Set<string>()
@@ -184,6 +197,8 @@ export function createRenderService(deps: RenderServiceDeps): RenderService {
     // An explicit ask is the operator saying they have dealt with it.
     engineBroken = false
     rendering = true
+    const batch = new AbortController()
+    renderAbort = batch
     try {
       const cached = await clips.hashes()
       const items = missingClips(db, projectId, cached)
@@ -195,6 +210,10 @@ export function createRenderService(deps: RenderServiceDeps): RenderService {
       // a download of a hundred-odd megabytes, so it happens here, before a
       // single clip is attempted, rather than inside the loop.
       for (const voice of new Set(items.map((item) => item.voice))) {
+        // Between voices as the batch stops between clips: a download is not
+        // synthesis, but a second hundred-megabyte one is the last thing the
+        // machine that just went live needs.
+        if (batch.signal.aborted) break
         await installVoice(voice, (id, bytes) => {
           const mb = Math.round(bytes / 1_000_000)
           console.log(`[speech] installing voice ${id} (${mb} MB)`)
@@ -204,25 +223,40 @@ export function createRenderService(deps: RenderServiceDeps): RenderService {
       }
 
       const byHash = new Map(items.map((item) => [item.hash, item]))
-      const result = await renderAll(items, synthesise, (step) => {
-        progress = { completed: step.completed, total: step.total }
-        // Recorded here rather than after the batch, so a render interrupted
-        // halfway leaves every clip it finished with a usable duration. Written
-        // after the clip is in the store, which `synthesise` guarantees before
-        // it reports the clip.
-        if (step.clip) {
-          const item = byHash.get(step.clip.hash)
-          if (item) recordClip(db, item, step.clip.durationMs)
-        }
-        if (step.error === undefined) {
-          console.log(`[speech] ${step.completed}/${step.total} rendered "${step.item.text}"`)
-        }
-        pushStatus(projectId)
-      })
+      const result = await renderAll(
+        items,
+        synthesise,
+        (step) => {
+          progress = { completed: step.completed, total: step.total }
+          // Recorded here rather than after the batch, so a render interrupted
+          // halfway leaves every clip it finished with a usable duration. Written
+          // after the clip is in the store, which `synthesise` guarantees before
+          // it reports the clip.
+          if (step.clip) {
+            const item = byHash.get(step.clip.hash)
+            if (item) recordClip(db, item, step.clip.durationMs)
+          }
+          if (step.error === undefined) {
+            console.log(`[speech] ${step.completed}/${step.total} rendered "${step.item.text}"`)
+          }
+          pushStatus(projectId)
+        },
+        // Without this the whole cancellation path below it is dead code, which
+        // is what it was: a Live session starting stopped the *next* batch and
+        // left the one already running spawning Piper for minutes.
+        { signal: batch.signal },
+      )
 
       // Written after the clips exist, so a crash mid-render leaves Parts
       // reading as missing rather than as rendered against nothing.
       recordPartRenders(db, projectId)
+
+      if (result.aborted) {
+        // Not an error and not latched: nothing is wrong with the engine, the
+        // operator simply started the show. The clips it did finish are on disk
+        // with their durations, and the rest render on the next explicit ask.
+        console.log(`[speech] rendering stopped after ${result.rendered.length} clip(s)`)
+      }
 
       if (result.engineFailure) {
         // One line, not sixty-one: the batch stopped because the engine cannot
@@ -244,6 +278,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService {
       throw error
     } finally {
       rendering = false
+      renderAbort = null
       progress = null
     }
 
@@ -274,9 +309,55 @@ export function createRenderService(deps: RenderServiceDeps): RenderService {
     return swept.length
   }
 
+  function armAutoRender(): void {
+    if (autoRenderTimer) clearTimeout(autoRenderTimer)
+    autoRenderTimer = setTimeout(runAutoRender, AUTO_RENDER_DEBOUNCE_MS)
+    // Never hold the app open waiting to synthesise.
+    autoRenderTimer.unref?.()
+  }
+
+  function runAutoRender(): void {
+    autoRenderTimer = null
+    const queued = [...autoRenderQueue]
+    autoRenderQueue.clear()
+
+    void (async () => {
+      for (const [index, id] of queued.entries()) {
+        // Re-checked every time rather than trusted from when it was
+        // scheduled: a session may start part-way through, and nothing
+        // synthesises then. A queue dropped this way is not retried — the
+        // operator can render by hand after the show, and starting a batch
+        // the moment a session ends is the last thing that machine needs.
+        if (isLive() || engineBroken) return
+        // A batch already in flight is a different matter, and the only one of
+        // these three that is not a decision: `renderMissing` would return the
+        // running batch's status and this ask would be gone, having rendered
+        // nothing. The running batch worked out what was missing before the
+        // edit that queued this, so the new phrase is in neither — it would
+        // read `stale` until somebody noticed, which on the night is a
+        // countdown with no Part name. Put the rest back and wait out another
+        // debounce; the manual batch finishes long before it runs out.
+        if (rendering) {
+          for (const remaining of queued.slice(index)) autoRenderQueue.add(remaining)
+          armAutoRender()
+          return
+        }
+        try {
+          await renderMissing(id)
+        } catch (err: unknown) {
+          console.error('[speech] auto-render failed:', messageOf(err))
+        }
+      }
+    })()
+  }
+
   return {
     status: statusFor,
     renderMissing,
+
+    abortRender() {
+      renderAbort?.abort()
+    },
 
     async backfillDurations() {
       if (isLive() || rendering) return 0
@@ -349,30 +430,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService {
       if (engineBroken) return
 
       autoRenderQueue.add(projectId)
-      if (autoRenderTimer) clearTimeout(autoRenderTimer)
-      autoRenderTimer = setTimeout(() => {
-        autoRenderTimer = null
-        const queued = [...autoRenderQueue]
-        autoRenderQueue.clear()
-
-        void (async () => {
-          for (const id of queued) {
-            // Re-checked every time rather than trusted from when it was
-            // scheduled: a session may start part-way through, and nothing
-            // synthesises then. A queue dropped this way is not retried — the
-            // operator can render by hand after the show, and starting a batch
-            // the moment a session ends is the last thing that machine needs.
-            if (isLive() || engineBroken) return
-            try {
-              await renderMissing(id)
-            } catch (err: unknown) {
-              console.error('[speech] auto-render failed:', messageOf(err))
-            }
-          }
-        })()
-      }, AUTO_RENDER_DEBOUNCE_MS)
-      // Never hold the app open waiting to synthesise.
-      autoRenderTimer.unref?.()
+      armAutoRender()
     },
   }
 }

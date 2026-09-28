@@ -994,6 +994,7 @@ app
       session: live,
       obs,
       publish,
+      abortRender: () => render?.abortRender(),
       // Read per call rather than captured: the operator can toggle Preview-first
       // between two Rundowns without anything being rewired.
       previewFirst: () => getPreviewFirst(getDatabase()),

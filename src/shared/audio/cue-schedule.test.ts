@@ -88,6 +88,26 @@ describe('cuesDueAt', () => {
     expect(ticks.flatMap((tick) => cuesDueAt({ ...tick, delaysMs }))).toEqual([])
   })
 
+  it('beeps at once when the Shot is shorter than the Output’s delay', () => {
+    // A 1000ms route and an 800ms Shot: the moment the beep is wanted fell before
+    // the Shot began, so there is no moment left to cross. Clamped into the Shot
+    // and played at its first reading instead — late for that listener, which
+    // reads as the slow route it is, where no beep at all reads as a fault.
+    const delaysMs = [1000]
+    const ticks = [
+      { previousRemainingMs: null, remainingMs: 800 },
+      { previousRemainingMs: 800, remainingMs: 600 },
+      { previousRemainingMs: 600, remainingMs: 300 },
+      { previousRemainingMs: 300, remainingMs: 0 },
+    ]
+
+    // Once, and only once: from the second tick on, that moment is above the
+    // previous reading and can never be crossed.
+    expect(ticks.flatMap((tick) => cuesDueAt({ ...tick, delaysMs }))).toEqual([
+      { cue: 'beep', delayMs: 1000 },
+    ])
+  })
+
   it('still beeps for a route that runs ahead, at expiry rather than after it', () => {
     // A negative delay wants the beep played late, and the remaining time stops at
     // zero, so it is played on the beat instead of not at all.
@@ -106,6 +126,11 @@ describe('cuesDueAt', () => {
     // Every moment above the item's own duration has "already passed"; without a
     // previous reading they would all fire at once.
     expect(cuesDueAt({ previousRemainingMs: null, remainingMs: 2000, delaysMs: LOCAL })).toEqual([])
+    // Nor for an Output whose delay the item has room for: its beep still has a
+    // moment to be crossed, and crossing it is how it is recognised.
+    expect(cuesDueAt({ previousRemainingMs: null, remainingMs: 5000, delaysMs: [1000] })).toEqual(
+      [],
+    )
   })
 
   it('fires nothing when nothing is live', () => {

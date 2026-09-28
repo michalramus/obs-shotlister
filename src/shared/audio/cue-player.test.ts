@@ -1,7 +1,33 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { AudioOutput } from '../ipc-contract'
 import { createCuePlayer, createPhoneCuePlayer, CUES } from './cue-player'
 import { fakeAudioWorld, type FakeAudioWorld } from './fake-audio.fixture'
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+/** A device that has gone is reported, and the report is not what is under test. */
+function silenceErrors(): void {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+}
+
+/**
+ * Stands in for the machine's devices changing, so a test can unplug an
+ * interface without one.
+ */
+function fakeDeviceChanges(): { watch: (onChange: () => void) => () => void; fire: () => void } {
+  const listeners: (() => void)[] = []
+  return {
+    watch: (onChange) => {
+      listeners.push(onChange)
+      return () => listeners.splice(listeners.indexOf(onChange), 1)
+    },
+    fire: () => {
+      for (const listener of [...listeners]) listener()
+    },
+  }
+}
 
 const BASE = 'media://audio'
 const BEEP = `${BASE}/beep.opus`
@@ -62,7 +88,7 @@ describe('createCuePlayer', () => {
     expect(world.for(BEEP)[0].plays).toBe(1)
   })
 
-  it("keeps a fresh second copy muted until its routing lands", async () => {
+  it('keeps a fresh second copy muted until its routing lands', async () => {
     const world = fakeAudioWorld()
     const player = createCuePlayer(BASE, world.create)
 
@@ -162,6 +188,65 @@ describe('createCuePlayer', () => {
     // there is nothing to report as due.
     expect(player.cueDelaysMs()).toEqual([])
     expect(world.for(BEEP).every((audio) => audio.plays === 0)).toBe(true)
+  })
+
+  it('re-attempts the routing when the machine’s devices change', async () => {
+    silenceErrors()
+    const world = fakeAudioWorld()
+    const devices = fakeDeviceChanges()
+    const player = createCuePlayer(BASE, world.create, devices.watch)
+    player.setOutputs([output({ sinkId: 'interface' }), output({ sinkId: 'shotlister-out' })])
+    await world.landRoutes()
+
+    // The operator's USB interface is unplugged mid-show. The fallback to the
+    // default device and the muting that keeps the band's copy out of their ear
+    // are both `setSinkId`'s rejection handler, so neither can run until routing
+    // is attempted again — which a pooled Cue, routed once at construction, never
+    // did. An Announcement got it for free from its fresh element per Call.
+    const before = world.elements.map((audio) => audio.routes.length)
+    devices.fire()
+    await world.landRoutes()
+
+    const [own, copy] = world.for(BEEP)
+    expect(own.routes).toEqual(['', 'interface', 'interface'])
+    // Every Cue, not only the next one due: `setSinkId` is async and a beep is
+    // 200ms, so this cannot happen on the way to one.
+    expect(world.elements).toHaveLength(CUES.length * 2)
+    expect(world.elements.map((audio) => audio.routes.length)).toEqual(
+      before.map((count) => count + 1),
+    )
+    expect(copy.audible).toBe(true)
+  })
+
+  it('mutes the band’s copy when its device does not come back', async () => {
+    silenceErrors()
+    const world = fakeAudioWorld()
+    const devices = fakeDeviceChanges()
+    const player = createCuePlayer(BASE, world.create, devices.watch)
+    player.setOutputs([output({ sinkId: 'speakers' }), output({ sinkId: 'shotlister-out' })])
+    await world.landRoutes()
+
+    devices.fire()
+    const [, copy] = world.for(BEEP)
+    await copy.failRoutes()
+
+    // Its device is gone, so it goes silent rather than landing in the operator's
+    // ear — and it stays pooled, ready to sound again at the next device change.
+    expect(copy.audible).toBe(false)
+  })
+
+  it('stops listening for device changes once it is disposed', () => {
+    const world = fakeAudioWorld()
+    const devices = fakeDeviceChanges()
+    const player = createCuePlayer(BASE, world.create, devices.watch)
+
+    player.dispose()
+    devices.fire()
+
+    // Every element was released; re-routing them would open devices for a
+    // player nothing can play any more.
+    expect(world.elements).toHaveLength(CUES.length)
+    expect(world.elements.every((audio) => audio.routes.length === 1)).toBe(true)
   })
 
   it('rebuilds a Cue after dispose rather than falling silent', async () => {
