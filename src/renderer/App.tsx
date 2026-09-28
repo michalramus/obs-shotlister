@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useAppStore } from './store'
 import { CameraConfigPanel } from './components/CameraConfigPanel'
 import { PartsConfigPanel } from './components/PartsConfigPanel'
@@ -368,11 +368,34 @@ export default function App(): React.JSX.Element {
   async function handleImportDatabase(): Promise<void> {
     const confirmed = window.confirm('This will replace ALL data. Are you sure?')
     if (!confirmed) return
-    const ok = await window.api.exportImport.importDatabase()
-    if (ok) {
-      await loadProjects()
+    try {
+      const ok = await window.api.exportImport.importDatabase()
+      if (ok) {
+        await loadProjects()
+      }
+    } catch (err) {
+      // A refused import and a successful one used to look identical: the
+      // failure went to console.error and the app reloaded either way. The
+      // main process refuses anything that is not one of our exports before
+      // deleting a single row, so this message is the operator's only sign.
+      window.alert(
+        `Import failed — nothing was changed.\n\n${err instanceof Error ? err.message : String(err)}`,
+      )
     }
   }
+
+  // Memoized because TimelineEditor keys a full pass over the Rundown on this
+  // object; rebuilt each render, that pass ran on every render of App.
+  const announcementSettings = useMemo(
+    () =>
+      effectiveVoiceSettings === null
+        ? undefined
+        : // Badged against the worst case: a Call that does not fit the most
+          // delayed Output is one somebody may not hear, and Edit mode is the
+          // last place the operator can lengthen it.
+          { ...effectiveVoiceSettings, worstOutputDelayMs: worstCaseDelayMs(outputs, 'voice') },
+    [effectiveVoiceSettings, outputs],
+  )
 
   // Shared across every mode — see the single TimelineEditor slot below.
   const timelineProps = {
@@ -392,13 +415,7 @@ export default function App(): React.JSX.Element {
     // The media track only applies to edit mode; live mode hides it.
     rundownMedia: uiMode === 'edit' ? rundownMedia : null,
     phraseDurationMsByPartId: phraseDurations,
-    announcementSettings:
-      effectiveVoiceSettings === null
-        ? undefined
-        : // Badged against the worst case: a Call that does not fit the most
-          // delayed Output is one somebody may not hear, and Edit mode is the last
-          // place the operator can lengthen it.
-          { ...effectiveVoiceSettings, worstOutputDelayMs: worstCaseDelayMs(outputs, 'voice') },
+    announcementSettings,
     onShotClick: (id: string) => setSelectedShotId(id),
     onSplitShot: (shotId: string, atMs: number, newCameraId: string) => {
       if (atMs <= 0) {

@@ -401,13 +401,19 @@ export function ShotlistWidget({
     playCue,
   ])
 
-  const timing = computeTiming(shots, cameras, liveIndex, startedAt, now, cameraFilter)
+  // Kind-aware, like `hasFilter` below. A phone keeps its Camera choice in
+  // localStorage even though the picker is hidden for a Voice-over Rundown, so
+  // the raw filter still arrives — and no Call can pass it, a Call having no
+  // Camera. Passing it through left `nextVisibleIndex` null, which cost the
+  // next Call its transition bar and its "next" styling.
+  const effectiveCameraFilter = isVoice ? undefined : cameraFilter
+  const timing = computeTiming(shots, cameras, liveIndex, startedAt, now, effectiveCameraFilter)
 
   const cameraById = new Map(cameras.map((c) => [c.id, c]))
   const targetById = targetsById(targetsOf(kind, cameras, parts ?? []))
   // indexOf per row made rendering O(shots²) on every tick.
   const shotIndexById = new Map(shots.map((shot, i) => [shot.id, i]))
-  const hasFilter = !isVoice && cameraFilter !== undefined && cameraFilter.length > 0
+  const hasFilter = effectiveCameraFilter !== undefined && effectiveCameraFilter.length > 0
   const visibleShots = shots.filter((s) => {
     if (s.hidden) return false
     if (hasFilter) {

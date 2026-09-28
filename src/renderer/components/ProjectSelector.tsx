@@ -383,7 +383,6 @@ export function ProjectSelector({
   const projects = useAppStore((s) => s.projects)
   const activeProjectId = useAppStore((s) => s.activeProjectId)
   const setActiveProject = useAppStore((s) => s.setActiveProject)
-  const loadCameras = useAppStore((s) => s.loadCameras)
 
   const [showNewModal, setShowNewModal] = useState(false)
   const [showRenameModal, setShowRenameModal] = useState(false)
@@ -393,11 +392,11 @@ export function ProjectSelector({
   const activeProject = projects.find((p) => p.id === activeProjectId) ?? null
 
   const handleSelectChange = (e: React.ChangeEvent<HTMLSelectElement>): void => {
-    const id = e.target.value || null
-    setActiveProject(id)
-    if (id) {
-      void loadCameras(id)
-    }
+    // Cameras are not loaded here: App already reloads them when
+    // activeProjectId changes, with its own rejection handler. Doing it again
+    // issued a second cameras:list per switch and, being bare `void`, had
+    // nowhere for a failure to go.
+    setActiveProject(e.target.value || null)
   }
 
   return (
