@@ -1,18 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { applyMigrations } from '../db/index'
+import { openMemoryDb } from '../db/memory-db.fixture'
 import { createLiveSession, type LiveSession } from './session'
 import { createLiveControl, type LiveControl } from './control'
 import type { OBSSwitcher } from '../obs/switcher'
 import type { ChangePublisher } from '../publisher'
 import type { LiveState } from '../../shared/ipc-contract'
-
-function openMemoryDb(): Database.Database {
-  const db = new Database(':memory:')
-  db.pragma('foreign_keys = ON')
-  applyMigrations(db)
-  return db
-}
 
 interface SeedOptions {
   shotCount?: number

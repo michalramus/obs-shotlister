@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import Database from 'better-sqlite3'
-import { applyMigrations } from '../db/index'
+import { openMemoryDb } from '../db/memory-db.fixture'
 import {
   DEFAULT_VOICE,
   saveGlobalVoiceSettings,
@@ -45,13 +45,6 @@ import type { RenderPlanItem } from '../../shared/render-plan'
 
 /** Taken from the setting rather than spelled out, as `ipc/speech.test` does. */
 const VOICE = DEFAULT_VOICE
-
-function openMemoryDb(): Database.Database {
-  const db = new Database(':memory:')
-  db.pragma('foreign_keys = ON')
-  applyMigrations(db)
-  return db
-}
 
 function insertProject(db: Database.Database, id: string): void {
   db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(id, id, 1000)

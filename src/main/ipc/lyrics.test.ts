@@ -1,20 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
-import { applyMigrations } from '../db/index'
+import { openMemoryDb } from '../db/memory-db.fixture'
 import { listLyrics, upsertLyric, deleteLyric } from './lyrics'
 import { deleteRundown } from './rundowns'
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function openMemoryDb(): Database.Database {
-  const db = new Database(':memory:')
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
-  applyMigrations(db)
-  return db
-}
 
 function insertProject(db: Database.Database, id: string, name: string): void {
   db.prepare('INSERT INTO projects (id, name, created_at) VALUES (?, ?, ?)').run(

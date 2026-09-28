@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
-import { applyMigrations } from '../db/index'
+import { openMemoryDb } from '../db/memory-db.fixture'
 import { createLiveSession, type LiveSession } from './session'
 import type { AnnouncementPlan } from '../../shared/ipc-contract'
 import { clipHash } from '../../shared/render-plan'
@@ -9,13 +9,6 @@ import { numberTexts } from '../../shared/number-text'
 import { toMediaUrl } from '../../shared/media-url'
 import { PHRASE_GAP_MS } from '../../shared/announcement'
 import { DEFAULT_VOICE, saveAudioDevices } from '../ipc/settings'
-
-function openMemoryDb(): Database.Database {
-  const db = new Database(':memory:')
-  db.pragma('foreign_keys = ON')
-  applyMigrations(db)
-  return db
-}
 
 interface SeedOptions {
   shotCount?: number

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
+import { openMemoryDb } from '../db/memory-db.fixture'
 import { applyMigrations } from '../db/index'
 import { listShots, createShot, updateShot, deleteShot, reorderShots, splitShot } from './shots'
 import type { Shot } from '../../shared/types'
@@ -7,14 +8,6 @@ import type { Shot } from '../../shared/types'
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function openMemoryDb(): Database.Database {
-  const db = new Database(':memory:')
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
-  applyMigrations(db)
-  return db
-}
 
 function seed(db: Database.Database): { projectId: string; rundownId: string; cameraId: string } {
   const projectId = 'p1'

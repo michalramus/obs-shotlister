@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
-import { applyMigrations } from '../db/index'
+import { openMemoryDb } from '../db/memory-db.fixture'
 import { createOBSSwitcher } from './switcher'
 import { createLiveSession, type LiveSession } from '../live/session'
 import type { OBSClient } from './client'
@@ -41,13 +41,6 @@ function fakeClient(status: OBSClient['status'] = 'connected'): RecordingClient 
     onStatusChange: () => {},
     onOBSEvent: () => {},
   }
-}
-
-function openMemoryDb(): Database.Database {
-  const db = new Database(':memory:')
-  db.pragma('foreign_keys = ON')
-  applyMigrations(db)
-  return db
 }
 
 /** A Rundown of the given Kind, with every item assigned so it can go live. */

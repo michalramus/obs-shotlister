@@ -1,22 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
+import { openMemoryDb } from './memory-db.fixture'
 import { applyMigrations } from './index'
 
 // All migration tests use an in-memory SQLite database so they run without
 // an Electron context (no app.getPath) and leave no files on disk.
 
-function openMemoryDb(): Database.Database {
-  const db = new Database(':memory:')
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
-  return db
-}
-
 describe('applyMigrations', () => {
   let db: Database.Database
 
   beforeEach(() => {
-    db = openMemoryDb()
+    db = openMemoryDb({ migrate: false })
   })
 
   afterEach(() => {
@@ -294,7 +288,7 @@ describe('indexes', () => {
 
 /** The schema exactly as it stood before Kind, Parts and Lyrics were added. */
 function openLegacyDb(): Database.Database {
-  const db = openMemoryDb()
+  const db = openMemoryDb({ migrate: false })
   db.exec(`
     CREATE TABLE projects (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL
@@ -431,7 +425,7 @@ describe('renaming tts_clips to speech_clips', () => {
   let db: Database.Database
 
   beforeEach(() => {
-    db = openMemoryDb()
+    db = openMemoryDb({ migrate: false })
   })
 
   afterEach(() => {

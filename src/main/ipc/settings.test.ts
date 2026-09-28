@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
-import { applyMigrations } from '../db/index'
+import { openMemoryDb } from '../db/memory-db.fixture'
 import { defaultAudioOutputs } from '../../shared/audio/outputs'
 import {
   getGlobalVoiceSettings,
@@ -22,13 +22,6 @@ function readKey(db: Database.Database, key: string): string | undefined {
     | { value: string }
     | undefined
   return row?.value
-}
-
-function openMemoryDb(): Database.Database {
-  const db = new Database(':memory:')
-  db.pragma('foreign_keys = ON')
-  applyMigrations(db)
-  return db
 }
 
 describe('voice settings', () => {
@@ -369,7 +362,9 @@ describe('migrating the fixed destinations to two Outputs', () => {
     migrateAudioDevices(db)
 
     const rows = db
-      .prepare("SELECT key FROM settings WHERE key LIKE 'audio_%' OR key = 'voice_transmission_delay'")
+      .prepare(
+        "SELECT key FROM settings WHERE key LIKE 'audio_%' OR key = 'voice_transmission_delay'",
+      )
       .all() as { key: string }[]
     expect(rows.map((r) => r.key).sort()).toEqual([
       'audio_output1_carries',

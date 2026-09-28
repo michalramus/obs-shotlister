@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import Database from 'better-sqlite3'
-import { applyMigrations } from './index'
+import { openMemoryDb } from './memory-db.fixture'
 import { insertItem, listItems, targetColumnOf, updateItem } from './rundown-items'
 import { createShot, splitShot } from '../ipc/shots'
 import {
@@ -12,14 +12,6 @@ import {
   importRundown,
 } from '../ipc/exportimport'
 import { targetIdOf } from '../../shared/rundown-item'
-
-function openMemoryDb(): Database.Database {
-  const db = new Database(':memory:')
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
-  applyMigrations(db)
-  return db
-}
 
 /** A Project with one Camera and one Part, so an item can fill both targets. */
 function seed(db: Database.Database, projectId = 'p1', rundownId = 'rd1'): void {
