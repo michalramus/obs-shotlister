@@ -77,9 +77,7 @@ export function attachSocketServer(
         })
         socket.emit('state:playback', { running: liveState.running })
 
-        const shotsOverride =
-          session.getQueue().length > 0 ? session.getShotsWithHiddenFlags() : undefined
-        socket.emit('state:rundown', buildRundownState(db, session, shotsOverride))
+        socket.emit('state:rundown', buildRundownState(db, session, session.getShotsForPhones()))
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('[socket.io] error sending initial state:', err)

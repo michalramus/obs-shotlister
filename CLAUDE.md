@@ -21,7 +21,7 @@ Electron desktop app that also hosts a web server for phone browsers on LAN.
 
 **Electron main process** (`src/main/`)
 - App lifecycle, window management
-- Hosts embedded Express + WebSocket server (`src/main/server/`)
+- Hosts embedded Express + socket.io server (`src/main/server/`)
 - obs-websocket client (OBS integration) (`src/main/obs/`)
 - SQLite via `better-sqlite3` (persistence) (`src/main/db/`)
 
@@ -33,7 +33,7 @@ Electron desktop app that also hosts a web server for phone browsers on LAN.
 **Embedded Express server** (runs in main process)
 - Serves phone web UI bundle
 - Listens on configurable port (default `3000`)
-- WebSocket server (`ws`) attached to the same HTTP server: pushes full state to phone browsers on connect and on every state change
+- socket.io server attached to the same HTTP server: pushes full state to phone browsers on connect and on every state change
 - Server is single source of truth for state
 
 **Phone browser UI** (`src/web/`)
@@ -51,7 +51,7 @@ Electron desktop app that also hosts a web server for phone browsers on LAN.
 OBS ←→ obs-websocket ←→ Electron main ←→ SQLite
                                ↕ ipc
                          Electron renderer
-                               ↕ WebSocket
+                               ↕ socket.io
                          Phone browsers (LAN)
 ```
 

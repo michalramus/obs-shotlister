@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useAppStore } from '../store'
+import { BUILTIN_TRANSITIONS } from '../../shared/ipc-contract'
 import type {
   OBSConnectionStatus,
   OBSValidateResult,
@@ -67,8 +68,6 @@ const s = {
 // ---------------------------------------------------------------------------
 // Transition Mappings section
 // ---------------------------------------------------------------------------
-
-const BUILTIN_TRANSITIONS = ['cut', 'fade', 'stinger'] as const
 
 interface TransitionMappingsSectionProps {
   obsConnected: boolean

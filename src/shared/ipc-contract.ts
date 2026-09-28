@@ -352,6 +352,16 @@ export interface TransitionMapping {
   obsTransitionName: string
 }
 
+/**
+ * The Transition names the schema seeds, which cannot be deleted.
+ *
+ * Here rather than in either process: the main process refuses to delete one
+ * and the OBS panel marks it as built-in, and the two lists disagreed — the
+ * panel offered no delete for 'stinger' while main refused one that only
+ * exists if the operator created it.
+ */
+export const BUILTIN_TRANSITIONS = ['cut', 'fade'] as const
+
 export interface ParsedRow {
   label: string
   durationTimecode: string

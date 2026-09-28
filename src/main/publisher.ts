@@ -35,9 +35,7 @@ export function createChangePublisher(
     rundownChanged() {
       const io = getIo()
       if (!io) return
-      // Phones see the Rundown as the Live queue sees it, hidden flags applied.
-      const shots = session.getQueue().length > 0 ? session.getShotsWithHiddenFlags() : undefined
-      broadcastRundownState(io, db, session, shots)
+      broadcastRundownState(io, db, session, session.getShotsForPhones())
     },
 
     liveStateChanged(state) {

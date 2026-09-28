@@ -65,6 +65,15 @@ export interface LiveSession {
   getVisibleQueue: () => LiveQueueEntry[]
   /** The Rundown's Shots carrying the Live queue's hidden flags. */
   getShotsWithHiddenFlags: () => Shot[]
+  /**
+   * What phones should render, or undefined to let them derive it themselves.
+   *
+   * Undefined while nothing is queued: with no session there are no hidden
+   * flags to impose, and the receiver's own list is already right. Both the
+   * broadcast and the on-connect burst asked this question, and both spelled
+   * the answer out in their own words.
+   */
+  getShotsForPhones: () => Shot[] | undefined
   /** The Shot currently on air, or null when idle. */
   getLiveShot: () => Shot | null
   /** The first Shot after the live one that has not been consumed or skipped. */
@@ -285,6 +294,10 @@ export function createLiveSession(
 
     getVisibleQueue() {
       return queue.filter((s) => !s.hidden)
+    },
+
+    getShotsForPhones() {
+      return queue.length > 0 ? session.getShotsWithHiddenFlags() : undefined
     },
 
     getShotsWithHiddenFlags() {
