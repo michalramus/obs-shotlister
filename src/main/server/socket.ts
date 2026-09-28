@@ -56,8 +56,12 @@ export function attachSocketServer(
   db?: Database,
   session?: LiveSession,
 ): Server {
+  // Phones load the UI from this same server, so they send no Origin that
+  // needs allowing. `origin: '*'` additionally let any page a phone happened to
+  // have open read the whole payload — Rundown, Shots, Cameras, Parts and the
+  // live position — off the operator's laptop.
   const io = new Server(httpServer, {
-    cors: { origin: '*' },
+    cors: { origin: false },
   })
 
   io.on('connection', (socket) => {

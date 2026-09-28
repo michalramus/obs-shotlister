@@ -1,4 +1,5 @@
 import express from 'express'
+import type { Request, Response, NextFunction } from 'express'
 import { createServer } from 'http'
 import { join } from 'path'
 import { existsSync } from 'fs'
@@ -22,6 +23,37 @@ function resolvePort(raw: string | undefined): number {
 
 const PORT = resolvePort(process.env['PORT'])
 
+/**
+ * Security headers for the LAN-facing phone UI.
+ *
+ * The operator window's CSP is deliberate enough to have its own test
+ * (src/renderer/csp.test.ts); this surface had none, though it is the one
+ * actually exposed to the network. Everything the phone UI needs is
+ * same-origin: its own bundle, its own socket, and audio served from /audio.
+ */
+export function securityHeaders(_req: Request, res: Response, next: NextFunction): void {
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      // The bundle inlines its styles; no external stylesheet is ever loaded.
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "media-src 'self'",
+      // socket.io negotiates over HTTP, then upgrades to a websocket.
+      "connect-src 'self' ws: wss:",
+      "font-src 'self'",
+      "object-src 'none'",
+      "base-uri 'none'",
+      "frame-ancestors 'none'",
+      "form-action 'none'",
+    ].join('; '),
+  )
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Referrer-Policy', 'no-referrer')
+  next()
+}
+
 export function startServer(
   db?: Database,
   session?: LiveSession,
@@ -30,6 +62,7 @@ export function startServer(
 ): SocketServer {
   const app = express()
 
+  app.use(securityHeaders)
   app.use(express.json())
   app.use(routes)
 

@@ -138,9 +138,11 @@ export function createOBSSwitcher(
     },
 
     async startFromPreview() {
+      // No fallback: takeLiveShot() returns on the same status check, so the
+      // "cutting instead" this used to log never happened.
       if (client.status !== 'connected') {
-        console.warn('[OBS] startFromPreview: not connected, cutting instead')
-        return switcher.takeLiveShot()
+        console.warn('[OBS] startFromPreview: not connected — program is unchanged')
+        return
       }
       const state = session.getState()
       if (!state.running) return
@@ -149,9 +151,13 @@ export function createOBSSwitcher(
       const liveShot = session.getLiveShot()
       if (!liveShot) return
 
+      // Likewise: takeLiveShot() re-evaluates sceneFor(liveShot) to the same
+      // false and applies no transition, so nothing was ever cut here either.
       if (!sceneFor(liveShot)) {
-        console.warn('[OBS] startFromPreview: live shot camera has no scene, cutting instead')
-        return switcher.takeLiveShot()
+        console.warn(
+          `[OBS] startFromPreview: no scene mapped for camera ${liveShot.cameraId ?? 'none'} — program is unchanged`,
+        )
+        return
       }
 
       // Cue the opening Shot, let OBS settle, then transition it to program.

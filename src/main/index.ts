@@ -258,9 +258,19 @@ function registerIpcHandlers(): void {
     listCameras(db, payload.projectId),
   )
 
-  registerIpcHandler('cameras:upsert', (payload: CameraUpsertInput) => upsertCamera(db, payload))
+  // Cameras are in the payload phones render, so a rename or a colour change
+  // that is not published leaves every phone showing the old name and the old
+  // filter pills until some unrelated change happens to broadcast.
+  registerIpcHandler('cameras:upsert', (payload: CameraUpsertInput) => {
+    const camera = upsertCamera(db, payload)
+    publish.rundownChanged()
+    return camera
+  })
 
-  registerIpcHandler('cameras:delete', (payload: { id: string }) => deleteCamera(db, payload.id))
+  registerIpcHandler('cameras:delete', (payload: { id: string }) => {
+    deleteCamera(db, payload.id)
+    publish.rundownChanged()
+  })
 
   // Rundowns
   registerIpcHandler('rundowns:list', (payload: { projectId: string }) =>
@@ -542,8 +552,15 @@ function registerIpcHandlers(): void {
     return result
   })
 
-  registerIpcHandler('shots:import-csv:confirm', (payload: ConfirmImportInput) =>
-    confirmResolveImport(db, payload),
+  registerIpcHandler(
+    'shots:import-csv:confirm',
+    // A replace-mode import rebuilds the Rundown's Shots wholesale. Without the
+    // broadcast, phones keep rendering the deleted ones indefinitely.
+    refuseWhileLive('import a shot list', (payload: ConfirmImportInput) => {
+      const result = confirmResolveImport(db, payload)
+      publish.rundownChanged()
+      return result
+    }),
   )
 
   // OBS
