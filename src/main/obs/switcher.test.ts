@@ -23,9 +23,6 @@ function fakeClient(status: OBSClient['status'] = 'connected'): RecordingClient 
     status,
     connect: async () => {},
     disconnect: () => {},
-    setCurrentProgramScene: async (scene) => {
-      calls.push(`program:${scene}`)
-    },
     setCurrentPreviewScene: async (scene) => {
       calls.push(`preview:${scene}`)
     },

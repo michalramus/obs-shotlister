@@ -9,7 +9,6 @@ export interface OBSClient {
   status: OBSConnectionStatus
   connect: (url: string, password?: string) => Promise<void>
   disconnect: () => void
-  setCurrentProgramScene: (sceneName: string) => Promise<void>
   setCurrentPreviewScene: (sceneName: string) => Promise<void>
   getSceneList: () => Promise<string[]>
   getTransitionList: () => Promise<string[]>
@@ -61,9 +60,6 @@ export function createOBSClient(): OBSClient {
       // Fire-and-forget by design: ConnectionClosed drives setStatus, and
       // callers do not wait for the socket to finish closing.
       obs.disconnect().catch((err: unknown) => console.error('[obs] disconnect error:', err))
-    },
-    async setCurrentProgramScene(sceneName: string): Promise<void> {
-      await obs.call('SetCurrentProgramScene', { sceneName })
     },
     async setCurrentPreviewScene(sceneName: string): Promise<void> {
       await obs.call('SetCurrentPreviewScene', { sceneName })

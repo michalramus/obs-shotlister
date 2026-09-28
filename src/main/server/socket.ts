@@ -23,7 +23,7 @@ export interface RundownStatePayload {
   parts: Part[]
 }
 
-function buildRundownState(
+export function buildRundownState(
   db: Database,
   session: LiveSession,
   shotsOverride?: Shot[],
