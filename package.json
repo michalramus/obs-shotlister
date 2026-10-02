@@ -11,6 +11,7 @@
     "build": "yarn rebuild:electron && electron-vite build && vite build --config vite.config.web.ts",
     "build:web": "vite build --config vite.config.web.ts",
     "fetch:piper": "node scripts/fetch-piper.mjs",
+    "icons": "node scripts/make-icons.mjs",
     "dist": "yarn fetch:piper && yarn build && electron-builder",
     "dist:mac": "yarn fetch:piper darwin-x64 darwin-arm64 && yarn build && electron-builder --mac",
     "dist:win": "yarn fetch:piper win32-x64 && yarn build && electron-builder --win",
