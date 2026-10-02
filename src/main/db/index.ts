@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import { join } from 'path'
 import { app } from 'electron'
+import { DB_NAME } from '../user-data-migration'
 
 let db: Database.Database | null = null
 
@@ -289,7 +290,7 @@ export function applyMigrations(database: Database.Database): void {
 export function getDatabase(): Database.Database {
   if (db) return db
 
-  const dbPath = join(app.getPath('userData'), 'obs-queuer.db')
+  const dbPath = join(app.getPath('userData'), DB_NAME)
   db = new Database(dbPath)
 
   // WAL mode for better concurrency

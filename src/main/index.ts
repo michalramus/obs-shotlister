@@ -27,6 +27,7 @@ import type {
 } from '../shared/ipc-contract'
 import type { RundownKind } from '../shared/types'
 import { getDatabase } from './db/index'
+import { migrateLegacyUserData } from './user-data-migration'
 import {
   listProjects,
   createProject,
@@ -145,6 +146,12 @@ let render: RenderService
 let obsAutoReconnect = false
 let obsReconnectTimer: ReturnType<typeof setTimeout> | null = null
 let currentUiMode: 'edit' | 'live' = 'edit'
+
+// Before anything reads or writes userData, and so before the database is
+// opened: the app was called obs-queuer until 0.2.0, and Electron names this
+// directory after the package. An install that skipped this would start with no
+// projects and no voices while the old ones sat in the directory next door.
+migrateLegacyUserData(app.getPath('userData'))
 
 // Peaks live beside the rest of this operator's state, not in the project
 // database: they are derived from a file on this machine. See waveform-cache.ts.
