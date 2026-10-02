@@ -19,6 +19,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { TimelineEditor } from './TimelineEditor'
 import { useAppStore } from '../store'
 import type { Shot, Camera, Lyric, Marker, Part, Rundown } from '../../shared/types'
+import type { LyricUpsertInput } from '../../shared/ipc-contract'
 
 const FRAME_MS = 1000 / 60
 /** Must match PLAYHEAD_COMMIT_INTERVAL_MS in TimelineEditor.tsx. */
@@ -470,35 +471,51 @@ describe('the timeline is read-only in Live mode', () => {
   ]
 
   describe.each(lockedViews)('$name', ({ view }) => {
-    it('refuses a Shot boundary drag', () => {
+    it('offers no Shot boundary handle, and no extend handle on the last Shot', () => {
+      // The item Track took no `readOnly` at all, so both 8px `ew-resize` strips
+      // stayed on it and lit up under the pointer in Live mode — promising a drag
+      // the grab adapter then refused.
       const onResizeShots = vi.fn()
-      const { rerender } = renderTimeline(() => {}, { ...view, onResizeShots })
+      const onExtendLastShot = vi.fn()
+      const { rerender } = renderTimeline(() => {}, { ...view, onResizeShots, onExtendLastShot })
 
-      drag(boundaryHandle(), 100, 140)
-      expect(onResizeShots).not.toHaveBeenCalled()
+      expect(itemLane().querySelectorAll('div[style*="ew-resize"]')).toHaveLength(0)
 
-      // The same drag in Edit mode, so a refusal is what is being asserted rather
-      // than a handle this test cannot find: 40px at 80px/s is 500ms of Shot.
-      act(() => rerender({ onResizeShots }))
+      // The same handles in Edit mode, so their absence is what is being asserted
+      // rather than a selector that has stopped matching: two boundaries between
+      // three Shots, plus the trailing one. 40px at 80px/s is 500ms of Shot.
+      act(() => rerender({ onResizeShots, onExtendLastShot }))
+      const handles = (): NodeListOf<Element> =>
+        itemLane().querySelectorAll('div[style*="ew-resize"]')
+      expect(handles()).toHaveLength(3)
+
       drag(boundaryHandle(), 100, 140)
       expect(onResizeShots).toHaveBeenCalledWith('s1', 30_500, 's2', 29_500)
+      drag(handles()[2], 100, 200)
+      expect(onExtendLastShot).toHaveBeenCalled()
     })
 
-    it('refuses the extend drag on the last Shot', () => {
-      const onExtendLastShot = vi.fn()
-      const { rerender } = renderTimeline(() => {}, { ...view, onExtendLastShot })
+    it('refuses the Reference media offset drag', () => {
+      // The lane keeps its `mousedown`: the refusal that matters is the grab
+      // adapter's, which is what every Grab passes through and what a Grab added
+      // later is refused by without anyone remembering to ask.
+      const onUpdateMediaOffset = vi.fn()
+      const media = { filePath: '/tmp/reference.mp3', offsetMs: 0 }
+      const { rerender } = renderTimeline(() => {}, {
+        ...view,
+        rundownMedia: media,
+        onUpdateMediaOffset,
+      })
 
-      // The trailing handle is the last `ew-resize` strip on the item Track.
-      const trailing = (): Element => {
-        const handles = itemLane().querySelectorAll('div[style*="ew-resize"]')
-        return handles[handles.length - 1]
-      }
-      drag(trailing(), 100, 200)
-      expect(onExtendLastShot).not.toHaveBeenCalled()
+      drag(mediaLane(), 100, 300)
+      expect(onUpdateMediaOffset).not.toHaveBeenCalled()
+      // Nor does the lane invite the drag: a grab cursor is its only sign.
+      expect(mediaLane().style.cursor).toBe('default')
 
-      act(() => rerender({ onExtendLastShot }))
-      drag(trailing(), 100, 200)
-      expect(onExtendLastShot).toHaveBeenCalled()
+      act(() => rerender({ rundownMedia: media, onUpdateMediaOffset }))
+      expect(mediaLane().style.cursor).toBe('grab')
+      drag(mediaLane(), 100, 300)
+      expect(onUpdateMediaOffset).toHaveBeenCalledWith(2_500)
     })
 
     it('adds no Marker when the Marker Track is double-clicked', () => {
@@ -870,5 +887,264 @@ describe('the assignment strip grows from one line to two', () => {
 
     expect(content().style.flexWrap).toBe('nowrap')
     expect(strip().style.overflowX).toBe('auto')
+  })
+})
+
+/**
+ * The Playhead's own keys, and the two writes that hang off where it is.
+ *
+ * The keyboard effect is bound once and never re-bound, which is deliberate —
+ * re-binding it on every Shot edit is how the lyric keys used to lose a press —
+ * but it means every handler it reaches for has to be republished through
+ * `keyActionsRef` rather than captured. `movePlayhead` was not, and it closes over
+ * `totalMs`: the editor mounts as soon as a Project is selected, with the store's
+ * `shots` still empty, so the arrow keys bound a clamp of zero and did nothing for
+ * the rest of the session while the ▶ button beside them worked.
+ */
+describe('stepping the Playhead', () => {
+  const storeSnapshot = useAppStore.getState()
+
+  beforeEach(() => {
+    window.localStorage.clear()
+    vi.stubGlobal('requestAnimationFrame', (): number => 1)
+    vi.stubGlobal('cancelAnimationFrame', (): void => {})
+  })
+
+  afterEach(() => {
+    cleanup()
+    useAppStore.setState(storeSnapshot, true)
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  function press(init: KeyboardEventInit): void {
+    act(() => {
+      fireEvent.keyDown(window, init)
+    })
+  }
+
+  /** The item Track: the first `#0d0d0d` lane, ahead of the Reference media one. */
+  function itemLane(): HTMLElement {
+    const lane = document.querySelector('div[style*="rgb(13, 13, 13)"]')
+    if (!(lane instanceof HTMLElement)) throw new Error('no item lane')
+    return lane
+  }
+
+  it('moves on the arrow keys once the Rundown has arrived', () => {
+    // Mounted on an empty Rundown, exactly as the editor mounts on a Project
+    // before its Shots are loaded.
+    const { rerender } = renderTimeline(() => {}, { shots: [] })
+    act(() => rerender({}))
+
+    press({ code: 'ArrowRight' })
+    expect(readout()).toBe('0:01.0')
+
+    press({ code: 'ArrowRight', shiftKey: true })
+    expect(readout()).toBe('0:11.0')
+
+    press({ code: 'ArrowLeft' })
+    expect(readout()).toBe('0:10.0')
+  })
+
+  it('clamps a step to the end of the Rundown it has now, not the one it mounted with', () => {
+    const { rerender } = renderTimeline(() => {}, { shots: [] })
+    act(() => rerender({}))
+
+    // Three 30s Shots: ten shifted steps is 100s, well past the 90s end.
+    for (let i = 0; i < 10; i++) press({ code: 'ArrowRight', shiftKey: true })
+
+    expect(readout()).toBe('1:30.0')
+  })
+
+  it('rounds the split position the Camera buttons write', () => {
+    // The Playhead is pixel-derived — one pixel at 80px/s is 12.5ms — and `atMs`
+    // lands in an INTEGER column as a duration. Unrounded, a Playhead a fraction
+    // of a millisecond past a boundary cleared `splitShot`'s `atMs <= 0` guard and
+    // stored a Shot 0.4ms long: 0.03px wide, and unselectable ever after.
+    const onSplitShot = vi.fn()
+    renderTimeline(() => {}, { onSplitShot })
+
+    act(() => {
+      fireEvent.click(itemLane(), { clientX: 1 })
+    })
+    act(() => {
+      screen.getByTitle('Split at playhead and assign CAM1 Wide').click()
+    })
+
+    expect(onSplitShot).toHaveBeenCalledWith('s1', 13, 'c1')
+  })
+})
+
+/**
+ * A Lyric draft is a write waiting for Enter, and Enter can arrive long after the
+ * view has locked: In and Out are set in Edit mode, the operator switches to Live,
+ * and only then types the line. The main process refuses that write now, so the
+ * draft has to be abandoned as the view locks — the same rule a Marker label
+ * mid-edit follows.
+ */
+describe('a Lyric draft when the view locks', () => {
+  const storeSnapshot = useAppStore.getState()
+
+  beforeEach(() => {
+    window.localStorage.clear()
+    vi.stubGlobal('requestAnimationFrame', (): number => 1)
+    vi.stubGlobal('cancelAnimationFrame', (): void => {})
+  })
+
+  afterEach(() => {
+    cleanup()
+    useAppStore.setState(storeSnapshot, true)
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  /** In, a second along the timeline, Out: the range is fixed and the draft opens. */
+  function openDraft(): void {
+    act(() => {
+      fireEvent.keyDown(window, { key: '[' })
+      fireEvent.keyDown(window, { code: 'ArrowRight' })
+      fireEvent.keyDown(window, { key: ']' })
+    })
+  }
+
+  function draftInput(): HTMLElement | null {
+    return screen.queryByPlaceholderText('line of lyrics')
+  }
+
+  it('is abandoned rather than left open to be typed into', () => {
+    // Answers as the store does — the authoring loop feeds the stored line back
+    // in as a `saved` event, and a mock returning nothing would end the loop in
+    // the wrong state.
+    const upsertLyric = vi.fn(
+      async (input: LyricUpsertInput): Promise<Lyric> => ({
+        id: input.id ?? 'ly-new',
+        rundownId: input.rundownId,
+        startMs: input.startMs,
+        endMs: input.endMs,
+        text: input.text,
+      }),
+    )
+    useAppStore.setState({ lyrics: [], activeRundownId: 'r1', upsertLyric })
+    const { rerender } = renderTimeline(() => {}, {})
+
+    openDraft()
+    expect(draftInput()).not.toBeNull()
+
+    // The operator switches to Live mode before typing the line.
+    act(() => rerender({ readOnly: true }))
+    expect(draftInput()).toBeNull()
+
+    // Abandoned, not parked: coming back does not restore a half-authored line.
+    act(() => rerender({}))
+    expect(draftInput()).toBeNull()
+    expect(upsertLyric).not.toHaveBeenCalled()
+
+    // The same three keys in Edit mode do open a draft that stores its line, so
+    // what is asserted above is a refusal and not a sequence that stopped working.
+    openDraft()
+    const input = draftInput()
+    if (input === null) throw new Error('no draft input in Edit mode')
+    act(() => {
+      fireEvent.change(input, { target: { value: 'first line' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+    })
+    expect(upsertLyric).toHaveBeenCalledWith(
+      expect.objectContaining({ rundownId: 'r1', text: 'first line' }),
+    )
+  })
+})
+
+/**
+ * Dragging the overview's viewport rect.
+ *
+ * The rect sits inside the strip's "centre the viewport on the pointer" handler,
+ * and its `mousedown` stopped only `mousedown`: the `click` the browser
+ * synthesises on release still reached the strip, so every drag ended by jumping
+ * back to wherever the pointer let go — about half a viewport. Its window
+ * listeners were also removed by their own `mouseup` and nothing else, so a
+ * release the window never heard left the view following the bare pointer.
+ */
+describe('the overview viewport rect', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+    vi.stubGlobal('requestAnimationFrame', (): number => 1)
+    vi.stubGlobal('cancelAnimationFrame', (): void => {})
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  function rect(): HTMLElement {
+    const overview = document.querySelector('div[style*="rgb(17, 17, 17)"]')
+    const el = overview?.querySelector('div[style*="2px solid white"]')
+    if (!(el instanceof HTMLElement)) throw new Error('no viewport rect')
+    return el
+  }
+
+  function scroller(): HTMLElement {
+    const el = document.querySelector('.timeline-scroll')
+    if (!(el instanceof HTMLElement)) throw new Error('no scroller')
+    return el
+  }
+
+  it('stays where the drag left it when the button comes up', () => {
+    renderTimeline(() => {})
+
+    act(() => {
+      fireEvent.mouseDown(rect(), { clientX: 100 })
+      fireEvent.mouseMove(window, { clientX: 300, buttons: 1 })
+    })
+    const dragged = scroller().scrollLeft
+    expect(dragged).toBeGreaterThan(0)
+
+    act(() => {
+      fireEvent.mouseUp(window, { clientX: 300 })
+      // What the browser synthesises on release, and what used to re-centre the
+      // view on the release point.
+      fireEvent.click(rect(), { clientX: 300 })
+    })
+
+    expect(scroller().scrollLeft).toBe(dragged)
+  })
+
+  it('lets go when the window does', () => {
+    // A mouseup that never arrives — the pointer released over another window, a
+    // dialog taking focus — used to leave the view following the bare pointer.
+    renderTimeline(() => {})
+
+    act(() => {
+      fireEvent.mouseDown(rect(), { clientX: 100 })
+      fireEvent.mouseMove(window, { clientX: 300, buttons: 1 })
+    })
+    const dragged = scroller().scrollLeft
+
+    act(() => {
+      fireEvent.blur(window)
+      fireEvent.mouseMove(window, { clientX: 600, buttons: 1 })
+    })
+
+    expect(scroller().scrollLeft).toBe(dragged)
+  })
+
+  it('lets go on a move with no button held', () => {
+    // The other half of the same loss, and the only evidence there is without
+    // pointer capture: the pointer is back and nothing is pressed.
+    renderTimeline(() => {})
+
+    act(() => {
+      fireEvent.mouseDown(rect(), { clientX: 100 })
+      fireEvent.mouseMove(window, { clientX: 300, buttons: 1 })
+    })
+    const dragged = scroller().scrollLeft
+
+    act(() => {
+      fireEvent.mouseMove(window, { clientX: 600, buttons: 0 })
+      fireEvent.mouseMove(window, { clientX: 900, buttons: 1 })
+    })
+
+    expect(scroller().scrollLeft).toBe(dragged)
   })
 })

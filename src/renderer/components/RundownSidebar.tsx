@@ -199,6 +199,21 @@ const KIND_BADGE_STYLE: React.CSSProperties = {
   flexShrink: 0,
 }
 
+/**
+ * How a control a Live session has taken away looks.
+ *
+ * Dimmed and disabled rather than removed: every one of these is refused by the
+ * main process while a session runs — deleting a Rundown blanked every phone,
+ * switching the active one pointed them at another Rundown's items while OBS
+ * stopped switching, converting or renaming republished the change to the band —
+ * and a control that vanishes at Start leaves the operator hunting for it, while
+ * one that throws leaves them reading a fault message they could not have avoided.
+ */
+const LIVE_DISABLED_STYLE: React.CSSProperties = { opacity: 0.4, cursor: 'not-allowed' }
+
+/** What a control disabled by a running session says when the operator asks. */
+const LIVE_DISABLED_TITLE = 'Not while a live session is running — stop the show first'
+
 const DROP_LINE_STYLE: React.CSSProperties = {
   height: '2px',
   background: '#5a9fd4',
@@ -276,8 +291,16 @@ function RundownItemContent({
   return (
     <li
       ref={nodeRef}
-      style={{ ...s.item(isActive, indented), ...style }}
-      onClick={() => onSelect(rundown.id)}
+      // Opening another Rundown mid-show is refused by the main process: the
+      // in-memory queue stayed on the old one, so the phones redrew the new
+      // Rundown's items with the old position marked live and the next Next found
+      // no matching Shot. The row offers neither the click nor a pointer for it.
+      style={{
+        ...s.item(isActive, indented),
+        ...(running ? { cursor: 'default' } : {}),
+        ...style,
+      }}
+      onClick={running ? undefined : () => onSelect(rundown.id)}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       data-testid="rundown-item"
@@ -299,7 +322,13 @@ function RundownItemContent({
         </span>
       )}
 
-      {editingId === rundown.id ? (
+      {/*
+        A rename open when the session starts is closed rather than carried into
+        Live mode: the show can be started from the OSC pedal with the input still
+        focused, and the main process refuses a rename while a Live session runs.
+        The state is cleared a level up; this is the half the operator sees.
+      */}
+      {editingId === rundown.id && !running ? (
         <input
           ref={editInputRef as React.RefObject<HTMLInputElement>}
           style={s.inlineInput}
@@ -334,9 +363,10 @@ function RundownItemContent({
             ⋯
           </button>
           <button
-            style={s.deleteBtn}
+            style={running ? { ...s.deleteBtn, ...LIVE_DISABLED_STYLE } : s.deleteBtn}
+            disabled={running}
             onClick={(e) => onDelete(rundown.id, e)}
-            title="Delete rundown"
+            title={running ? LIVE_DISABLED_TITLE : 'Delete rundown'}
             aria-label={`Delete ${rundown.name}`}
           >
             ×
@@ -369,6 +399,10 @@ function SortableRundownItem({
 
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({
     id: rundown.id,
+    // Reordering and moving between folders are both Rundown edits, which the
+    // main process refuses while a session runs. Without this the drag still
+    // picked up and then silently did nothing.
+    disabled: running,
   })
 
   const style: React.CSSProperties = {
@@ -589,10 +623,12 @@ export function RundownSidebar(): React.JSX.Element {
   const [editingName, setEditingName] = useState('')
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   // Why the last action did not happen. The main process refuses some of these
-  // deliberately and explains why — deleting the Rundown a Live session is running,
-  // converting one that would strand assignments — and routing that explanation to
+  // deliberately and explains why — converting a Rundown that would strand
+  // assignments, a Folder rename that collides — and routing that explanation to
   // console.error meant the operator confirmed a delete and simply watched nothing
-  // happen.
+  // happen. What a running Live session refuses never reaches here: those controls
+  // are disabled instead, because a fault message the operator could not have
+  // avoided is not an explanation.
   const [actionError, setActionError] = useState<string | null>(null)
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null)
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set())
@@ -633,6 +669,17 @@ export function RundownSidebar(): React.JSX.Element {
     if (editingId) editInputRef.current?.focus()
   }, [editingId])
 
+  // The show can start from anywhere — the OSC pedal, the phone, another window —
+  // so an open rename is closed by the session starting rather than by the
+  // operator remembering to press Escape first. The sidebar is never unmounted by
+  // the switch, and React fires no blur when the input goes, so without this the
+  // name sat there mid-edit and the next Enter went to a refused write.
+  useEffect(() => {
+    if (!running) return
+    setEditingId(null)
+    setEditingName('')
+  }, [running])
+
   // Close context menu on outside click
   useEffect(() => {
     if (!contextMenu) return
@@ -647,6 +694,10 @@ export function RundownSidebar(): React.JSX.Element {
   const activeRundown = activeId ? rundowns.find((r) => r.id === activeId) : null
 
   async function handleSelect(id: string): Promise<void> {
+    // Refused by the main process while a session runs, so it is refused here
+    // too rather than surfacing as a fault the operator could not have avoided.
+    // The row does not offer the click either — this is what holds behind it.
+    if (running) return
     setActiveRundown(id)
     await loadShots(id).catch((err: unknown) => {
       console.error('[RundownSidebar] loadShots error:', err)
@@ -704,6 +755,14 @@ export function RundownSidebar(): React.JSX.Element {
 
   async function commitEdit(): Promise<void> {
     if (!editingId) return
+    // An edit still open when the session starts is abandoned, not saved — the
+    // same rule the Marker label and the Shot label follow. `startEdit` refuses
+    // to *open* one while running, which said nothing about one already open.
+    if (running) {
+      setEditingId(null)
+      setEditingName('')
+      return
+    }
     const trimmed = editingName.trim()
     if (trimmed) {
       try {
@@ -727,6 +786,9 @@ export function RundownSidebar(): React.JSX.Element {
 
   async function handleDelete(id: string, e: React.MouseEvent): Promise<void> {
     e.stopPropagation()
+    // Disabled in the row while a session runs; refused here as well, so the
+    // confirm dialog never opens on a delete the main process will not perform.
+    if (running) return
     const rundown = rundowns.find((r) => r.id === id)
     if (!rundown) return
     const confirmed = window.confirm(`Delete rundown "${rundown.name}"?`)
@@ -745,6 +807,9 @@ export function RundownSidebar(): React.JSX.Element {
    * Camera assignments exactly — so it asks for no confirmation.
    */
   async function handleSetKind(id: string, kind: RundownKind): Promise<void> {
+    // Disabled in the menu while a session runs, and refused here behind it: a
+    // conversion republishes the Rundown to the phones and the Cue Tray.
+    if (running) return
     try {
       setActionError(null)
       await setRundownKind(id, kind)
@@ -1044,8 +1109,15 @@ export function RundownSidebar(): React.JSX.Element {
           style={{ ...s.contextMenu, left: contextMenu.x, top: contextMenu.y }}
           onMouseDown={(e) => e.stopPropagation()}
         >
+          {/*
+            Both write to the Rundown, and both are refused by the main process
+            while a session runs, so both say so instead of doing nothing —
+            Rename has silently returned from `startEdit` since Live mode existed.
+          */}
           <button
-            style={s.contextMenuItem}
+            style={running ? { ...s.contextMenuItem, ...LIVE_DISABLED_STYLE } : s.contextMenuItem}
+            disabled={running}
+            title={running ? LIVE_DISABLED_TITLE : undefined}
             onClick={() => {
               setContextMenu(null)
               startEdit(contextMenu.rundownId, contextRundown.name)
@@ -1054,7 +1126,9 @@ export function RundownSidebar(): React.JSX.Element {
             Rename
           </button>
           <button
-            style={s.contextMenuItem}
+            style={running ? { ...s.contextMenuItem, ...LIVE_DISABLED_STYLE } : s.contextMenuItem}
+            disabled={running}
+            title={running ? LIVE_DISABLED_TITLE : undefined}
             onClick={() =>
               void handleSetKind(
                 contextMenu.rundownId,

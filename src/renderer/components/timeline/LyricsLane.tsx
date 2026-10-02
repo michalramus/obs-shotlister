@@ -50,9 +50,9 @@ interface LyricsLaneProps {
   width: number
   height: number
   /**
-   * Whether the timeline is a read-out — Live mode, on air or not. Edge handles
-   * and the delete button are hidden then: nothing here is editable. Re-wording
-   * is refused by the caller for the same reason.
+   * Whether the timeline is a read-out — Live mode, on air or not. Edge handles,
+   * the delete button and the draft input are hidden then: nothing here is
+   * editable. Re-wording is refused by the caller for the same reason.
    */
   readOnly: boolean
   handlers: LyricsLaneHandlers
@@ -223,8 +223,10 @@ function LyricsLaneImpl({
         />
       )}
 
-      {/* Typing the line, once its in and out points are fixed */}
-      {draft !== null && (
+      {/* Typing the line, once its in and out points are fixed. Gone in Live
+          mode: typing into it can only end in a write, and the caller drops the
+          draft as the view locks rather than leaving one hanging here. */}
+      {draft !== null && !readOnly && (
         <input
           autoFocus
           value={draft.text}

@@ -12,7 +12,7 @@
  * second. The parent repaints it whenever the geometry behind it changes.
  */
 
-import React from 'react'
+import React, { useEffect, useRef } from 'react'
 import { pxAtMs } from '../../timeline/coordinates'
 import type { Shot } from '../../../shared/types'
 
@@ -62,6 +62,18 @@ function OverviewBarImpl({
   onScrollTo,
   readScrollLeft,
 }: OverviewBarProps): React.JSX.Element {
+  /**
+   * Ends the viewport-rect drag, whoever ends it.
+   *
+   * Its window listeners used to be removed by their own `mouseup` and by nothing
+   * else, so a release the window never heard — the pointer let go over another
+   * window, focus lost to a dialog, this component unmounted mid-drag — left the
+   * view following the bare pointer with no button held. Held in a ref because the
+   * teardown is built inside the handler and has to be reachable from outside it.
+   */
+  const endDragRef = useRef<(() => void) | null>(null)
+  useEffect(() => () => endDragRef.current?.(), [])
+
   return (
     <div
       ref={overviewRef}
@@ -140,20 +152,41 @@ function OverviewBarImpl({
                 cursor: 'ew-resize',
                 zIndex: 10,
               }}
+              // The rect sits inside the strip's "centre the viewport on the
+              // pointer" handler, and stopping `mousedown` does not stop the
+              // `click` the browser synthesises on release. Dragging the rect
+              // therefore ended with the view jumping back to wherever the pointer
+              // happened to let go — about half a viewport, every time.
+              onClick={(e) => e.stopPropagation()}
               onMouseDown={(e) => {
                 e.stopPropagation()
+                // Whatever a previous drag left behind, in case one survived.
+                endDragRef.current?.()
                 const startX = e.clientX
                 const origScroll = readScrollLeft()
                 const ow = overviewRef.current?.clientWidth ?? 300
                 function onMM(ev: MouseEvent): void {
+                  // No pointer capture to lean on, so the button state is the only
+                  // evidence a release happened out of earshot: a move with nothing
+                  // held is the pointer coming back from wherever it was let go.
+                  if (ev.buttons === 0) {
+                    end()
+                    return
+                  }
                   onScrollTo(origScroll + ((ev.clientX - startX) * totalPx) / ow)
                 }
-                function onMU(): void {
+                function end(): void {
+                  endDragRef.current = null
                   window.removeEventListener('mousemove', onMM)
-                  window.removeEventListener('mouseup', onMU)
+                  window.removeEventListener('mouseup', end)
+                  window.removeEventListener('blur', end)
                 }
+                endDragRef.current = end
                 window.addEventListener('mousemove', onMM)
-                window.addEventListener('mouseup', onMU)
+                window.addEventListener('mouseup', end)
+                // Focus leaving the window — a native drag, an OS dialog — takes
+                // the mouseup with it.
+                window.addEventListener('blur', end)
               }}
             />
           )

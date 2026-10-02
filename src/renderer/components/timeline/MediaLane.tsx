@@ -79,7 +79,11 @@ function MediaLaneImpl({
         position: 'relative',
         borderTop: '1px solid #2a2a2a',
         overflow: 'hidden',
-        cursor: media ? 'grab' : 'default',
+        // A grab cursor over the whole lane is the only sign the offset can be
+        // dragged at all, so in Live mode it has to go with the drag: the adapter
+        // refuses the grab, and a lane that still invites it just means the
+        // operator presses and nothing moves.
+        cursor: media && !readOnly ? 'grab' : 'default',
         userSelect: 'none',
       }}
       onMouseEnter={() => setHovered(true)}

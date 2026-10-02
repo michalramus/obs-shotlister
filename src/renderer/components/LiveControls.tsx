@@ -64,11 +64,13 @@ export function LiveControls(): React.JSX.Element {
 
   const [inTransition, setInTransition] = useState(false)
   /**
-   * The last transport failure, shown in whichever bar is on screen.
+   * The last transport failure, shown in whichever bar is on screen until
+   * something works.
    *
-   * Every action routes through `handleError`, so a Next that fails mid-show
-   * has to be visible then — not held until the session ends and shown beside
-   * the Start button, reading as a start failure that never happened.
+   * Every action routes through `runAction`, so a Next that fails mid-show has to
+   * be visible then — not held until the session ends and shown beside the Start
+   * button, reading as a start failure that never happened — and a Next that then
+   * succeeds has to take it away again.
    */
   const [actionError, setActionError] = useState<string | null>(null)
   const transitionRafRef = useRef<number | null>(null)
@@ -99,13 +101,29 @@ export function LiveControls(): React.JSX.Element {
 
   // 60fps RAF loop to track transition state. Only worth running while a shot is
   // actually live — otherwise it re-rendered this component 60x/s forever.
+  //
+  // And only for as long as the answer can still change. `isInTransition` is true
+  // for `transitionMs` after `startedAt` and false ever after, so a Shot taken on
+  // a cut has no window at all and a Shot with one closes it in well under a
+  // second — while the loop ran for the whole of every Shot, all show.
   useEffect(() => {
     if (!running || liveIndex === null || startedAt === null) {
       setInTransition(false)
       return
     }
+    if ((shots[liveIndex]?.transitionMs ?? 0) <= 0) {
+      setInTransition(false)
+      return
+    }
     function tick(): void {
-      setInTransition(isInTransition(running, liveIndex, startedAt, shots, Date.now()))
+      const still = isInTransition(running, liveIndex, startedAt, shots, Date.now())
+      setInTransition(still)
+      // The window only ever closes, so the frame that finds it shut is the last
+      // one worth asking for.
+      if (!still) {
+        transitionRafRef.current = null
+        return
+      }
       transitionRafRef.current = requestAnimationFrame(tick)
     }
     transitionRafRef.current = requestAnimationFrame(tick)
@@ -132,6 +150,20 @@ export function LiveControls(): React.JSX.Element {
   }
 
   /**
+   * Runs one transport action and owns the fault message around it.
+   *
+   * Cleared by the next thing that works, not by the next press: the message is
+   * meant to be read mid-show, so it has to survive the operator's eyes reaching
+   * it, and a transient OBS failure used to leave red text beside a transport
+   * that had been switching cameras happily for the rest of the night.
+   */
+  function runAction(label: string, run: () => Promise<void>): void {
+    run()
+      .then(() => setActionError(null))
+      .catch((err: unknown) => handleError(label, err))
+  }
+
+  /**
    * Starts the Rundown, warning first about anything unrendered.
    *
    * The warning never blocks (ADR 0002): the operator knows things about their
@@ -143,7 +175,6 @@ export function LiveControls(): React.JSX.Element {
    */
   function startRundown(): void {
     if (!activeRundownId) return
-    setActionError(null)
 
     if (rundownKind === 'voice' && unrenderedCount > 0) {
       const parts = unrenderedCount === 1 ? '1 Part has' : `${unrenderedCount} Parts have`
@@ -153,16 +184,25 @@ export function LiveControls(): React.JSX.Element {
       if (!proceed) return
     }
 
-    liveStart(activeRundownId).catch((err) => handleError('start', err))
+    runAction('start', () => liveStart(activeRundownId))
   }
 
   function canStart(): boolean {
     return !running && shots.length > 0 && activeRundownId !== null
   }
 
+  /**
+   * Whether the Live queue still holds something to go to.
+   *
+   * By the queue, not by the array's length: a skipped item stays in `shots` and
+   * is marked `hidden` by the main process, and Next steps over it. Counting it
+   * left ⏭ lit and enabled on the last Shot of a Rundown whose tail had been
+   * skipped, with every press a no-op, and kept the "last shot" hint off the one
+   * Shot it exists for.
+   */
   function hasNextShot(): boolean {
     if (!running || liveIndex === null) return false
-    return liveIndex + 1 < shots.length
+    return shots.some((shot, i) => i > liveIndex && !shot.hidden)
   }
 
   function canSkipNext(): boolean {
@@ -252,9 +292,7 @@ export function LiveControls(): React.JSX.Element {
       </button>
       <button
         style={s.btn('danger')}
-        onClick={() => {
-          liveStop().catch((err) => handleError('stop', err))
-        }}
+        onClick={() => runAction('stop', liveStop)}
         aria-label="Stop rundown"
       >
         ■ Stop
@@ -264,9 +302,7 @@ export function LiveControls(): React.JSX.Element {
 
       <button
         style={s.btn('secondary')}
-        onClick={() => {
-          liveRestart().catch((err) => handleError('restart', err))
-        }}
+        onClick={() => runAction('restart', liveRestart)}
         aria-label="Restart rundown"
       >
         ↺ Restart
@@ -275,9 +311,7 @@ export function LiveControls(): React.JSX.Element {
       <button
         style={s.btn('secondary')}
         disabled={!canSkipNext() || inTransition}
-        onClick={() => {
-          liveSkipNext().catch((err) => handleError('skip-next', err))
-        }}
+        onClick={() => runAction('skip-next', liveSkipNext)}
         aria-label="Skip next shot"
       >
         ⏭ Skip next
@@ -286,9 +320,7 @@ export function LiveControls(): React.JSX.Element {
       <button
         style={s.btn('primary')}
         disabled={inTransition}
-        onClick={() => {
-          liveNext().catch((err) => handleError('next', err))
-        }}
+        onClick={() => runAction('next', liveNext)}
         aria-label="Next shot"
       >
         → Next

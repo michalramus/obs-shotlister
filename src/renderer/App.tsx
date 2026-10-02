@@ -133,6 +133,13 @@ export default function App(): React.JSX.Element {
 
   const [selectedShotId, setSelectedShotId] = useState<string | null>(null)
   const [labelEditingId, setLabelEditingId] = useState<string | null>(null)
+  // A label left mid-edit when the show starts is abandoned, not parked. The
+  // shotlist already refuses to render or commit it while running, but the id
+  // lived on here — so after Stop the editor reopened, focused, on a Shot the
+  // operator had moved on from.
+  useEffect(() => {
+    if (running) setLabelEditingId(null)
+  }, [running])
   const videoRef = useRef<HTMLVideoElement>(null)
   const [muteCount, setMuteCount] = useState(
     () => localStorage.getItem('obs-queuer-mute-count') === 'true',

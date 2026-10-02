@@ -509,7 +509,15 @@ function SortableShotRow({
           </>
         )}
 
-        {isLabelEditing && (
+        {/*
+          Inside the lock, like the drag handle and the two icon buttons above:
+          the label editor is an edit of the Shot, and the id that opens it lives
+          a component up, where a mode switch does not clear it. React fires no
+          blur on unmount either, so a row that kept rendering the input while
+          live handed the operator a focused field whose Enter reaches the
+          database — which the main process now refuses outright.
+        */}
+        {isLabelEditing && !isLocked && (
           <div style={s.labelEditRow}>
             <input
               ref={labelInputRef}
@@ -661,6 +669,13 @@ export function ShotListPanel({
   }
 
   async function handleLabelCommit(shotId: string, label: string): Promise<void> {
+    // An edit still open when the show starts is abandoned, not saved — the same
+    // rule the Marker label follows on the timeline. The row stops rendering the
+    // input at the same moment; this is what holds if a commit gets here anyway.
+    if (running) {
+      onLabelEditDone()
+      return
+    }
     const shot = shots.find((s) => s.id === shotId)
     if (!shot) {
       onLabelEditDone()
@@ -763,7 +778,7 @@ export function ShotListPanel({
         <SortableContext items={shots.map((s) => s.id)} strategy={verticalListSortingStrategy}>
           <ul style={s.list}>
             {shots.length === 0 && <li style={s.emptyState}>No shots. Add one above.</li>}
-            {shots.map((shot) =>
+            {shots.map((shot, index) =>
               editingShot?.id === shot.id && !running ? (
                 <li key={shot.id} style={{ listStyle: 'none' }}>
                   <ShotForm
@@ -787,12 +802,19 @@ export function ShotListPanel({
                   shot={shot}
                   target={targetOf(shot, rundownKind, targetById)}
                   isLocked={running}
-                  isLive={liveIndex === shots.indexOf(shot)}
+                  // `map`'s own index, not `shots.indexOf(shot)`: this list
+                  // re-renders on every live state push, and two linear searches
+                  // per row made that ~45,000 identity comparisons on a 150-Shot
+                  // Rundown for a number already in hand.
+                  isLive={liveIndex === index}
                   isSelected={shot.id === selectedShotId}
                   isDraggingThis={shot.id === activeId}
                   isDropTarget={shot.id === overId && shot.id !== activeId}
-                  isLabelEditing={shot.id === labelEditingId}
-                  liveRefCallback={liveIndex === shots.indexOf(shot) ? setLiveRef : undefined}
+                  // Not while live: the editing id lives in `App`, which a mode
+                  // switch does not clear, so an edit opened in Edit mode would
+                  // otherwise reopen focused the moment the operator flips back.
+                  isLabelEditing={shot.id === labelEditingId && !running}
+                  liveRefCallback={liveIndex === index ? setLiveRef : undefined}
                   selectedRefCallback={
                     shot.id === selectedShotId
                       ? (el) => {

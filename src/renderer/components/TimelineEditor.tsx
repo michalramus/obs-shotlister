@@ -370,6 +370,8 @@ export function TimelineEditor({
     openAddPart: (): void => {},
     /** True when the key named a Part and was spent assigning it. */
     assignPartByKey: (_key: string): boolean => false,
+    /** Steps the Playhead: the ←/→ keys, and the transport's two step buttons. */
+    movePlayhead: (_deltaMs: number): void => {},
   })
 
   // Keep zoomRef in sync
@@ -436,11 +438,18 @@ export function TimelineEditor({
   // the Play button — are gone in Live mode. Leaving it running there would move
   // the Playhead with nothing to stop it, so entering the read-only view pauses
   // it, exactly as going on air already did.
+  //
+  // A Lyric half-typed when the view locks goes the same way as a Marker label:
+  // abandoned, not saved. The line is only stored on Enter, so an operator who set
+  // In and Out in Edit mode, switched to Live and then typed used to write a Lyrics
+  // row from a locked view — and the main process refuses that write now, so
+  // holding the draft open would offer a keystroke that can only fail.
   useEffect(() => {
     if (readOnly) {
       setIsPlaying(false)
       if (mediaVideoRef.current) mediaVideoRef.current.pause()
       if (audioPlayRef.current) audioPlayRef.current.pause()
+      if (authoringRef.current.draft !== null) dispatchLyric({ type: 'cancel' })
     }
   }, [readOnly]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -926,13 +935,19 @@ export function TimelineEditor({
           return !prev
         })
       }
+      // Through the ref, like every other handler this effect reaches for.
+      // `movePlayhead` clamps against `totalMs`, and the editor mounts as soon as
+      // a Project is selected — with `shots` still empty, so the closure captured
+      // here on mount clamped every step to a Rundown 0ms long. The arrow keys did
+      // nothing for the rest of the session while the ▶ button beside them, which
+      // is re-created every render, worked.
       if (e.code === 'ArrowLeft') {
         e.preventDefault()
-        movePlayhead(e.shiftKey ? -10000 : -1000)
+        keyActionsRef.current.movePlayhead(e.shiftKey ? -10000 : -1000)
       }
       if (e.code === 'ArrowRight') {
         e.preventDefault()
-        movePlayhead(e.shiftKey ? 10000 : 1000)
+        keyActionsRef.current.movePlayhead(e.shiftKey ? 10000 : 1000)
       }
       if (e.code === 'KeyM' && !readOnly) {
         onAddMarkerRef.current?.(playhead.positionMs())
@@ -1023,7 +1038,11 @@ export function TimelineEditor({
       const shotStart = accumulated
       const shotEnd = accumulated + shot.durationMs
       if (positionMs >= shotStart && positionMs < shotEnd) {
-        const atMs = positionMs - shotStart
+        // Rounded for the same reason as `assignPartAtPlayhead`: the Playhead is
+        // derived from pixels, `atMs` becomes a duration in an INTEGER column, and
+        // a fraction of a millisecond past a boundary clears `splitShot`'s
+        // `atMs <= 0` guard — storing a 0.4ms Shot too narrow to see or click.
+        const atMs = Math.round(positionMs - shotStart)
         onSplitShot(shot.id, atMs, camera.id)
         return
       }
@@ -1233,7 +1252,11 @@ export function TimelineEditor({
     },
     onEdgeMouseDown: (e, id, edge) => beginLyricResize(e, id, edge),
     onDraftChange: (text) => dispatchLyric({ type: 'type', text }),
-    onDraftCommit: () => dispatchLyric({ type: 'commit' }),
+    // Storing the line is the one write the draft can make, so a commit reaching
+    // here in Live mode abandons it instead — the same shape as a Marker label
+    // still open when the view locks. The effect above drops the draft the moment
+    // the view goes read-only; this is what holds if anything ever gets past it.
+    onDraftCommit: () => dispatchLyric({ type: readOnly ? 'cancel' : 'commit' }),
     onDraftCancel: () => dispatchLyric({ type: 'cancel' }),
   }
   const lyricsLaneHandlers = useMemo<LyricsLaneHandlers>(
@@ -1287,6 +1310,7 @@ export function TimelineEditor({
   keyActionsRef.current = {
     setLyricIn,
     setLyricOut,
+    movePlayhead,
     openAddPart: () => {
       if (isVoice) setAddPartOpen(true)
     },
@@ -1819,6 +1843,7 @@ export function TimelineEditor({
             width={totalPx}
             height={TRACK_HEIGHT}
             unassignedColor={UNASSIGNED_COLOR}
+            readOnly={readOnly}
             handlers={itemLaneHandlers}
           />
 

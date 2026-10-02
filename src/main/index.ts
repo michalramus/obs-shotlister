@@ -320,9 +320,9 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler(
     'rundowns:setFolder',
-    ({ id, folder }: { id: string; folder: string | null }) => {
+    refuseWhileLive('move a Rundown', ({ id, folder }: { id: string; folder: string | null }) => {
       return setRundownFolder(db, id, folder)
-    },
+    }),
   )
 
   registerIpcHandler(
@@ -342,18 +342,24 @@ function registerIpcHandlers(): void {
 
   registerIpcHandler(
     'rundowns:renameFolder',
-    ({ projectId, from, to }: { projectId: string; from: string; to: string }) => {
-      renameFolder(db, projectId, from, to)
-      publish.rundownChanged()
-    },
+    refuseWhileLive(
+      'rename a folder',
+      ({ projectId, from, to }: { projectId: string; from: string; to: string }) => {
+        renameFolder(db, projectId, from, to)
+        publish.rundownChanged()
+      },
+    ),
   )
 
   registerIpcHandler(
     'rundowns:deleteFolder',
-    ({ projectId, folder }: { projectId: string; folder: string }) => {
-      deleteFolder(db, projectId, folder)
-      publish.rundownChanged()
-    },
+    refuseWhileLive(
+      'delete a folder',
+      ({ projectId, folder }: { projectId: string; folder: string }) => {
+        deleteFolder(db, projectId, folder)
+        publish.rundownChanged()
+      },
+    ),
   )
 
   // Parts

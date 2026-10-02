@@ -42,6 +42,14 @@ interface ItemLaneProps {
   width: number
   height: number
   unassignedColor: string
+  /**
+   * Whether the timeline is a read-out — Live mode, on air or not. Both grab
+   * strips go then: resizing a boundary and extending the last item are the two
+   * writes this lane offers, and the grab adapter refuses them anyway, so an
+   * 8px `ew-resize` band lighting up under the pointer only promises a drag that
+   * cannot happen. Same contract as the Lyrics, Marker and Reference media Tracks.
+   */
+  readOnly: boolean
   handlers: ItemLaneHandlers
 }
 
@@ -58,6 +66,7 @@ function ItemLaneImpl({
   width,
   height,
   unassignedColor,
+  readOnly,
   handlers,
 }: ItemLaneProps): React.JSX.Element {
   return (
@@ -253,7 +262,7 @@ function ItemLaneImpl({
               )}
 
               {/* Boundary drag handle between this shot and the next */}
-              {nextShot !== undefined && (
+              {nextShot !== undefined && !readOnly && (
                 <div
                   style={{
                     position: 'absolute',
@@ -283,6 +292,7 @@ function ItemLaneImpl({
 
       {/* Extend last shot drag handle */}
       {shots.length > 0 &&
+        !readOnly &&
         (() => {
           const lastShot = shots[shots.length - 1]
           const lastOffset = shotOffsets[shots.length - 1]
