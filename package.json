@@ -1,8 +1,8 @@
 {
-  "name": "obs-queuer",
+  "name": "shotlister",
   "version": "0.2.0",
   "description": "Electron app for OBS camera queue management with embedded web server for phone browsers",
-  "author": "obs-queuer",
+  "author": "Michal Ramus",
   "main": "./out/main/index.js",
   "scripts": {
     "rebuild:electron": "node scripts/prepare-native.mjs electron",

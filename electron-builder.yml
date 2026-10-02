@@ -81,7 +81,7 @@ linux:
         - x64
   icon: build/icons
   category: AudioVideo
-  maintainer: obs-queuer
+  maintainer: Michal Ramus
 
 deb:
   depends:
