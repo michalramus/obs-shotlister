@@ -45,6 +45,31 @@ A rundown is one of two Kinds. A **Camera Rundown** holds Shots and switches OBS
 | OSC | `node-osc` |
 | Speech synthesis | Piper (engine bundled per platform, voices fetched at runtime) |
 
+## Installing a release
+
+### macOS: the first launch is blocked
+
+The macOS builds are signed ad-hoc, not with an Apple Developer ID, because the
+certificate is a paid subscription this project does not have. Every dmg
+downloaded from GitHub therefore arrives quarantined, and Gatekeeper refuses to
+start it: on macOS 15 and later the app simply never opens — no window, no
+crash, and nothing in the log to explain it.
+
+Drag the app to `/Applications` as usual, then clear the quarantine flag once:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Shotlister.app"
+```
+
+Or open it once through System Settings → Privacy & Security → **Open Anyway**,
+which does the same thing. Either way it is needed once per install, not per
+launch. Releases built with a Developer ID and notarised will not need it.
+
+### Windows: SmartScreen warning
+
+Same cause: the installer is unsigned, so SmartScreen shows "Windows protected
+your PC". **More info** → **Run anyway**.
+
 ## Getting started
 
 ### Prerequisites

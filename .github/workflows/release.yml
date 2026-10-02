@@ -54,7 +54,19 @@ jobs:
       # tagged CI build and opens its own draft release named after the version, which is
       # where the second, tray-less v0.1.2 release came from. create-release below is the
       # only thing allowed to touch the release.
+      # Signing and notarisation, if and when a Developer ID exists. Without
+      # these secrets electron-builder falls back to an ad-hoc signature, which
+      # is why a downloaded dmg does not open at all on macOS 15 and later:
+      # Gatekeeper rejects it before Electron runs, so the app shows no window
+      # and leaves no crash report. README says how to clear the quarantine flag
+      # by hand until then. Empty secrets change nothing about the build.
       - run: yarn dist:mac --publish never
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - uses: actions/upload-artifact@v4
         with:
