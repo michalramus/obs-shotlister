@@ -1,11 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { AudioOutput } from '../ipc-contract'
-import {
-  defaultAudioOutputs,
-  soundDelaysMs,
-  soundDestinations,
-  worstCaseDelayMs,
-} from './outputs'
+import { defaultAudioOutputs, soundDelaysMs, soundDestinations, worstCaseDelayMs } from './outputs'
 
 function output(over: Partial<AudioOutput> = {}): AudioOutput {
   return { enabled: true, sinkId: null, delayMs: 0, carries: 'both', ...over }
