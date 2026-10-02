@@ -121,7 +121,9 @@ function renderRGBA(size) {
         // a hole on a dark dock; the gradient gives the plate an edge.
         const t = (py + pixel / 2 - MARGIN) / (1 - 2 * MARGIN)
         const shade = PLATE_TOP.map((channel, c) =>
-          c === 3 ? channel : Math.round(channel + (PLATE_BOTTOM[c] - channel) * Math.min(1, Math.max(0, t))),
+          c === 3
+            ? channel
+            : Math.round(channel + (PLATE_BOTTOM[c] - channel) * Math.min(1, Math.max(0, t))),
         )
         blend(pixels, offset, shade, plateAlpha)
       }
