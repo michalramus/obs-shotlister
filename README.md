@@ -41,7 +41,7 @@ A rundown is one of two Kinds. A **Camera Rundown** holds Shots and switches OBS
 | State | Zustand |
 | Persistence | SQLite via `better-sqlite3` |
 | OBS | `obs-websocket-js` |
-| Web server | Express + Socket.io + `ws` |
+| Web server | Express + Socket.io |
 | OSC | `node-osc` |
 | Speech synthesis | Piper (engine bundled per platform, voices fetched at runtime) |
 

@@ -1,5 +1,9 @@
 # Feature: Empty Project Structure
 
+> **Historical.** This records the original scaffold, not the app as it stands.
+> The transport became Socket.io (`src/main/server/socket.ts`) and `ws` is no
+> longer a dependency; see `specs/phone-ui.md` for the shape in use.
+
 ## Goal
 
 Bootstrap the obs-queuer repository with a working but empty scaffold. The app must launch, the embedded web server must start, and the phone browser UI must be reachable — with no application logic yet.

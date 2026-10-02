@@ -258,6 +258,7 @@ export default function App(): React.JSX.Element {
     handleLiveStatePush,
     markShotHidden,
     refreshOscSettings,
+    setRenderSummary,
   ])
 
   // Keyboard shortcuts

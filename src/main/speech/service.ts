@@ -216,7 +216,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService {
         if (batch.signal.aborted) break
         await installVoice(voice, (id, bytes) => {
           const mb = Math.round(bytes / 1_000_000)
-          console.log(`[speech] installing voice ${id} (${mb} MB)`)
+          console.info(`[speech] installing voice ${id} (${mb} MB)`)
           progress = { completed: 0, total: items.length, stage: `Installing voice ${id}` }
           pushStatus(projectId)
         })
@@ -237,7 +237,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService {
             if (item) recordClip(db, item, step.clip.durationMs)
           }
           if (step.error === undefined) {
-            console.log(`[speech] ${step.completed}/${step.total} rendered "${step.item.text}"`)
+            console.info(`[speech] ${step.completed}/${step.total} rendered "${step.item.text}"`)
           }
           pushStatus(projectId)
         },
@@ -255,7 +255,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService {
         // Not an error and not latched: nothing is wrong with the engine, the
         // operator simply started the show. The clips it did finish are on disk
         // with their durations, and the rest render on the next explicit ask.
-        console.log(`[speech] rendering stopped after ${result.rendered.length} clip(s)`)
+        console.info(`[speech] rendering stopped after ${result.rendered.length} clip(s)`)
       }
 
       if (result.engineFailure) {
@@ -383,7 +383,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService {
       if (unreadable.length > 0) {
         forgetClips(db, await clips.remove(unreadable))
       }
-      console.log(`[speech] recovered the length of ${measured} clip(s) already on disk`)
+      console.info(`[speech] recovered the length of ${measured} clip(s) already on disk`)
       return measured
     },
 
@@ -414,7 +414,7 @@ export function createRenderService(deps: RenderServiceDeps): RenderService {
       // Dropped whether or not every file went: these rows describe what this
       // Project rendered, and it no longer claims to have rendered anything.
       forgetPartRenders(db, projectId)
-      console.log(`[speech] deleted ${gone.length} clip(s) for project ${projectId}`)
+      console.info(`[speech] deleted ${gone.length} clip(s) for project ${projectId}`)
 
       onStatus?.(await statusFor(projectId))
       return gone.length

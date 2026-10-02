@@ -13,9 +13,10 @@ The payload carries the Rundown's Kind and the Project's Parts. A Voice-over Run
 unfiltered and named by its Parts — there are no Cameras to filter by. See
 `specs/voice-over-rundowns.md`.
 
-## Server: replace `ws` with Socket.io
+## Server
 
-Replace `src/main/server/ws.ts` (bare `ws`) with Socket.io server.
+Socket.io, attached to the same HTTP server that serves the bundle, so a phone
+needs no second origin and the payload is same-origin by construction.
 
 ```ts
 // src/main/server/socket.ts
@@ -25,7 +26,12 @@ import type { HttpServer } from 'http'
 export function attachSocketServer(httpServer: HttpServer): Server { ... }
 ```
 
-Install: `socket.io` (server), `socket.io-client` (web UI).
+Packages: `socket.io` (server), `socket.io-client` (web UI).
+
+CORS is closed (`origin: false`) and the server sends a CSP confining the page to
+its own origin: phones load the UI from here, so no cross-origin request is ever
+legitimate, and an open origin let any page a phone happened to have open read
+the whole payload off the operator's laptop.
 
 ## Socket.io events
 
@@ -33,9 +39,16 @@ Install: `socket.io` (server), `socket.io-client` (web UI).
 
 | Event | Payload | When |
 |---|---|---|
-| `state:rundown` | `{ rundown: Rundown \| null, shots: Shot[], cameras: Camera[] }` | On connect; on any rundown/shot/camera change |
-| `state:live` | `{ liveIndex: number \| null, startedAt: number \| null, skippedIds: string[] }` | On next/skip action |
+| `state:rundown` | `{ rundown: Rundown \| null, shots: Shot[], cameras: Camera[], parts: Part[] }` | On connect; on any rundown/shot/camera/part change |
+| `state:live` | `{ liveIndex: number \| null, elapsedMs: number \| null }` | On next/skip action |
 | `state:playback` | `{ running: boolean }` | On start/stop |
+| `state:shot:hidden` | `{ shotId: string }` | When a Next or a Skip drops one Shot |
+
+`state:live` carries elapsed time rather than a timestamp: a phone does not share
+the operator's clock, so it anchors the position against its own on arrival
+(`startedAtFromElapsed`). While a session is running, `state:rundown` carries the
+queue's own hidden flags, which is what lets a reconnecting phone draw the right
+list before it has seen a single `state:shot:hidden`.
 
 ### Client → server
 
@@ -51,16 +64,24 @@ None (read-only).
 ```ts
 {
   rundown: Rundown | null
-  shots: Shot[]
+  shots: Shot[]        // hidden flags applied; see state:shot:hidden
   cameras: Camera[]
+  parts: Part[]
   liveIndex: number | null
-  startedAt: number | null
-  skippedIds: string[]
+  startedAt: number | null   // local, derived from elapsedMs on arrival
   running: boolean
-  cameraFilter: number[]   // empty = show all
   connected: boolean
 }
 ```
+
+A skip is not held as a list of ids: it arrives as `state:shot:hidden` and is
+applied to the Shot it names. The camera filter lives in the component rather
+than the store, because only the phone has one.
+
+A Shot being held through the incoming Transition keeps its row until that
+Transition finishes, rather than vanishing when the push arrives (ADR 0004).
+Both surfaces take that hold from `transitionHoldMs` in `src/shared/live-view.ts`,
+so they cannot disagree about what is on air.
 
 ### Layout
 

@@ -24,7 +24,12 @@ module.exports = {
     'plugin:react-hooks/recommended',
   ],
   rules: {
-    'no-console': 'warn',
+    // This app runs live shows: CLAUDE.md requires every async failure to be
+    // caught and logged rather than crash, so console.error/warn/info are the
+    // intended diagnostic channels and flagging all ~110 of them meant nobody
+    // read the warnings. `log` and `debug` stay flagged — those are the ones
+    // that are usually leftover debugging.
+    'no-console': ['warn', { allow: ['error', 'warn', 'info'] }],
     // CLAUDE.md makes unhandled rejections a hard requirement; these are the
     // two rules that can actually enforce it.
     '@typescript-eslint/no-floating-promises': 'error',

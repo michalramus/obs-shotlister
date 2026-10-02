@@ -63,12 +63,12 @@ When `running === true`, the shotlist and shot editor are **read-only** (add/edi
 ## State machine
 
 ```
-idle ──[Start]──▶ running (liveIndex=0, startedAt=now)
-running ──[Next]──▶ running (liveIndex++, startedAt=now)
-running ──[Skip next]──▶ running (skippedIds += nextId, liveIndex unchanged)
-running ──[Stop]──▶ idle (liveIndex=null, startedAt=null, running=false, skippedIds preserved)
-running ──[Restart]──▶ running (liveIndex=0, startedAt=now, skippedIds cleared)
-running, last shot ──[Next]──▶ idle (liveIndex=null, running=false)
+idle ──[Start]──▶ running (queue filled, liveIndex=0, startedAt=now)
+running ──[Next]──▶ running (outgoing Shot hidden, liveIndex++, startedAt=now)
+running ──[Skip next]──▶ running (next visible Shot hidden, liveIndex unchanged)
+running ──[Stop]──▶ idle (queue cleared, liveIndex=null, startedAt=null, running=false)
+running ──[Restart]──▶ running (queue refilled, liveIndex=0, startedAt=now)
+running, last shot ──[Next]──▶ idle (queue cleared, liveIndex=null, running=false)
 ```
 
 ## Actions
@@ -84,14 +84,14 @@ running, last shot ──[Next]──▶ idle (liveIndex=null, running=false)
 
 - Available when `running === true`
 - Sets `running = false`, `liveIndex = null`, `startedAt = null`
-- Skipped IDs preserved (resume context kept)
+- Discards the Live queue, so nothing about the run survives it (ADR 0001)
 - Unlocks rundown editing
 - IPC: `live:stop`
 
 ### Next
 
 - Available when `running === true`
-- Advances to next non-skipped shot: `liveIndex = nextNonSkipped(liveIndex)`
+- Advances to the next visible Shot — one hidden by a Skip is passed over
 - Sets `startedAt = Date.now()`
 - If no next shot: transitions to idle
 - IPC: `live:next`
@@ -99,7 +99,7 @@ running, last shot ──[Next]──▶ idle (liveIndex=null, running=false)
 ### Skip next
 
 - Available when `running === true` and a next shot exists
-- Marks the next queued shot (after liveIndex) as skipped for this run
+- Hides the next visible queued Shot (after liveIndex) for this run
 - Does not advance `liveIndex` or reset `startedAt`
 - Skipped shot shown struck-through in shotlist
 - IPC: `live:skip-next`
@@ -107,7 +107,7 @@ running, last shot ──[Next]──▶ idle (liveIndex=null, running=false)
 ### Restart
 
 - Available when `running === true`
-- Clears `skippedIds`, sets `liveIndex = 0`, `startedAt = Date.now()`
+- Refills the queue with every Shot visible again, sets `liveIndex = 0`, `startedAt = Date.now()`
 - IPC: `live:restart`
 
 ## Rundown edit lock
@@ -120,32 +120,36 @@ When `running === true`:
 
 ## Persisted live state (SQLite)
 
-Table `live_state`:
+Only the *selection* is durable. Progress — the queue, which Shot is live, when
+it went live, whether it is running — is held in memory and dies with the
+process (ADR 0001: resuming into a stale live state would drive OBS from a
+position that no longer matches what is on air).
 
 ```sql
 CREATE TABLE live_state (
   id           INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton
   rundown_id   TEXT,
-  live_shot_id TEXT,
-  started_at   INTEGER,
-  running      INTEGER NOT NULL DEFAULT 0,           -- boolean
-  skipped_ids  TEXT NOT NULL DEFAULT '[]'            -- JSON array of shot IDs
+  project_id   TEXT
 );
 ```
 
-Written on every live action. Restored on app start.
+Written when the operator opens a Rundown or a Project, not on a live action.
 
 ## Socket.io broadcast
 
 On every live action, main process emits to all connected clients:
 
 ```ts
+// Phones get elapsed time, not a timestamp: their clocks are not the
+// operator's, so the receiver anchors it against its own (ADR 0003).
 io.emit('state:live', {
   liveIndex: number | null,
-  startedAt: number | null,
-  skippedIds: string[],
+  elapsedMs: number | null,
 })
 io.emit('state:playback', { running: boolean })
+// A Skip or a Next hides one Shot. Sent on its own rather than folded into
+// state:rundown, so a phone need not re-derive the whole list.
+io.emit('state:shot:hidden', { shotId: string })
 ```
 
 `state:rundown` is NOT re-emitted on live changes — only on rundown data changes.
@@ -164,12 +168,16 @@ io.emit('state:playback', { running: boolean })
 ```ts
 interface LiveState {
   rundownId: string | null
+  projectId: string | null
   liveIndex: number | null
   startedAt: number | null
   running: boolean
-  skippedIds: string[]
 }
 ```
+
+A Skip is not in here: it is a hidden flag on the in-memory queue entry, and it
+reaches the surfaces as `live:shot-hidden-push` (operator) and
+`state:shot:hidden` (phones).
 
 ## Acceptance criteria
 
@@ -177,9 +185,11 @@ interface LiveState {
   on air; Start itself sets liveIndex to 0 and locks the shotlist and shot editor
 - Next advances liveIndex with new startedAt
 - Skip marks next shot struck-through; does not advance
-- Stop returns to idle; editing unlocked; skips preserved
-- Restart resets to liveIndex=0 and clears skips
+- Stop returns to idle; editing unlocked; the queue and its skips are discarded
+- Restart resets to liveIndex=0 with every Shot visible again
 - After last shot, Next transitions to idle
 - All state changes broadcast via Socket.io
-- Live state (including skippedIds) restored on app restart
+- Only the selection survives a restart; a relaunched app is idle (ADR 0001)
+- Every durable write is refused while `running === true`, at the IPC seam, so
+  the refusal holds for the phone UI and the OSC pedal as well as the window
 - `yarn test` passes

@@ -360,7 +360,7 @@ export function migrateAudioDevices(db: Database.Database): void {
   saveAudioDevices(db, { outputs })
   for (const key of LEGACY_AUDIO_KEYS) clearSetting(db, key)
 
-  console.log(
+  console.info(
     '[settings] migrated audio settings to two outputs:',
     `output 1 ${outputs[0].carries} on ${outputs[0].sinkId ?? 'the system default'},`,
     outputs[1].enabled
